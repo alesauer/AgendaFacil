@@ -1,10 +1,11 @@
 import React, { useState, useEffect, createContext, useContext } from 'react';
 import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
-import { User, Notification, Appointment, Service, Professional, Client } from './types';
-import { MOCK_NOTIFICATIONS, MOCK_SERVICES, MOCK_APPOINTMENTS, MOCK_PROFESSIONALS, MOCK_CLIENTS } from './constants';
+import { User, AppNotification, Appointment, Service, Professional, Client, Category } from './types';
+import { MOCK_NOTIFICATIONS, MOCK_SERVICES, MOCK_APPOINTMENTS, MOCK_PROFESSIONALS, MOCK_CLIENTS, MOCK_CATEGORIES } from './constants';
 import { Login } from './views/Login';
 import { ClientPortal } from './views/ClientPortal';
 import { AdminDashboard } from './views/AdminDashboard';
+import { Onboarding } from './views/Onboarding';
 import { X } from 'lucide-react';
 
 // --- Contexts ---
@@ -13,7 +14,7 @@ interface AppContextType {
   user: User | null;
   login: (phone: string, role: 'CLIENT' | 'ADMIN') => void;
   logout: () => void;
-  notifications: Notification[];
+  notifications: AppNotification[];
   markNotificationRead: (id: string) => void;
   appointments: Appointment[];
   addAppointment: (apt: Appointment) => void;
@@ -23,6 +24,10 @@ interface AppContextType {
   updateService: (service: Service) => void;
   deleteService: (id: string) => void;
   addService: (service: Service) => void;
+  categories: Category[];
+  addCategory: (category: Category) => void;
+  updateCategory: (category: Category) => void;
+  deleteCategory: (id: string) => void;
   professionals: Professional[];
   clients: Client[];
   addClient: (client: Client) => void;
@@ -77,9 +82,10 @@ const LGPDBanner = () => {
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
-  const [notifications, setNotifications] = useState<Notification[]>(MOCK_NOTIFICATIONS);
+  const [notifications, setNotifications] = useState<AppNotification[]>(MOCK_NOTIFICATIONS);
   const [appointments, setAppointments] = useState<Appointment[]>(MOCK_APPOINTMENTS);
   const [services, setServices] = useState<Service[]>(MOCK_SERVICES);
+  const [categories, setCategories] = useState<Category[]>(MOCK_CATEGORIES);
   const [professionals] = useState<Professional[]>(MOCK_PROFESSIONALS);
   const [clients, setClients] = useState<Client[]>(MOCK_CLIENTS);
   const [users, setUsers] = useState<User[]>([
@@ -121,7 +127,7 @@ const App: React.FC = () => {
   const addAppointment = (apt: Appointment) => {
     setAppointments(prev => [apt, ...prev]);
     // Simulate notification
-    const newNotif: Notification = {
+    const newNotif: AppNotification = {
       id: Date.now().toString(),
       title: 'Novo Agendamento',
       message: `Agendamento confirmado para ${apt.date} às ${apt.time}`,
@@ -150,6 +156,18 @@ const App: React.FC = () => {
 
   const deleteService = (id: string) => {
     setServices(prev => prev.filter(s => s.id !== id));
+  };
+
+  const addCategory = (newCategory: Category) => {
+    setCategories(prev => [...prev, newCategory]);
+  };
+
+  const updateCategory = (updatedCategory: Category) => {
+    setCategories(prev => prev.map(c => c.id === updatedCategory.id ? updatedCategory : c));
+  };
+
+  const deleteCategory = (id: string) => {
+    setCategories(prev => prev.filter(c => c.id !== id));
   };
 
   const addClient = (newClient: Client) => {
@@ -181,6 +199,7 @@ const App: React.FC = () => {
       user, login, logout, notifications, markNotificationRead, 
       appointments, addAppointment, updateAppointment, deleteAppointment,
       services, updateService, addService, deleteService,
+      categories, addCategory, updateCategory, deleteCategory,
       professionals, clients, addClient, updateClient, deleteClient,
       users, addUser, updateUser, deleteUser
     }}>
@@ -195,6 +214,10 @@ const App: React.FC = () => {
             
             <Route path="/admin/*" element={
               user && user.role === 'ADMIN' ? <AdminDashboard /> : <Navigate to="/login" />
+            } />
+
+            <Route path="/onboarding" element={
+              user && user.role === 'ADMIN' ? <Onboarding /> : <Navigate to="/login" />
             } />
 
             <Route path="/" element={<Navigate to="/login" />} />

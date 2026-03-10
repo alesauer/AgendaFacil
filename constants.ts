@@ -1,4 +1,11 @@
-import { Service, Professional, Appointment, Notification, Client } from './types';
+import { Service, Professional, Appointment, AppNotification, Client, Category } from './types';
+
+export const MOCK_CATEGORIES: Category[] = [
+  { id: 'cat1', name: 'Cabelo', description: 'Cortes e tratamentos capilares', iconName: 'Scissors' },
+  { id: 'cat2', name: 'Barba', description: 'Cuidados com a barba e rosto', iconName: 'User' },
+  { id: 'cat3', name: 'Combo', description: 'Pacotes promocionais de serviços', iconName: 'Sparkles' },
+  { id: 'cat4', name: 'Estética', description: 'Tratamentos faciais e corporais', iconName: 'Smile' },
+];
 
 export const MOCK_CLIENTS: Client[] = [
   { id: 'c1', name: 'João Silva', phone: '(11) 98888-7777', totalSpent: 450.00, haircutsCount: 12, lastVisit: '2024-03-01', birthday: '1990-05-15' },
@@ -251,7 +258,7 @@ export const MOCK_APPOINTMENTS: Appointment[] = [
   }
 ];
 
-export const MOCK_NOTIFICATIONS: Notification[] = [
+export const MOCK_NOTIFICATIONS: AppNotification[] = [
   {
     id: 'n1',
     title: 'Agendamento Confirmado',

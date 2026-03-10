@@ -3,7 +3,7 @@ import { useAppContext } from '../App';
 import { MOCK_PROFESSIONALS, AVAILABLE_TIMES } from '../constants';
 import { Service, Professional, Appointment } from '../types';
 import { 
-  Calendar, Clock, User, ChevronLeft, CreditCard, CheckCircle, 
+  Calendar, Clock, User as UserIcon, ChevronLeft, CreditCard, CheckCircle, 
   Search, Scissors, CalendarDays, LogOut, Bell, X, 
   Sparkles, Smile, Zap, Heart
 } from 'lucide-react';
@@ -13,7 +13,7 @@ import {
 const ServiceIcon = ({ name, className }: { name?: string, className?: string }) => {
   switch (name) {
     case 'Scissors': return <Scissors className={className} />;
-    case 'User': return <User className={className} />;
+    case 'User': return <UserIcon className={className} />;
     case 'Sparkles': return <Sparkles className={className} />;
     case 'Smile': return <Smile className={className} />;
     case 'Zap': return <Zap className={className} />;
@@ -23,11 +23,11 @@ const ServiceIcon = ({ name, className }: { name?: string, className?: string })
 };
 
 const ServiceList = ({ onSelect }: { onSelect: (s: Service) => void }) => {
-  const { services } = useAppContext();
+  const { services, categories: contextCategories } = useAppContext();
   const [filter, setFilter] = useState('');
   const [category, setCategory] = useState<string>('Todos');
 
-  const categories = ['Todos', ...Array.from(new Set(services.map(s => s.category)))];
+  const categories = ['Todos', ...contextCategories.map(c => c.name)];
 
   const filteredServices = services.filter(s => {
     const matchesText = s.title.toLowerCase().includes(filter.toLowerCase());
@@ -130,7 +130,7 @@ const ProfessionalSelect = ({ service, onSelect }: { service: Service, onSelect:
         {availablePros.map(pro => (
           <button key={pro.id} onClick={() => onSelect(pro)} className="flex items-center gap-4 p-4 bg-white rounded-xl shadow-sm hover:ring-2 hover:ring-blue-500 transition-all text-left group">
             <div className="w-14 h-14 rounded-full bg-blue-50 flex items-center justify-center text-blue-600 group-hover:bg-blue-600 group-hover:text-white transition-colors">
-              <User size={28} />
+              <UserIcon size={28} />
             </div>
             <div>
               <p className="font-semibold text-gray-900">{pro.name}</p>
@@ -371,15 +371,16 @@ export const ClientPortal: React.FC = () => {
     setView('HOME');
   };
 
-  const handleBookingComplete = (method?: 'PIX' | 'CREDIT_CARD') => {
-    const finalPrice = bookingData.service.isPromo && bookingData.service.promoPrice ? bookingData.service.promoPrice : bookingData.service.price;
+  const handleBookingComplete = (method?: 'PIX' | 'CREDIT_CARD', data?: any) => {
+    const currentBooking = data || bookingData;
+    const finalPrice = currentBooking.service.isPromo && currentBooking.service.promoPrice ? currentBooking.service.promoPrice : currentBooking.service.price;
     const newApt: Appointment = {
       id: Date.now().toString(),
       clientId: user!.id,
-      serviceId: bookingData.service.id,
-      professionalId: bookingData.professional.id,
-      date: bookingData.date,
-      time: bookingData.time,
+      serviceId: currentBooking.service.id,
+      professionalId: currentBooking.professional.id,
+      date: currentBooking.date,
+      time: currentBooking.time,
       status: method ? 'CONFIRMED' : 'PENDING_PAYMENT',
       totalValue: finalPrice,
       paymentMethod: method,
@@ -409,12 +410,11 @@ export const ClientPortal: React.FC = () => {
   const renderWizard = () => {
     if (step === 0) return <ServiceList onSelect={(s) => { setBookingData({ ...bookingData, service: s }); setStep(1); }} />;
     if (step === 1) return <ProfessionalSelect service={bookingData.service} onSelect={(p) => { setBookingData({ ...bookingData, professional: p }); setStep(2); }} />;
-    if (step === 2) return <DateTimeSelect professionalId={bookingData.professional.id} onSelect={(d, t) => { setBookingData({ ...bookingData, date: d, time: t }); setStep(3); }} />;
-    if (step === 3) return <PaymentChoiceStep onSelect={(choice) => {
-      if (choice === 'NOW') setStep(4);
-      else handleBookingComplete();
+    if (step === 2) return <DateTimeSelect professionalId={bookingData.professional.id} onSelect={(d, t) => { 
+      const updatedData = { ...bookingData, date: d, time: t };
+      setBookingData(updatedData); 
+      handleBookingComplete(undefined, updatedData); 
     }} />;
-    if (step === 4) return <PaymentStep booking={bookingData} onConfirm={handleBookingComplete} onCancel={resetBooking} />;
     if (step === 5) return (
       <div className="text-center py-10 animate-fade-in">
         <div className="w-20 h-20 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto mb-6">
@@ -522,53 +522,28 @@ export const ClientPortal: React.FC = () => {
       {/* Main Content */}
       <main className="flex-1 p-4 max-w-lg mx-auto w-full">
         {view === 'HOME' && (
-          <div className="space-y-6 animate-fade-in">
-            {/* Promo Card */}
-            <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-2xl p-6 text-white shadow-lg relative overflow-hidden">
-               <div className="relative z-10">
-                 <h2 className="text-2xl font-bold mb-1">Corte + Barba</h2>
-                 <p className="opacity-90 mb-4">Promoção especial de segunda a quarta!</p>
-                 <button onClick={() => { setView('BOOKING'); setStep(0); }} className="bg-white text-blue-600 px-4 py-2 rounded-lg font-bold text-sm shadow hover:bg-gray-50 transition-colors">Agendar Agora</button>
-               </div>
-               <div className="absolute right-[-20px] bottom-[-20px] opacity-20">
-                 <Scissors size={120} />
-               </div>
-            </div>
-
-            {/* Quick Actions */}
-            <div className="grid grid-cols-2 gap-4">
-               <button onClick={() => { setView('BOOKING'); setStep(0); }} className="bg-white p-4 rounded-xl shadow-sm hover:shadow-md transition-all text-left flex flex-col gap-2 border border-transparent hover:border-blue-200">
-                 <div className="bg-blue-100 w-10 h-10 rounded-full flex items-center justify-center text-blue-600">
-                   <Calendar size={20} />
+          <div className="space-y-4 animate-fade-in pt-4">
+            {/* Quick Actions - Vertical Layout */}
+            <div className="grid grid-cols-1 gap-4">
+               <button onClick={() => { setView('BOOKING'); setStep(0); }} className="bg-white p-6 rounded-2xl shadow-sm hover:shadow-md transition-all text-left flex items-center gap-6 border border-transparent hover:border-blue-200 group">
+                 <div className="bg-blue-100 w-14 h-14 rounded-2xl flex items-center justify-center text-blue-600 group-hover:bg-blue-600 group-hover:text-white transition-all">
+                   <Calendar size={28} />
                  </div>
-                 <span className="font-semibold text-gray-800">Novo Agendamento</span>
-               </button>
-               <button onClick={() => setView('HISTORY')} className="bg-white p-4 rounded-xl shadow-sm hover:shadow-md transition-all text-left flex flex-col gap-2 border border-transparent hover:border-blue-200">
-                 <div className="bg-purple-100 w-10 h-10 rounded-full flex items-center justify-center text-purple-600">
-                   <Clock size={20} />
+                 <div>
+                   <span className="font-bold text-lg text-gray-800 block">Novo Agendamento</span>
+                   <p className="text-sm text-gray-500">Escolha um serviço e reserve seu horário</p>
                  </div>
-                 <span className="font-semibold text-gray-800">Meus Agendamentos</span>
                </button>
-            </div>
-
-            {/* Popular Services */}
-            <div>
-               <h3 className="font-bold text-gray-800 mb-3">Serviços Populares</h3>
-               <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-hide -mx-4 px-4">
-                  {services.slice(0, 3).map(service => (
-                    <button 
-                      key={service.id} 
-                      onClick={() => { setBookingData({ service }); setStep(1); setView('BOOKING'); }}
-                      className="min-w-[150px] bg-white rounded-2xl p-4 shadow-sm border border-gray-100 hover:border-blue-200 hover:shadow-md transition-all text-left group"
-                    >
-                       <div className="w-12 h-12 bg-blue-50 rounded-xl flex items-center justify-center text-blue-600 mb-3 group-hover:bg-blue-600 group-hover:text-white transition-colors">
-                          <ServiceIcon name={service.iconName} className="w-6 h-6" />
-                       </div>
-                       <p className="text-sm font-bold text-gray-900 line-clamp-1">{service.title}</p>
-                       <p className="text-xs text-blue-600 font-semibold mt-1">R$ {service.price.toFixed(2)}</p>
-                    </button>
-                  ))}
-               </div>
+               
+               <button onClick={() => setView('HISTORY')} className="bg-white p-6 rounded-2xl shadow-sm hover:shadow-md transition-all text-left flex items-center gap-6 border border-transparent hover:border-blue-200 group">
+                 <div className="bg-purple-100 w-14 h-14 rounded-2xl flex items-center justify-center text-purple-600 group-hover:bg-purple-600 group-hover:text-white transition-all">
+                   <Clock size={28} />
+                 </div>
+                 <div>
+                   <span className="font-bold text-lg text-gray-800 block">Meus Agendamentos</span>
+                   <p className="text-sm text-gray-500">Veja e gerencie seus horários marcados</p>
+                 </div>
+               </button>
             </div>
           </div>
         )}

@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAppContext } from '../App';
 import { Client } from '../types';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { LayoutDashboard, Users, Calendar, Settings, LogOut, Plus, Edit, Trash2, DollarSign, X, Clock, Tag, Image as ImageIcon, Search, ChevronLeft, ChevronRight, Bell, Mail, MessageSquare, Shield, Globe, Menu, Scissors, Sparkles, Smile, Zap, Heart, Share2, RotateCcw, ChevronDown, Lock, Camera, Store, User, Palette, Check, CreditCard, Receipt, BarChart3, Phone, Headphones, ExternalLink } from 'lucide-react';
+import { LayoutDashboard, Users, Calendar, Settings, LogOut, Plus, Edit, Trash2, DollarSign, X, Clock, Tag, Image as ImageIcon, Search, ChevronLeft, ChevronRight, Bell, Mail, MessageSquare, Shield, Globe, Menu, Scissors, Sparkles, Smile, Zap, Heart, Share2, RotateCcw, ChevronDown, Lock, Camera, Store, User as UserIcon, Palette, Check, CreditCard, Receipt, BarChart3, Phone, Headphones, ExternalLink, List } from 'lucide-react';
 import { MOCK_APPOINTMENTS } from '../constants';
 
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042'];
@@ -163,16 +163,22 @@ const DashboardHome = () => {
 };
 
 const ServicesManagement = () => {
-    const { services, deleteService, addService } = useAppContext();
+    const { services, deleteService, addService, categories } = useAppContext();
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [formData, setFormData] = useState({
         title: '',
         description: '',
         price: '',
         durationMinutes: '30',
-        category: 'Cabelo',
+        category: categories[0]?.name || 'Geral',
         iconName: 'Scissors'
     });
+
+    useEffect(() => {
+        if (!formData.category && categories.length > 0) {
+            setFormData(prev => ({ ...prev, category: categories[0].name }));
+        }
+    }, [categories]);
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
@@ -278,11 +284,10 @@ const ServicesManagement = () => {
                                         onChange={e => setFormData({...formData, category: e.target.value})}
                                         className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all bg-white"
                                     >
-                                        <option value="Cabelo">Cabelo</option>
-                                        <option value="Barba">Barba</option>
-                                        <option value="Combo">Combo</option>
-                                        <option value="Estética">Estética</option>
-                                        <option value="Outros">Outros</option>
+                                        {categories.map(cat => (
+                                            <option key={cat.id} value={cat.name}>{cat.name}</option>
+                                        ))}
+                                        {categories.length === 0 && <option value="Geral">Geral</option>}
                                     </select>
                                 </div>
                                 <div>
@@ -1829,10 +1834,13 @@ const EmailIntegration = () => {
 };
 
 const SettingsManagement = () => {
-  const { users, addUser, updateUser, deleteUser } = useAppContext();
-  const [activeSubTab, setActiveSubTab] = useState<'USERS' | 'ALERTS' | 'PROFILES' | 'HOURS' | 'INTEGRATIONS' | 'OTHER' | 'BILLING' | 'CONTACT'>('USERS');
+  const { users, addUser, updateUser, deleteUser, categories, addCategory, updateCategory, deleteCategory } = useAppContext();
+  const [activeSubTab, setActiveSubTab] = useState<'USERS' | 'ALERTS' | 'PROFILES' | 'HOURS' | 'INTEGRATIONS' | 'OTHER' | 'BILLING' | 'CONTACT' | 'CATEGORIES'>('USERS');
   const [isUserModalOpen, setIsUserModalOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<any>(null);
+
+  const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
+  const [selectedCategory, setSelectedCategory] = useState<any>(null);
 
   const [businessHours, setBusinessHours] = useState([
     { id: 1, day: 'Segunda-feira', open: true, start: '09:00', end: '19:00' },
@@ -1875,8 +1883,32 @@ const SettingsManagement = () => {
     setIsUserModalOpen(true);
   };
 
+  const handleSaveCategory = (data: any) => {
+    if (selectedCategory) {
+      updateCategory({ ...selectedCategory, ...data });
+    } else {
+      addCategory({
+        id: Date.now().toString(),
+        ...data
+      });
+    }
+    setIsCategoryModalOpen(false);
+    setSelectedCategory(null);
+  };
+
+  const openNewCategory = () => {
+    setSelectedCategory(null);
+    setIsCategoryModalOpen(true);
+  };
+
+  const openEditCategory = (c: any) => {
+    setSelectedCategory(c);
+    setIsCategoryModalOpen(true);
+  };
+
   const tabs = [
     { id: 'USERS', label: 'Usuários', icon: <Users size={18} />, desc: 'Equipe e acessos' },
+    { id: 'CATEGORIES', label: 'Categorias', icon: <Tag size={18} />, desc: 'Organize serviços' },
     { id: 'ALERTS', label: 'Alertas', icon: <Bell size={18} />, desc: 'WhatsApp e e-mail' },
     { id: 'PROFILES', label: 'Perfis', icon: <Shield size={18} />, desc: 'Níveis de permissão' },
     { id: 'HOURS', label: 'Horários', icon: <Clock size={18} />, desc: 'Funcionamento' },
@@ -2003,11 +2035,65 @@ const SettingsManagement = () => {
             </div>
           )}
 
+          {activeSubTab === 'CATEGORIES' && (
+            <div className="space-y-6">
+              <div className="flex justify-between items-center">
+                <h3 className="font-bold text-gray-800">Categorias de Serviços</h3>
+                <button 
+                  onClick={openNewCategory}
+                  className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-blue-700 text-sm"
+                >
+                  <Plus size={16} /> Nova Categoria
+                </button>
+              </div>
+              <div className="divide-y">
+                {categories.map((c) => (
+                  <div key={c.id} className="py-4 flex justify-between items-center">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center text-blue-600">
+                        <Tag size={20} />
+                      </div>
+                      <div>
+                        <p className="font-medium text-gray-900">{c.name}</p>
+                        <p className="text-xs text-gray-500">{c.description || 'Sem descrição'}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button 
+                        onClick={() => openEditCategory(c)}
+                        className="text-gray-400 hover:text-blue-600 p-2"
+                      >
+                        <Edit size={16} />
+                      </button>
+                      <button 
+                        onClick={() => {
+                          if (confirm('Tem certeza que deseja excluir esta categoria?')) {
+                            deleteCategory(c.id);
+                          }
+                        }}
+                        className="text-gray-400 hover:text-red-600 p-2"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <UserModal 
             isOpen={isUserModalOpen}
             onClose={() => setIsUserModalOpen(false)}
             onSave={handleSaveUser}
             userToEdit={selectedUser}
+          />
+
+          <CategoryModal 
+            isOpen={isCategoryModalOpen}
+            onClose={() => setIsCategoryModalOpen(false)}
+            onSave={handleSaveCategory}
+            categoryToEdit={selectedCategory}
           />
 
           {activeSubTab === 'ALERTS' && (
@@ -2404,7 +2490,7 @@ const SettingsManagement = () => {
                           {[
                             { id: 'scissors', icon: Scissors },
                             { id: 'store', icon: Store },
-                            { id: 'user', icon: User },
+                            { id: 'user', icon: UserIcon },
                             { id: 'sparkles', icon: Sparkles },
                             { id: 'heart', icon: Heart },
                             { id: 'zap', icon: Zap }
@@ -2478,6 +2564,21 @@ const SettingsManagement = () => {
                     </div>
                   </div>
                 </div>
+
+                <div className="pt-8 border-t border-gray-100">
+                  <div className="bg-blue-50 p-6 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-4">
+                    <div>
+                      <h4 className="font-bold text-blue-900">Configuração Inicial</h4>
+                      <p className="text-sm text-blue-700">Deseja refazer o passo a passo de configuração da sua barbearia?</p>
+                    </div>
+                    <button 
+                      onClick={() => window.location.hash = '#/onboarding'}
+                      className="px-6 py-3 bg-blue-600 text-white rounded-xl font-bold text-sm hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 whitespace-nowrap"
+                    >
+                      Iniciar Onboarding
+                    </button>
+                  </div>
+                </div>
               </div>
 
               <div className="space-y-6 pt-6 border-t border-gray-100">
@@ -2496,6 +2597,74 @@ const SettingsManagement = () => {
               </div>
             </div>
           )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const CategoryModal = ({ isOpen, onClose, onSave, categoryToEdit }: { isOpen: boolean, onClose: () => void, onSave: (data: any) => void, categoryToEdit?: any }) => {
+  const [formData, setFormData] = useState({
+    name: '',
+    description: '',
+    iconName: 'Tag'
+  });
+
+  useEffect(() => {
+    if (categoryToEdit) {
+      setFormData({
+        name: categoryToEdit.name,
+        description: categoryToEdit.description || '',
+        iconName: categoryToEdit.iconName || 'Tag'
+      });
+    } else {
+      setFormData({
+        name: '',
+        description: '',
+        iconName: 'Tag'
+      });
+    }
+  }, [categoryToEdit, isOpen]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 animate-in fade-in">
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+        <div className="p-6 border-b flex justify-between items-center bg-gray-50">
+          <h3 className="text-xl font-bold text-gray-800">{categoryToEdit ? 'Editar Categoria' : 'Nova Categoria'}</h3>
+          <button onClick={onClose} className="p-2 hover:bg-gray-200 rounded-full transition-colors"><X size={20} /></button>
+        </div>
+        <div className="p-6 space-y-4">
+          <div>
+            <label className="block text-sm font-bold text-gray-700 mb-1">Nome da Categoria</label>
+            <input 
+              type="text" 
+              className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+              value={formData.name}
+              onChange={(e) => setFormData({...formData, name: e.target.value})}
+              placeholder="Ex: Cabelo, Barba, Estética..."
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-bold text-gray-700 mb-1">Descrição (Opcional)</label>
+            <textarea 
+              className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all h-24 resize-none"
+              value={formData.description}
+              onChange={(e) => setFormData({...formData, description: e.target.value})}
+              placeholder="Breve descrição da categoria..."
+            />
+          </div>
+        </div>
+        <div className="p-6 bg-gray-50 border-t flex gap-3">
+          <button onClick={onClose} className="flex-1 py-3 border border-gray-200 text-gray-600 font-bold rounded-xl hover:bg-gray-100 transition-all">Cancelar</button>
+          <button 
+            onClick={() => onSave(formData)}
+            disabled={!formData.name}
+            className="flex-1 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-all disabled:opacity-50 shadow-lg shadow-blue-100"
+          >
+            Salvar Categoria
+          </button>
         </div>
       </div>
     </div>

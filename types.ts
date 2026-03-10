@@ -8,6 +8,13 @@ export interface User {
   avatar?: string;
 }
 
+export interface Category {
+  id: string;
+  name: string;
+  description?: string;
+  iconName?: string;
+}
+
 export interface Service {
   id: string;
   title: string;
@@ -47,7 +54,7 @@ export interface Appointment {
   createdAt: string;
 }
 
-export interface Notification {
+export interface AppNotification {
   id: string;
   title: string;
   message: string;
