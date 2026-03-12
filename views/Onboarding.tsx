@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Store, Users, Scissors, Clock, MessageSquare, 
   CheckCircle, ChevronRight, ChevronLeft, Plus, 
-  Trash2, Camera, MapPin, Phone, Zap
+  Trash2, Camera, MapPin, Phone, Zap, Lock
 } from 'lucide-react';
 
 // --- Types ---
@@ -50,6 +50,13 @@ const StepIndicator = ({ currentStep, totalSteps }: { currentStep: number, total
 export const Onboarding: React.FC = () => {
   const navigate = useNavigate();
   const [step, setStep] = useState(0);
+
+  const finishOnboarding = () => {
+    localStorage.setItem('onboarding_completed', 'true');
+    localStorage.setItem('onboarding_completed_at', new Date().toISOString());
+    localStorage.removeItem('manual_onboarding_request');
+    navigate('/admin', { replace: true });
+  };
   
   // Form States
   const [barberData, setBarberData] = useState({
@@ -509,7 +516,7 @@ export const Onboarding: React.FC = () => {
 
             <div className="max-w-xs mx-auto space-y-4">
               <button 
-                onClick={() => navigate('/admin')}
+                onClick={finishOnboarding}
                 className="w-full bg-blue-600 text-white py-4 rounded-2xl font-bold text-lg hover:bg-blue-700 transition-all shadow-xl shadow-blue-100 flex items-center justify-center gap-2"
               >
                 Ir para o painel <ChevronRight size={20} />

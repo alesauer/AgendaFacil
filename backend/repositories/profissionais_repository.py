@@ -1,0 +1,137 @@
+from backend.db import is_db_ready, query_all, query_one
+from backend.repositories.base_repository import BaseRepository
+from backend.supabase_client import get_supabase_client, is_supabase_ready
+
+
+class ProfissionaisRepository(BaseRepository):
+    @staticmethod
+    def list_all(barbearia_id: str):
+        ProfissionaisRepository.require_tenant(barbearia_id)
+        if is_db_ready():
+            return query_all(
+                """
+                SELECT id, barbearia_id, nome, cargo, telefone, foto_url, ativo
+                FROM profissionais
+                WHERE barbearia_id = %s
+                ORDER BY nome
+                """,
+                (barbearia_id,),
+            )
+
+        if is_supabase_ready():
+            supabase = get_supabase_client()
+            response = (
+                supabase.table("profissionais")
+                .select("id,barbearia_id,nome,cargo,telefone,foto_url,ativo")
+                .eq("barbearia_id", barbearia_id)
+                .order("nome")
+                .execute()
+            )
+            return response.data or []
+
+        return []
+
+    @staticmethod
+    def create(barbearia_id: str, nome: str, cargo: str, telefone: str, foto_url: str | None):
+        ProfissionaisRepository.require_tenant(barbearia_id)
+        if is_db_ready():
+            return query_one(
+                """
+                INSERT INTO profissionais (barbearia_id, nome, cargo, telefone, foto_url, ativo)
+                VALUES (%s, %s, %s, %s, %s, true)
+                RETURNING id, barbearia_id, nome, cargo, telefone, foto_url, ativo
+                """,
+                (barbearia_id, nome, cargo, telefone, foto_url),
+            )
+
+        if is_supabase_ready():
+            supabase = get_supabase_client()
+            response = (
+                supabase.table("profissionais")
+                .insert(
+                    {
+                        "barbearia_id": barbearia_id,
+                        "nome": nome,
+                        "cargo": cargo,
+                        "telefone": telefone,
+                        "foto_url": foto_url,
+                        "ativo": True,
+                    }
+                )
+                .execute()
+            )
+            data = response.data or []
+            return data[0] if data else None
+
+        return None
+
+    @staticmethod
+    def update(
+        barbearia_id: str,
+        profissional_id: str,
+        nome: str,
+        cargo: str,
+        telefone: str,
+        foto_url: str | None,
+        ativo: bool,
+    ):
+        ProfissionaisRepository.require_tenant(barbearia_id)
+        if is_db_ready():
+            return query_one(
+                """
+                UPDATE profissionais
+                SET nome = %s, cargo = %s, telefone = %s, foto_url = %s, ativo = %s
+                WHERE barbearia_id = %s AND id = %s
+                RETURNING id, barbearia_id, nome, cargo, telefone, foto_url, ativo
+                """,
+                (nome, cargo, telefone, foto_url, ativo, barbearia_id, profissional_id),
+            )
+
+        if is_supabase_ready():
+            supabase = get_supabase_client()
+            response = (
+                supabase.table("profissionais")
+                .update(
+                    {
+                        "nome": nome,
+                        "cargo": cargo,
+                        "telefone": telefone,
+                        "foto_url": foto_url,
+                        "ativo": ativo,
+                    }
+                )
+                .eq("barbearia_id", barbearia_id)
+                .eq("id", profissional_id)
+                .execute()
+            )
+            data = response.data or []
+            return data[0] if data else None
+
+        return None
+
+    @staticmethod
+    def delete(barbearia_id: str, profissional_id: str):
+        ProfissionaisRepository.require_tenant(barbearia_id)
+        if is_db_ready():
+            return query_one(
+                """
+                DELETE FROM profissionais
+                WHERE barbearia_id = %s AND id = %s
+                RETURNING id
+                """,
+                (barbearia_id, profissional_id),
+            )
+
+        if is_supabase_ready():
+            supabase = get_supabase_client()
+            response = (
+                supabase.table("profissionais")
+                .delete()
+                .eq("barbearia_id", barbearia_id)
+                .eq("id", profissional_id)
+                .execute()
+            )
+            data = response.data or []
+            return data[0] if data else None
+
+        return None

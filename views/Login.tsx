@@ -14,27 +14,27 @@ export const Login: React.FC = () => {
   const [isRecovering, setIsRecovering] = useState(false);
   const [recoverySuccess, setRecoverySuccess] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
     setError('');
 
-    // Simulate API delay
-    setTimeout(() => {
+    try {
       if (phone.length < 8) {
         setError('Telefone inválido');
-        setIsLoading(false);
         return;
       }
-      if (!isClient && password !== 'admin123') {
-        setError('Senha incorreta (Dica: admin123)');
-        setIsLoading(false);
+      if (!isClient && !password) {
+        setError('Informe sua senha');
         return;
       }
 
-      login(phone, isClient ? 'CLIENT' : 'ADMIN');
+      await login(phone, isClient ? 'CLIENT' : 'ADMIN', password);
+    } catch (err: any) {
+      setError(err?.message || 'Não foi possível entrar');
+    } finally {
       setIsLoading(false);
-    }, 800);
+    }
   };
 
   const handleRecoverySubmit = (e: React.FormEvent) => {

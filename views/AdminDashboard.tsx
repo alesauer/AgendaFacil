@@ -1,11 +1,25 @@
 import React, { useState, useEffect } from 'react';
 import { useAppContext } from '../App';
+import { useNavigate } from 'react-router-dom';
 import { Client } from '../types';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { LayoutDashboard, Users, Calendar, Settings, LogOut, Plus, Edit, Trash2, DollarSign, X, Clock, Tag, Image as ImageIcon, Search, ChevronLeft, ChevronRight, Bell, Mail, MessageSquare, Shield, Globe, Menu, Scissors, Sparkles, Smile, Zap, Heart, Share2, RotateCcw, ChevronDown, Lock, Camera, Store, User as UserIcon, Palette, Check, CreditCard, Receipt, BarChart3, Phone, Headphones, ExternalLink, List } from 'lucide-react';
 import { MOCK_APPOINTMENTS } from '../constants';
 
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042'];
+
+const safeInitial = (value?: string | null) => (value && value.length > 0 ? value.charAt(0) : '?');
+const safeDateBr = (value?: string | null) => (value ? value.split('-').reverse().join('/') : 'N/A');
+const safeMoney = (value?: number | null) => Number(value || 0).toFixed(2);
+const safeFirstName = (value?: string | null) => (value ? value.split(' ')[0] : 'Profissional');
+const safeAvatarSrc = (value?: string | null) => {
+  if (!value || typeof value !== 'string') return undefined;
+  if (value.length > 300000) return undefined;
+  if (value.startsWith('data:image/') || value.startsWith('http://') || value.startsWith('https://')) {
+    return value;
+  }
+  return undefined;
+};
 
 const ServiceIcon = ({ name, className }: { name?: string, className?: string }) => {
   switch (name) {
@@ -163,8 +177,9 @@ const DashboardHome = () => {
 };
 
 const ServicesManagement = () => {
-    const { services, deleteService, addService, categories } = useAppContext();
+  const { services, deleteService, addService, updateService, categories, appointments } = useAppContext();
     const [isModalOpen, setIsModalOpen] = useState(false);
+  const [selectedServiceId, setSelectedServiceId] = useState<string | null>(null);
     const [formData, setFormData] = useState({
         title: '',
         description: '',
@@ -182,8 +197,8 @@ const ServicesManagement = () => {
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        const newService = {
-            id: Date.now().toString(),
+      const servicePayload = {
+        id: selectedServiceId || Date.now().toString(),
             title: formData.title,
             description: formData.description,
             price: parseFloat(formData.price),
@@ -191,8 +206,13 @@ const ServicesManagement = () => {
             category: formData.category,
             iconName: formData.iconName
         };
-        addService(newService);
+      if (selectedServiceId) {
+        updateService(servicePayload);
+      } else {
+        addService(servicePayload);
+      }
         setIsModalOpen(false);
+      setSelectedServiceId(null);
         setFormData({
             title: '',
             description: '',
@@ -208,7 +228,10 @@ const ServicesManagement = () => {
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                 <h2 className="text-xl font-bold text-gray-800">Gerenciar Serviços</h2>
                 <button 
-                    onClick={() => setIsModalOpen(true)}
+                  onClick={() => {
+                    setSelectedServiceId(null);
+                    setIsModalOpen(true);
+                  }}
                     className="w-full sm:w-auto bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center justify-center gap-2 hover:bg-blue-700 transition-colors shadow-sm"
                 >
                     <Plus size={18} /> Novo Serviço
@@ -220,8 +243,11 @@ const ServicesManagement = () => {
                 <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
                     <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-fade-in">
                         <div className="px-6 py-4 border-b flex justify-between items-center bg-gray-50">
-                            <h3 className="font-bold text-gray-900">Criar Novo Serviço</h3>
-                            <button onClick={() => setIsModalOpen(false)} className="text-gray-400 hover:text-gray-600">
+                            <h3 className="font-bold text-gray-900">{selectedServiceId ? 'Editar Serviço' : 'Criar Novo Serviço'}</h3>
+                            <button onClick={() => {
+                              setIsModalOpen(false);
+                              setSelectedServiceId(null);
+                            }} className="text-gray-400 hover:text-gray-600">
                                 <X size={20} />
                             </button>
                         </div>
@@ -309,7 +335,10 @@ const ServicesManagement = () => {
                             <div className="pt-4 flex gap-3">
                                 <button 
                                     type="button"
-                                    onClick={() => setIsModalOpen(false)}
+                                  onClick={() => {
+                                    setIsModalOpen(false);
+                                    setSelectedServiceId(null);
+                                  }}
                                     className="flex-1 px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50 transition-colors"
                                 >
                                     Cancelar
@@ -318,7 +347,7 @@ const ServicesManagement = () => {
                                     type="submit"
                                     className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors shadow-md shadow-blue-200"
                                 >
-                                    Criar Serviço
+                                    {selectedServiceId ? 'Salvar Alterações' : 'Criar Serviço'}
                                 </button>
                             </div>
                         </form>
@@ -353,8 +382,38 @@ const ServicesManagement = () => {
                                 <td className="px-6 py-3">R$ {service.price.toFixed(2)}</td>
                                 <td className="px-6 py-3">{service.durationMinutes} min</td>
                                 <td className="px-6 py-3 text-right space-x-3">
-                                    <button className="text-blue-600 hover:text-blue-800"><Edit size={18} /></button>
-                                    <button onClick={() => deleteService(service.id)} className="text-red-600 hover:text-red-800"><Trash2 size={18} /></button>
+                                  <button
+                                    onClick={() => {
+                                      setSelectedServiceId(service.id);
+                                      setFormData({
+                                        title: service.title,
+                                        description: service.description,
+                                        price: service.price.toString(),
+                                        durationMinutes: service.durationMinutes.toString(),
+                                        category: service.category,
+                                        iconName: service.iconName || 'Scissors',
+                                      });
+                                      setIsModalOpen(true);
+                                    }}
+                                    className="text-blue-600 hover:text-blue-800"
+                                  ><Edit size={18} /></button>
+                                    <button
+                                      onClick={() => {
+                                        const hasLinkedAppointments = appointments.some(
+                                          apt => apt.serviceId === service.id && apt.status !== 'CANCELLED'
+                                        );
+
+                                        if (hasLinkedAppointments) {
+                                          alert('Este serviço possui agendamentos vinculados. Cancele/ajuste os agendamentos antes de excluir.');
+                                          return;
+                                        }
+
+                                        if (window.confirm('Tem certeza que deseja excluir este serviço?')) {
+                                          deleteService(service.id);
+                                        }
+                                      }}
+                                      className="text-red-600 hover:text-red-800"
+                                    ><Trash2 size={18} /></button>
                                 </td>
                             </tr>
                         ))}
@@ -366,7 +425,7 @@ const ServicesManagement = () => {
 };
 
 const ClientsManagement = () => {
-    const { clients, addClient, updateClient, deleteClient } = useAppContext();
+  const { clients, addClient, updateClient, deleteClient, appointments } = useAppContext();
     const [searchTerm, setSearchTerm] = useState('');
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [modalMode, setModalMode] = useState<'ADD' | 'EDIT' | 'VIEW'>('ADD');
@@ -432,6 +491,15 @@ const ClientsManagement = () => {
     };
 
     const handleDelete = (id: string) => {
+      const hasLinkedAppointments = appointments.some(
+        apt => apt.clientId === id && apt.status !== 'CANCELLED'
+      );
+
+      if (hasLinkedAppointments) {
+        alert('Este cliente possui agendamentos vinculados. Cancele/ajuste os agendamentos antes de excluir.');
+        return;
+      }
+
         if (window.confirm('Tem certeza que deseja excluir este cliente?')) {
             deleteClient(id);
             setIsModalOpen(false);
@@ -480,15 +548,15 @@ const ClientsManagement = () => {
                                 <td className="px-6 py-4">
                                     <div className="flex items-center gap-3">
                                         <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold">
-                                            {client.name.charAt(0)}
+                                      {safeInitial(client.name)}
                                         </div>
                                         <div className="font-medium text-gray-900">{client.name}</div>
                                     </div>
                                 </td>
                                 <td className="px-6 py-4 text-gray-600">{client.phone}</td>
                                 <td className="px-6 py-4 text-gray-600 font-medium">{client.haircutsCount}</td>
-                                <td className="px-6 py-4 font-semibold text-gray-900">R$ {client.totalSpent.toFixed(2)}</td>
-                                <td className="px-6 py-4 text-gray-600">{client.lastVisit ? client.lastVisit.split('-').reverse().join('/') : 'N/A'}</td>
+                                <td className="px-6 py-4 font-semibold text-gray-900">R$ {safeMoney(client.totalSpent)}</td>
+                                <td className="px-6 py-4 text-gray-600">{safeDateBr(client.lastVisit)}</td>
                                 <td className="px-6 py-4 text-right space-x-3">
                                     <button 
                                         onClick={() => openModal('VIEW', client)}
@@ -528,7 +596,7 @@ const ClientsManagement = () => {
                                 <div className="space-y-6">
                                     <div className="flex flex-col items-center gap-3 pb-6 border-b">
                                         <div className="w-20 h-20 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 text-3xl font-bold">
-                                            {selectedClient?.name.charAt(0)}
+                                            {safeInitial(selectedClient?.name)}
                                         </div>
                                         <div className="text-center">
                                             <h4 className="text-xl font-bold text-gray-900">{selectedClient?.name}</h4>
@@ -539,11 +607,11 @@ const ClientsManagement = () => {
                                     <div className="grid grid-cols-2 gap-4">
                                         <div className="p-3 bg-gray-50 rounded-lg">
                                             <p className="text-xs text-gray-500 uppercase font-bold mb-1">Aniversário</p>
-                                            <p className="font-medium">{selectedClient?.birthday ? selectedClient.birthday.split('-').reverse().join('/') : 'Não informado'}</p>
+                                            <p className="font-medium">{selectedClient?.birthday ? safeDateBr(selectedClient.birthday) : 'Não informado'}</p>
                                         </div>
                                         <div className="p-3 bg-gray-50 rounded-lg">
                                             <p className="text-xs text-gray-500 uppercase font-bold mb-1">Última Visita</p>
-                                            <p className="font-medium">{selectedClient?.lastVisit ? selectedClient.lastVisit.split('-').reverse().join('/') : 'N/A'}</p>
+                                            <p className="font-medium">{safeDateBr(selectedClient?.lastVisit)}</p>
                                         </div>
                                         <div className="p-3 bg-gray-50 rounded-lg">
                                             <p className="text-xs text-gray-500 uppercase font-bold mb-1">Total de Cortes</p>
@@ -551,7 +619,7 @@ const ClientsManagement = () => {
                                         </div>
                                         <div className="p-3 bg-gray-50 rounded-lg">
                                             <p className="text-xs text-gray-500 uppercase font-bold mb-1">Total Gasto</p>
-                                            <p className="text-xl font-bold text-blue-600">R$ {selectedClient?.totalSpent.toFixed(2)}</p>
+                                            <p className="text-xl font-bold text-blue-600">R$ {safeMoney(selectedClient?.totalSpent)}</p>
                                         </div>
                                     </div>
 
@@ -919,7 +987,7 @@ const CalendarManagement = () => {
                                     onClick={() => setIsProfessionalDropdownOpen(!isProfessionalDropdownOpen)}
                                     className="flex items-center gap-1 hover:text-gray-800 uppercase tracking-wider whitespace-nowrap text-[10px] md:text-xs bg-gray-50 px-2 py-1 rounded border border-gray-100"
                                 >
-                                    {selectedProfessionalId === 'ALL' ? 'Profissional' : professionals.find(p => p.id === selectedProfessionalId)?.name.split(' ')[0]} <ChevronDown size={14} />
+                                    {selectedProfessionalId === 'ALL' ? 'Profissional' : safeFirstName(professionals.find(p => p.id === selectedProfessionalId)?.name)} <ChevronDown size={14} />
                                 </button>
                                 {isProfessionalDropdownOpen && (
                                     <>
@@ -1019,10 +1087,10 @@ const CalendarManagement = () => {
                                         {prof.avatar ? (
                                             <img src={prof.avatar} alt={prof.name} className="w-full h-full object-cover" />
                                         ) : (
-                                            prof.name.charAt(0)
+                                          safeInitial(prof.name)
                                         )}
                                     </div>
-                                    <span className="font-bold text-gray-800 text-xs md:text-base truncate">{prof.name.split(' ')[0]}</span>
+                                      <span className="font-bold text-gray-800 text-xs md:text-base truncate">{safeFirstName(prof.name)}</span>
                                 </div>
                             ))}
                         </div>
@@ -1376,7 +1444,7 @@ const CalendarManagement = () => {
                         <div className="p-6 space-y-6">
                             <div className="flex items-center gap-4">
                                 <div className={`w-16 h-16 rounded-full flex items-center justify-center text-2xl font-bold ${selectedApt.status === 'BLOCKED' ? 'bg-gray-100 text-gray-500' : 'bg-blue-100 text-blue-600'}`}>
-                                    {selectedApt.status === 'BLOCKED' ? <Lock size={32} /> : (clients.find(c => c.id === selectedApt.clientId)?.name.charAt(0) || 'C')}
+                                    {selectedApt.status === 'BLOCKED' ? <Lock size={32} /> : (safeInitial(clients.find(c => c.id === selectedApt.clientId)?.name) || 'C')}
                                 </div>
                                 <div>
                                     <h4 className="text-xl font-bold text-gray-900">
@@ -1390,7 +1458,7 @@ const CalendarManagement = () => {
                                 <div className="p-3 bg-gray-50 rounded-lg">
                                     <p className="text-xs text-gray-500 uppercase font-bold mb-1">Data e Hora</p>
                                     <p className="font-medium text-gray-900">
-                                        {selectedApt.date.split('-').reverse().join('/')} 
+                                        {safeDateBr(selectedApt.date)} 
                                         {selectedApt.isAllDay ? ' (Dia Todo)' : ` às ${selectedApt.time}`}
                                     </p>
                                 </div>
@@ -1406,7 +1474,7 @@ const CalendarManagement = () => {
                                         </div>
                                         <div className="p-3 bg-gray-50 rounded-lg">
                                             <p className="text-xs text-gray-500 uppercase font-bold mb-1">Valor</p>
-                                            <p className="font-bold text-blue-600">R$ {selectedApt.totalValue.toFixed(2)}</p>
+                                            <p className="font-bold text-blue-600">R$ {safeMoney(selectedApt.totalValue)}</p>
                                         </div>
                                     </>
                                 )}
@@ -1487,6 +1555,17 @@ const UserModal = ({ isOpen, onClose, onSave, userToEdit }: {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      const maxSizeInBytes = 1024 * 1024;
+      if (file.size > maxSizeInBytes) {
+        alert('A imagem é muito grande. Use um arquivo de até 1MB.');
+        return;
+      }
+
+      if (!file.type.startsWith('image/')) {
+        alert('Arquivo inválido. Selecione uma imagem.');
+        return;
+      }
+
       const reader = new FileReader();
       reader.onloadend = () => {
         setFormData(prev => ({ ...prev, avatar: reader.result as string }));
@@ -1511,8 +1590,8 @@ const UserModal = ({ isOpen, onClose, onSave, userToEdit }: {
           <div className="flex flex-col items-center gap-4 mb-4">
             <div className="relative group">
               <div className="w-24 h-24 rounded-full bg-gray-100 border-2 border-dashed border-gray-300 flex items-center justify-center overflow-hidden">
-                {formData.avatar ? (
-                  <img src={formData.avatar} alt="Avatar" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                {safeAvatarSrc(formData.avatar) ? (
+                  <img src={safeAvatarSrc(formData.avatar)} alt="Avatar" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                 ) : (
                   <ImageIcon size={32} className="text-gray-400" />
                 )}
@@ -1834,6 +1913,7 @@ const EmailIntegration = () => {
 };
 
 const SettingsManagement = () => {
+  const navigate = useNavigate();
   const { users, addUser, updateUser, deleteUser, categories, addCategory, updateCategory, deleteCategory } = useAppContext();
   const [activeSubTab, setActiveSubTab] = useState<'USERS' | 'ALERTS' | 'PROFILES' | 'HOURS' | 'INTEGRATIONS' | 'OTHER' | 'BILLING' | 'CONTACT' | 'CATEGORIES'>('USERS');
   const [isUserModalOpen, setIsUserModalOpen] = useState(false);
@@ -1999,11 +2079,11 @@ const SettingsManagement = () => {
                 {users.map((u) => (
                   <div key={u.id} className="py-4 flex justify-between items-center">
                     <div className="flex items-center gap-3">
-                      {u.avatar ? (
-                        <img src={u.avatar} alt={u.name} className="w-10 h-10 rounded-full object-cover" referrerPolicy="no-referrer" />
+                      {safeAvatarSrc(u.avatar) ? (
+                        <img src={safeAvatarSrc(u.avatar)} alt={u.name} className="w-10 h-10 rounded-full object-cover" referrerPolicy="no-referrer" />
                       ) : (
                         <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center text-gray-500 font-bold">
-                          {u.name.charAt(0)}
+                          {safeInitial(u.name)}
                         </div>
                       )}
                       <div>
@@ -2572,7 +2652,11 @@ const SettingsManagement = () => {
                       <p className="text-sm text-blue-700">Deseja refazer o passo a passo de configuração da sua barbearia?</p>
                     </div>
                     <button 
-                      onClick={() => window.location.hash = '#/onboarding'}
+                      onClick={() => {
+                        localStorage.setItem('manual_onboarding_request', 'true');
+                        localStorage.setItem('onboarding_completed', 'false');
+                        navigate('/onboarding');
+                      }}
                       className="px-6 py-3 bg-blue-600 text-white rounded-xl font-bold text-sm hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 whitespace-nowrap"
                     >
                       Iniciar Onboarding

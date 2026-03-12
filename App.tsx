@@ -1,18 +1,23 @@
 import React, { useState, useEffect, createContext, useContext } from 'react';
 import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { User, AppNotification, Appointment, Service, Professional, Client, Category } from './types';
-import { MOCK_NOTIFICATIONS, MOCK_SERVICES, MOCK_APPOINTMENTS, MOCK_PROFESSIONALS, MOCK_CLIENTS, MOCK_CATEGORIES } from './constants';
+import { MOCK_NOTIFICATIONS } from './constants';
+import { AgendamentoApi, createAgendamentoApi, deleteAgendamentoApi, listAgendamentosApi, updateAgendamentoApi } from './services/agendamentosApi';
+import { loginApi, meApi } from './services/authApi';
+import { CategoriaApi, createCategoriaApi, deleteCategoriaApi, listCategoriasApi, updateCategoriaApi } from './services/categoriasApi';
+import { ClienteApi, createClienteApi, deleteClienteApi, listClientesApi, updateClienteApi } from './services/clientesApi';
+import { createProfissionalApi, deleteProfissionalApi, listProfissionaisApi, ProfissionalApi, updateProfissionalApi } from './services/profissionaisApi';
+import { createServicoApi, deleteServicoApi, listServicosApi, ServicoApi, updateServicoApi } from './services/servicosApi';
 import { Login } from './views/Login';
 import { ClientPortal } from './views/ClientPortal';
 import { AdminDashboard } from './views/AdminDashboard';
 import { Onboarding } from './views/Onboarding';
-import { X } from 'lucide-react';
 
 // --- Contexts ---
 
 interface AppContextType {
   user: User | null;
-  login: (phone: string, role: 'CLIENT' | 'ADMIN') => void;
+  login: (phone: string, role: 'CLIENT' | 'ADMIN', password?: string) => Promise<void>;
   logout: () => void;
   notifications: AppNotification[];
   markNotificationRead: (id: string) => void;
@@ -81,42 +86,266 @@ const LGPDBanner = () => {
 // --- Main App Component ---
 
 const App: React.FC = () => {
+  const MAX_AVATAR_URL_LENGTH = 300000;
+
+  const normalizeAvatar = (avatar?: string | null) => {
+    if (!avatar) return undefined;
+    if (typeof avatar !== 'string') return undefined;
+    if (avatar.length > MAX_AVATAR_URL_LENGTH) return undefined;
+    if (avatar.startsWith('data:image/') || avatar.startsWith('http://') || avatar.startsWith('https://')) {
+      return avatar;
+    }
+    return undefined;
+  };
+
   const [user, setUser] = useState<User | null>(null);
+  const [authInitialized, setAuthInitialized] = useState(false);
   const [notifications, setNotifications] = useState<AppNotification[]>(MOCK_NOTIFICATIONS);
-  const [appointments, setAppointments] = useState<Appointment[]>(MOCK_APPOINTMENTS);
-  const [services, setServices] = useState<Service[]>(MOCK_SERVICES);
-  const [categories, setCategories] = useState<Category[]>(MOCK_CATEGORIES);
-  const [professionals] = useState<Professional[]>(MOCK_PROFESSIONALS);
-  const [clients, setClients] = useState<Client[]>(MOCK_CLIENTS);
-  const [users, setUsers] = useState<User[]>([
-    { id: 'admin1', name: 'Carlos Admin', role: 'ADMIN', phone: '11999999999', avatar: 'https://ui-avatars.com/api/?name=Carlos+Admin&background=random' },
-    { id: 'recep1', name: 'Beatriz Silva', role: 'EMPLOYEE', phone: '11888888888', avatar: 'https://ui-avatars.com/api/?name=Beatriz+Silva&background=random' },
-    { id: 'barber1', name: 'Ricardo Barber', role: 'EMPLOYEE', phone: '11777777777', avatar: 'https://ui-avatars.com/api/?name=Ricardo+Barber&background=random' }
-  ]);
+  const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [services, setServices] = useState<Service[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [professionals, setProfessionals] = useState<Professional[]>([]);
+  const [clients, setClients] = useState<Client[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
+
+  const isAdminApiSession = () => {
+    return user?.role === 'ADMIN' && !!localStorage.getItem('auth_token');
+  };
+
+  const pushErrorNotification = (message: string) => {
+    const newNotif: AppNotification = {
+      id: Date.now().toString(),
+      title: 'Falha de sincronização',
+      message,
+      type: 'ERROR',
+      read: false,
+      timestamp: 'Agora',
+    };
+    setNotifications(prev => [newNotif, ...prev]);
+  };
+
+  const mapCategoria = (categoria: CategoriaApi): Category => ({
+    id: categoria.id,
+    name: categoria.nome,
+    description: categoria.descricao || undefined,
+    iconName: 'Tag',
+  });
+
+  const mapServico = (servico: ServicoApi, categoriasAtuais: Category[]): Service => {
+    const categoria = categoriasAtuais.find(c => c.id === servico.categoria_id);
+    return {
+      id: servico.id,
+      title: servico.nome,
+      description: servico.nome,
+      price: Number(servico.preco || 0),
+      durationMinutes: servico.duracao_min,
+      category: categoria?.name || 'Geral',
+      iconName: 'Scissors',
+    };
+  };
+
+  const mapProfissional = (profissional: ProfissionalApi): Professional => ({
+    id: profissional.id,
+    name: profissional.nome,
+    role: profissional.cargo || 'Profissional',
+    avatar: normalizeAvatar(profissional.foto_url),
+    specialties: [],
+  });
+
+  const mapProfissionalToUser = (profissional: ProfissionalApi): User => ({
+    id: profissional.id,
+    name: profissional.nome,
+    phone: profissional.telefone || '',
+    role: 'EMPLOYEE',
+    avatar: normalizeAvatar(profissional.foto_url),
+  });
+
+  const mapClient = (client: ClienteApi): Client => ({
+    id: client.id,
+    name: client.nome,
+    phone: client.telefone,
+    birthday: client.data_nascimento || undefined,
+    totalSpent: 0,
+    haircutsCount: 0,
+    lastVisit: undefined,
+  });
+
+  const mapAgendamento = (agendamento: AgendamentoApi, servicosAtuais: Service[]): Appointment => {
+    const servico = servicosAtuais.find(item => item.id === agendamento.servico_id);
+    const dataNormalizada = String(agendamento.data).slice(0, 10);
+    const horaNormalizada = String(agendamento.hora_inicio).slice(0, 5);
+    return {
+      id: agendamento.id,
+      serviceId: agendamento.servico_id,
+      professionalId: agendamento.profissional_id,
+      clientId: agendamento.cliente_id,
+      date: dataNormalizada,
+      time: horaNormalizada,
+      status: (agendamento.status as Appointment['status']) || 'CONFIRMED',
+      totalValue: servico?.price || 0,
+      createdAt: `${dataNormalizada}T${horaNormalizada}:00`,
+    };
+  };
+
+  const getHoraFimByServiceDuration = (horaInicio: string, durationMinutes: number): string => {
+    const [hourStr, minuteStr] = horaInicio.split(':');
+    const initialMinutes = (parseInt(hourStr || '0', 10) * 60) + parseInt(minuteStr || '0', 10);
+    const endMinutes = initialMinutes + Math.max(durationMinutes, 15);
+    const hours = Math.floor(endMinutes / 60) % 24;
+    const minutes = endMinutes % 60;
+    return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+  };
+
+  const syncAdminData = async () => {
+    const categoriasResult = await listCategoriasApi();
+    const categoriasAtuais = categoriasResult.success
+      ? categoriasResult.data.map(mapCategoria)
+      : categories;
+
+    if (categoriasResult.success) {
+      setCategories(categoriasAtuais);
+    }
+
+    const [servicosResult, profissionaisResult, clientesResult] = await Promise.all([
+      listServicosApi(),
+      listProfissionaisApi(),
+      listClientesApi(),
+    ]);
+
+    if (servicosResult.success) {
+      setServices(servicosResult.data.map(item => mapServico(item, categoriasAtuais)));
+    }
+
+    if (profissionaisResult.success) {
+      setProfessionals(profissionaisResult.data.map(mapProfissional));
+      setUsers(profissionaisResult.data.map(mapProfissionalToUser));
+    }
+
+    if (clientesResult.success) {
+      setClients(clientesResult.data.map(mapClient));
+    }
+
+    const servicosMapeados = servicosResult.success
+      ? servicosResult.data.map(item => mapServico(item, categoriasAtuais))
+      : services;
+
+    const agendamentosResult = await listAgendamentosApi();
+    if (agendamentosResult.success) {
+      setAppointments(agendamentosResult.data.map(item => mapAgendamento(item, servicosMapeados)));
+    }
+
+    const errors: string[] = [];
+    if (!categoriasResult.success) errors.push('categorias');
+    if (!servicosResult.success) errors.push('serviços');
+    if (!profissionaisResult.success) errors.push('profissionais');
+    if (!clientesResult.success) errors.push('clientes');
+    if (!agendamentosResult.success) errors.push('agendamentos');
+
+    if (errors.length > 0) {
+      pushErrorNotification(`Não foi possível sincronizar: ${errors.join(', ')}. Exibindo fallback local.`);
+    }
+  };
 
   // Check for session cookie simulation
   useEffect(() => {
-    const savedUser = localStorage.getItem('app_user');
-    if (savedUser) {
-      setUser(JSON.parse(savedUser));
-    }
+    const restoreSession = async () => {
+      try {
+        const token = localStorage.getItem('auth_token');
+        if (token) {
+          const result = await meApi();
+          if (result.success) {
+            const restoredUser: User = {
+              id: result.data.id,
+              name: result.data.nome,
+              phone: result.data.telefone,
+              role: result.data.role,
+            };
+            setUser(restoredUser);
+            localStorage.setItem('app_user', JSON.stringify(restoredUser));
+            return;
+          }
+          localStorage.removeItem('auth_token');
+        }
+
+        const savedUser = localStorage.getItem('app_user');
+        if (savedUser) {
+          const parsedUser = JSON.parse(savedUser) as User;
+          if (parsedUser.role === 'ADMIN') {
+            localStorage.removeItem('app_user');
+          } else {
+            setUser(parsedUser);
+          }
+        }
+      } finally {
+        setAuthInitialized(true);
+      }
+    };
+
+    restoreSession();
   }, []);
 
-  const login = (phone: string, role: 'CLIENT' | 'ADMIN') => {
-    // Simulating auth
-    const newUser: User = {
-      id: role === 'ADMIN' ? 'admin1' : 'client1',
-      name: role === 'ADMIN' ? 'Administrador' : 'João Cliente',
-      phone,
-      role,
-      avatar: `https://ui-avatars.com/api/?name=${role === 'ADMIN' ? 'Admin' : 'Client'}&background=random`
+  useEffect(() => {
+    if (!authInitialized || !isAdminApiSession()) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const sync = async () => {
+      try {
+        await syncAdminData();
+      } catch {
+        if (!cancelled) {
+          pushErrorNotification('Erro ao carregar dados do painel. Mantendo dados locais como fallback.');
+        }
+      }
     };
-    setUser(newUser);
-    localStorage.setItem('app_user', JSON.stringify(newUser));
+
+    sync();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authInitialized, user?.id, user?.role]);
+
+  const login = async (phone: string, role: 'CLIENT' | 'ADMIN', password?: string) => {
+    if (role === 'ADMIN') {
+      const result = await loginApi({
+        telefone: phone,
+        senha: password || '',
+      });
+
+      if (!result.success) {
+        throw new Error(('error' in result && result.error) ? result.error : 'Falha na autenticação');
+      }
+
+      const authenticatedUser: User = {
+        id: result.data.user.id,
+        name: result.data.user.nome,
+        phone: result.data.user.telefone,
+        role: result.data.user.role,
+      };
+
+      localStorage.setItem('auth_token', result.data.token);
+      localStorage.setItem('app_user', JSON.stringify(authenticatedUser));
+      setUser(authenticatedUser);
+      return;
+    }
+
+    const mockClientUser: User = {
+      id: 'client1',
+      name: 'João Cliente',
+      phone,
+      role: 'CLIENT',
+      avatar: 'https://ui-avatars.com/api/?name=Client&background=random'
+    };
+    setUser(mockClientUser);
+    localStorage.setItem('app_user', JSON.stringify(mockClientUser));
   };
 
   const logout = () => {
     setUser(null);
+    localStorage.removeItem('auth_token');
     localStorage.removeItem('app_user');
   };
 
@@ -125,6 +354,27 @@ const App: React.FC = () => {
   };
 
   const addAppointment = (apt: Appointment) => {
+    if (isAdminApiSession()) {
+      void (async () => {
+        const service = services.find(item => item.id === apt.serviceId);
+        const result = await createAgendamentoApi({
+          cliente_id: apt.clientId,
+          profissional_id: apt.professionalId,
+          servico_id: apt.serviceId,
+          data: apt.date,
+          hora_inicio: apt.time,
+          hora_fim: getHoraFimByServiceDuration(apt.time, service?.durationMinutes || 30),
+          status: apt.status,
+        });
+        if (!result.success) {
+          pushErrorNotification(('error' in result && result.error) ? result.error : 'Falha ao criar agendamento.');
+          return;
+        }
+        setAppointments(prev => [mapAgendamento(result.data, services), ...prev]);
+      })();
+      return;
+    }
+
     setAppointments(prev => [apt, ...prev]);
     // Simulate notification
     const newNotif: AppNotification = {
@@ -139,60 +389,345 @@ const App: React.FC = () => {
   };
 
   const updateAppointment = (updatedApt: Appointment) => {
+    if (isAdminApiSession()) {
+      void (async () => {
+        const service = services.find(item => item.id === updatedApt.serviceId);
+        const result = await updateAgendamentoApi(updatedApt.id, {
+          cliente_id: updatedApt.clientId,
+          profissional_id: updatedApt.professionalId,
+          servico_id: updatedApt.serviceId,
+          data: updatedApt.date,
+          hora_inicio: updatedApt.time,
+          hora_fim: getHoraFimByServiceDuration(updatedApt.time, service?.durationMinutes || 30),
+          status: updatedApt.status,
+        });
+        if (!result.success) {
+          pushErrorNotification(('error' in result && result.error) ? result.error : 'Falha ao atualizar agendamento.');
+          return;
+        }
+        const mapped = mapAgendamento(result.data, services);
+        setAppointments(prev => prev.map(item => item.id === mapped.id ? mapped : item));
+      })();
+      return;
+    }
+
     setAppointments(prev => prev.map(a => a.id === updatedApt.id ? updatedApt : a));
   };
 
   const deleteAppointment = (id: string) => {
+    if (isAdminApiSession()) {
+      void (async () => {
+        const result = await deleteAgendamentoApi(id);
+        if (!result.success) {
+          pushErrorNotification(('error' in result && result.error) ? result.error : 'Falha ao cancelar agendamento.');
+          return;
+        }
+        setAppointments(prev => prev.filter(a => a.id !== id));
+      })();
+      return;
+    }
+
     setAppointments(prev => prev.filter(a => a.id !== id));
   };
 
   const updateService = (updatedService: Service) => {
-    setServices(prev => prev.map(s => s.id === updatedService.id ? updatedService : s));
+    if (!isAdminApiSession()) {
+      setServices(prev => prev.map(s => s.id === updatedService.id ? updatedService : s));
+      return;
+    }
+
+    void (async () => {
+      const category = categories.find(c => c.name === updatedService.category);
+      const result = await updateServicoApi(updatedService.id, {
+        nome: updatedService.title,
+        categoria_id: category?.id || null,
+        duracao_min: updatedService.durationMinutes,
+        preco: updatedService.price,
+      });
+
+      if (!result.success) {
+        pushErrorNotification(('error' in result && result.error) ? result.error : 'Falha ao atualizar serviço.');
+        return;
+      }
+
+      const mapped = {
+        ...mapServico(result.data, categories),
+        description: updatedService.description,
+        iconName: updatedService.iconName,
+      };
+      setServices(prev => prev.map(s => s.id === mapped.id ? mapped : s));
+    })();
   };
 
   const addService = (newService: Service) => {
-    setServices(prev => [...prev, newService]);
+    if (!isAdminApiSession()) {
+      setServices(prev => [...prev, newService]);
+      return;
+    }
+
+    void (async () => {
+      const category = categories.find(c => c.name === newService.category);
+      const result = await createServicoApi({
+        nome: newService.title,
+        categoria_id: category?.id || null,
+        duracao_min: newService.durationMinutes,
+        preco: newService.price,
+      });
+
+      if (!result.success) {
+        pushErrorNotification(('error' in result && result.error) ? result.error : 'Falha ao criar serviço.');
+        return;
+      }
+
+      const mapped = {
+        ...mapServico(result.data, categories),
+        description: newService.description,
+        iconName: newService.iconName,
+      };
+      setServices(prev => [...prev, mapped]);
+    })();
   };
 
   const deleteService = (id: string) => {
-    setServices(prev => prev.filter(s => s.id !== id));
+    if (!isAdminApiSession()) {
+      setServices(prev => prev.filter(s => s.id !== id));
+      return;
+    }
+
+    void (async () => {
+      const result = await deleteServicoApi(id);
+      if (!result.success) {
+        const message = ('error' in result && result.error) ? result.error : 'Falha ao excluir serviço.';
+        pushErrorNotification(message);
+        alert(message);
+        return;
+      }
+      setServices(prev => prev.filter(s => s.id !== id));
+    })();
   };
 
   const addCategory = (newCategory: Category) => {
-    setCategories(prev => [...prev, newCategory]);
+    if (!isAdminApiSession()) {
+      setCategories(prev => [...prev, newCategory]);
+      return;
+    }
+
+    void (async () => {
+      const result = await createCategoriaApi({
+        nome: newCategory.name,
+        descricao: newCategory.description || null,
+      });
+
+      if (!result.success) {
+        pushErrorNotification(('error' in result && result.error) ? result.error : 'Falha ao criar categoria.');
+        return;
+      }
+
+      setCategories(prev => [...prev, mapCategoria(result.data)]);
+    })();
   };
 
   const updateCategory = (updatedCategory: Category) => {
-    setCategories(prev => prev.map(c => c.id === updatedCategory.id ? updatedCategory : c));
+    if (!isAdminApiSession()) {
+      setCategories(prev => prev.map(c => c.id === updatedCategory.id ? updatedCategory : c));
+      return;
+    }
+
+    void (async () => {
+      const result = await updateCategoriaApi(updatedCategory.id, {
+        nome: updatedCategory.name,
+        descricao: updatedCategory.description || null,
+      });
+
+      if (!result.success) {
+        pushErrorNotification(('error' in result && result.error) ? result.error : 'Falha ao atualizar categoria.');
+        return;
+      }
+
+      setCategories(prev => prev.map(c => c.id === updatedCategory.id ? mapCategoria(result.data) : c));
+    })();
   };
 
   const deleteCategory = (id: string) => {
-    setCategories(prev => prev.filter(c => c.id !== id));
+    if (!isAdminApiSession()) {
+      setCategories(prev => prev.filter(c => c.id !== id));
+      return;
+    }
+
+    void (async () => {
+      const result = await deleteCategoriaApi(id);
+      if (!result.success) {
+        pushErrorNotification(('error' in result && result.error) ? result.error : 'Falha ao excluir categoria.');
+        return;
+      }
+      setCategories(prev => prev.filter(c => c.id !== id));
+    })();
   };
 
   const addClient = (newClient: Client) => {
-    setClients(prev => [...prev, newClient]);
+    if (!isAdminApiSession()) {
+      setClients(prev => [...prev, newClient]);
+      return;
+    }
+
+    void (async () => {
+      const result = await createClienteApi({
+        nome: newClient.name,
+        telefone: newClient.phone,
+        data_nascimento: newClient.birthday || null,
+      });
+
+      if (!result.success) {
+        pushErrorNotification(('error' in result && result.error) ? result.error : 'Falha ao criar cliente.');
+        return;
+      }
+
+      const mappedClient: Client = {
+        ...mapClient(result.data),
+        totalSpent: newClient.totalSpent,
+        haircutsCount: newClient.haircutsCount,
+        lastVisit: newClient.lastVisit,
+      };
+      setClients(prev => [...prev, mappedClient]);
+    })();
   };
 
   const updateClient = (updatedClient: Client) => {
-    setClients(prev => prev.map(c => c.id === updatedClient.id ? updatedClient : c));
+    if (!isAdminApiSession()) {
+      setClients(prev => prev.map(c => c.id === updatedClient.id ? updatedClient : c));
+      return;
+    }
+
+    void (async () => {
+      const result = await updateClienteApi(updatedClient.id, {
+        nome: updatedClient.name,
+        telefone: updatedClient.phone,
+        data_nascimento: updatedClient.birthday || null,
+      });
+
+      if (!result.success) {
+        pushErrorNotification(('error' in result && result.error) ? result.error : 'Falha ao atualizar cliente.');
+        return;
+      }
+
+      const mappedClient: Client = {
+        ...mapClient(result.data),
+        totalSpent: updatedClient.totalSpent,
+        haircutsCount: updatedClient.haircutsCount,
+        lastVisit: updatedClient.lastVisit,
+      };
+      setClients(prev => prev.map(c => c.id === updatedClient.id ? mappedClient : c));
+    })();
   };
 
   const deleteClient = (id: string) => {
-    setClients(prev => prev.filter(c => c.id !== id));
+    if (!isAdminApiSession()) {
+      setClients(prev => prev.filter(c => c.id !== id));
+      return;
+    }
+
+    void (async () => {
+      const result = await deleteClienteApi(id);
+      if (!result.success) {
+        const message = ('error' in result && result.error) ? result.error : 'Falha ao excluir cliente.';
+        pushErrorNotification(message);
+        alert(message);
+        return;
+      }
+      setClients(prev => prev.filter(c => c.id !== id));
+    })();
   };
 
   const addUser = (newUser: User) => {
-    setUsers(prev => [...prev, newUser]);
+    if (!isAdminApiSession()) {
+      setUsers(prev => [...prev, newUser]);
+      return;
+    }
+
+    void (async () => {
+      if (newUser.avatar && newUser.avatar.length > MAX_AVATAR_URL_LENGTH) {
+        pushErrorNotification('Imagem de avatar muito grande. Use uma imagem menor.');
+        return;
+      }
+
+      const result = await createProfissionalApi({
+        nome: newUser.name,
+        cargo: newUser.role === 'ADMIN' ? 'Administrador' : 'Profissional',
+        telefone: newUser.phone,
+        foto_url: normalizeAvatar(newUser.avatar) || null,
+      });
+
+      if (!result.success) {
+        pushErrorNotification(('error' in result && result.error) ? result.error : 'Falha ao criar profissional.');
+        return;
+      }
+
+      setUsers(prev => [...prev, mapProfissionalToUser(result.data)]);
+      setProfessionals(prev => [...prev, mapProfissional(result.data)]);
+    })();
   };
 
   const updateUser = (updatedUser: User) => {
-    setUsers(prev => prev.map(u => u.id === updatedUser.id ? updatedUser : u));
+    if (!isAdminApiSession()) {
+      setUsers(prev => prev.map(u => u.id === updatedUser.id ? updatedUser : u));
+      return;
+    }
+
+    void (async () => {
+      if (updatedUser.avatar && updatedUser.avatar.length > MAX_AVATAR_URL_LENGTH) {
+        pushErrorNotification('Imagem de avatar muito grande. Use uma imagem menor.');
+        return;
+      }
+
+      const result = await updateProfissionalApi(updatedUser.id, {
+        nome: updatedUser.name,
+        cargo: updatedUser.role === 'ADMIN' ? 'Administrador' : 'Profissional',
+        telefone: updatedUser.phone,
+        foto_url: normalizeAvatar(updatedUser.avatar) || null,
+        ativo: true,
+      });
+
+      if (!result.success) {
+        pushErrorNotification(('error' in result && result.error) ? result.error : 'Falha ao atualizar profissional.');
+        return;
+      }
+
+      setUsers(prev => prev.map(u => u.id === updatedUser.id ? mapProfissionalToUser(result.data) : u));
+      setProfessionals(prev => prev.map(p => p.id === updatedUser.id ? mapProfissional(result.data) : p));
+    })();
   };
 
   const deleteUser = (id: string) => {
-    setUsers(prev => prev.filter(u => u.id !== id));
+    if (!isAdminApiSession()) {
+      setUsers(prev => prev.filter(u => u.id !== id));
+      return;
+    }
+
+    void (async () => {
+      const result = await deleteProfissionalApi(id);
+      if (!result.success) {
+        pushErrorNotification(('error' in result && result.error) ? result.error : 'Falha ao excluir profissional.');
+        return;
+      }
+      setUsers(prev => prev.filter(u => u.id !== id));
+      setProfessionals(prev => prev.filter(p => p.id !== id));
+    })();
   };
+
+  const isStripeSubscriptionActive = () => localStorage.getItem('stripe_subscription_active') === 'true';
+  const isOnboardingCompleted = () => localStorage.getItem('onboarding_completed') === 'true';
+  const isManualOnboardingRequested = () => localStorage.getItem('manual_onboarding_request') === 'true';
+
+  const shouldOpenOnboarding = Boolean(
+    user &&
+    user.role === 'ADMIN' &&
+    isStripeSubscriptionActive() &&
+    !isOnboardingCompleted()
+  );
+
+  if (!authInitialized) {
+    return <div className="min-h-screen bg-gray-50" />;
+  }
 
   return (
     <AppContext.Provider value={{ 
@@ -206,18 +741,24 @@ const App: React.FC = () => {
       <HashRouter>
         <div className="min-h-screen bg-gray-50 text-gray-900 font-sans">
           <Routes>
-            <Route path="/login" element={!user ? <Login /> : <Navigate to={user.role === 'ADMIN' ? '/admin' : '/client'} />} />
+            <Route path="/login" element={!user ? <Login /> : <Navigate to={shouldOpenOnboarding ? '/onboarding' : (user.role === 'ADMIN' ? '/admin' : '/client')} />} />
             
             <Route path="/client/*" element={
               user && user.role === 'CLIENT' ? <ClientPortal /> : <Navigate to="/login" />
             } />
             
             <Route path="/admin/*" element={
-              user && user.role === 'ADMIN' ? <AdminDashboard /> : <Navigate to="/login" />
+              user && user.role === 'ADMIN'
+                ? (shouldOpenOnboarding ? <Navigate to="/onboarding" /> : <AdminDashboard />)
+                : <Navigate to="/login" />
             } />
 
             <Route path="/onboarding" element={
-              user && user.role === 'ADMIN' ? <Onboarding /> : <Navigate to="/login" />
+              user && user.role === 'ADMIN'
+                ? ((isStripeSubscriptionActive() || isManualOnboardingRequested())
+                    ? (isOnboardingCompleted() ? <Navigate to="/admin" /> : <Onboarding />)
+                    : <Navigate to="/admin" />)
+                : <Navigate to="/login" />
             } />
 
             <Route path="/" element={<Navigate to="/login" />} />

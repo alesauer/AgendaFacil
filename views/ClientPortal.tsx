@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAppContext } from '../App';
-import { MOCK_PROFESSIONALS, AVAILABLE_TIMES } from '../constants';
+import { AVAILABLE_TIMES } from '../constants';
 import { Service, Professional, Appointment } from '../types';
 import { 
   Calendar, Clock, User as UserIcon, ChevronLeft, CreditCard, CheckCircle, 
@@ -121,7 +121,14 @@ const ServiceList = ({ onSelect }: { onSelect: (s: Service) => void }) => {
 };
 
 const ProfessionalSelect = ({ service, onSelect }: { service: Service, onSelect: (p: Professional) => void }) => {
-  const availablePros = MOCK_PROFESSIONALS.filter(p => p.specialties.includes(service.id));
+  const { professionals } = useAppContext();
+
+  const availablePros = professionals.filter(professional => {
+    if (!professional.specialties || professional.specialties.length === 0) {
+      return true;
+    }
+    return professional.specialties.includes(service.id);
+  });
 
   return (
     <div className="space-y-4 animate-fade-in">
@@ -139,6 +146,11 @@ const ProfessionalSelect = ({ service, onSelect }: { service: Service, onSelect:
           </button>
         ))}
       </div>
+      {availablePros.length === 0 && (
+        <div className="p-4 bg-gray-100 rounded-xl text-center text-gray-500 text-sm">
+          Nenhum profissional disponível para este serviço no momento.
+        </div>
+      )}
     </div>
   );
 };
