@@ -5,6 +5,36 @@ from backend.supabase_client import get_supabase_client, is_supabase_ready
 
 class ProfissionaisRepository(BaseRepository):
     @staticmethod
+    def has_linked_appointments(barbearia_id: str, profissional_id: str) -> bool:
+        ProfissionaisRepository.require_tenant(barbearia_id)
+        if is_db_ready():
+            row = query_one(
+                """
+                SELECT 1 AS linked
+                FROM agendamentos
+                WHERE barbearia_id = %s AND profissional_id = %s
+                LIMIT 1
+                """,
+                (barbearia_id, profissional_id),
+            )
+            return bool(row)
+
+        if is_supabase_ready():
+            supabase = get_supabase_client()
+            response = (
+                supabase.table("agendamentos")
+                .select("id")
+                .eq("barbearia_id", barbearia_id)
+                .eq("profissional_id", profissional_id)
+                .limit(1)
+                .execute()
+            )
+            data = response.data or []
+            return len(data) > 0
+
+        return False
+
+    @staticmethod
     def list_all(barbearia_id: str):
         ProfissionaisRepository.require_tenant(barbearia_id)
         if is_db_ready():
@@ -32,16 +62,23 @@ class ProfissionaisRepository(BaseRepository):
         return []
 
     @staticmethod
-    def create(barbearia_id: str, nome: str, cargo: str, telefone: str, foto_url: str | None):
+    def create(
+        barbearia_id: str,
+        nome: str,
+        cargo: str,
+        telefone: str,
+        foto_url: str | None,
+        profissional_id: str | None = None,
+    ):
         ProfissionaisRepository.require_tenant(barbearia_id)
         if is_db_ready():
             return query_one(
                 """
-                INSERT INTO profissionais (barbearia_id, nome, cargo, telefone, foto_url, ativo)
-                VALUES (%s, %s, %s, %s, %s, true)
+                INSERT INTO profissionais (id, barbearia_id, nome, cargo, telefone, foto_url, ativo)
+                VALUES (COALESCE(%s::uuid, gen_random_uuid()), %s, %s, %s, %s, %s, true)
                 RETURNING id, barbearia_id, nome, cargo, telefone, foto_url, ativo
                 """,
-                (barbearia_id, nome, cargo, telefone, foto_url),
+                (profissional_id, barbearia_id, nome, cargo, telefone, foto_url),
             )
 
         if is_supabase_ready():
@@ -50,6 +87,7 @@ class ProfissionaisRepository(BaseRepository):
                 supabase.table("profissionais")
                 .insert(
                     {
+                        "id": profissional_id,
                         "barbearia_id": barbearia_id,
                         "nome": nome,
                         "cargo": cargo,

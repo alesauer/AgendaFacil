@@ -34,11 +34,13 @@ View your app in AI Studio: https://ai.studio/apps/c70d021a-d973-4e92-9972-78af0
 6. Rode a API:
    `flask --app app run --host 0.0.0.0 --port 5000`
 
+Se seu ambiente usa `HTTP_PROXY/HTTPS_PROXY` e aparecer `Connection refused` ao acessar o Supabase, mantenha `BYPASS_PROXY_FOR_SUPABASE=true` e `DISABLE_SYSTEM_PROXY_FOR_SUPABASE=true` no `backend/.env`.
+
 ### Variáveis frontend para API
 
 Crie `.env.local` na raiz com:
 
-`VITE_API_BASE_URL=http://localhost:5000`
+`VITE_API_BASE_URL=http://127.0.0.1:5000`
 
 `VITE_DEFAULT_TENANT_SLUG=demo`
 
@@ -54,10 +56,13 @@ No SQL Editor do Supabase, execute nesta ordem:
 - `backend/migrations/002_module2_seed_demo.sql`
 - `backend/migrations/003_module3_core_agenda.sql`
 - `backend/migrations/003_module3_seed_agendamentos_demo.sql`
+- `backend/migrations/004_module4_horarios_funcionamento.sql`
+- `backend/migrations/005_module5_identidade_visual.sql`
 
 ### 2) Subir backend Flask
 
-Configure `backend/.env` com a `DATABASE_URL` do Supabase e rode a API.
+Configure `backend/.env` com `SUPABASE_URL` e `SUPABASE_KEY` e rode a API.
+O backend está em modo Supabase-only por código, então `DATABASE_URL` local é ignorada.
 
 ### 3) Criar primeiro admin da barbearia demo
 

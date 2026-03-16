@@ -4,7 +4,9 @@ export interface User {
   id: string;
   name: string;
   phone: string;
+  email?: string;
   role: UserRole;
+  active?: boolean;
   avatar?: string;
 }
 
@@ -46,6 +48,7 @@ export interface Appointment {
   clientId: string;
   date: string; // YYYY-MM-DD
   time: string; // HH:mm
+  endTime?: string; // HH:mm
   status: AppointmentStatus;
   totalValue: number;
   paymentMethod?: 'PIX' | 'CREDIT_CARD';
@@ -78,4 +81,20 @@ export interface DashboardStats {
   totalAppointments: number;
   topService: string;
   cancelRate: number;
+}
+
+export interface BusinessHour {
+  dayOfWeek: number;
+  day: string;
+  open: boolean;
+  start: string;
+  end: string;
+}
+
+export interface BrandIdentity {
+  name: string;
+  logoUrl?: string;
+  iconName?: string;
+  primaryColor?: string;
+  secondaryColor?: string;
 }

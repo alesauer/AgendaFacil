@@ -5,6 +5,36 @@ from backend.supabase_client import get_supabase_client, is_supabase_ready
 
 class CategoriasRepository(BaseRepository):
     @staticmethod
+    def has_linked_services(barbearia_id: str, categoria_id: str) -> bool:
+        CategoriasRepository.require_tenant(barbearia_id)
+        if is_db_ready():
+            row = query_one(
+                """
+                SELECT 1 AS linked
+                FROM servicos
+                WHERE barbearia_id = %s AND categoria_id = %s
+                LIMIT 1
+                """,
+                (barbearia_id, categoria_id),
+            )
+            return bool(row)
+
+        if is_supabase_ready():
+            supabase = get_supabase_client()
+            response = (
+                supabase.table("servicos")
+                .select("id")
+                .eq("barbearia_id", barbearia_id)
+                .eq("categoria_id", categoria_id)
+                .limit(1)
+                .execute()
+            )
+            data = response.data or []
+            return len(data) > 0
+
+        return False
+
+    @staticmethod
     def list_all(barbearia_id: str):
         CategoriasRepository.require_tenant(barbearia_id)
         if is_db_ready():

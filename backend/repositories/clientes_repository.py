@@ -5,6 +5,36 @@ from backend.supabase_client import get_supabase_client, is_supabase_ready
 
 class ClientesRepository(BaseRepository):
     @staticmethod
+    def has_linked_appointments(barbearia_id: str, cliente_id: str) -> bool:
+        ClientesRepository.require_tenant(barbearia_id)
+        if is_db_ready():
+            row = query_one(
+                """
+                SELECT 1 AS linked
+                FROM agendamentos
+                WHERE barbearia_id = %s AND cliente_id = %s
+                LIMIT 1
+                """,
+                (barbearia_id, cliente_id),
+            )
+            return bool(row)
+
+        if is_supabase_ready():
+            supabase = get_supabase_client()
+            response = (
+                supabase.table("agendamentos")
+                .select("id")
+                .eq("barbearia_id", barbearia_id)
+                .eq("cliente_id", cliente_id)
+                .limit(1)
+                .execute()
+            )
+            data = response.data or []
+            return len(data) > 0
+
+        return False
+
+    @staticmethod
     def list_all(barbearia_id: str):
         ClientesRepository.require_tenant(barbearia_id)
         if is_db_ready():

@@ -7,6 +7,10 @@ nome
 slug  
 telefone  
 cidade  
+logo_url  
+icone_marca  
+cor_primaria  
+cor_secundaria  
 created_at  
 
 ## usuarios
@@ -74,3 +78,12 @@ data
 hora_inicio  
 hora_fim  
 motivo
+
+## barbearia_horarios_funcionamento
+
+id  
+barbearia_id  
+dia_semana  
+aberto  
+hora_inicio  
+hora_fim

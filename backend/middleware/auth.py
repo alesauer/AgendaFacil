@@ -23,6 +23,9 @@ def create_access_token(user_id: str, barbearia_id: str, role: str):
 def auth_required(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
+        if request.method == "OPTIONS":
+            return current_app.make_default_options_response()
+
         auth_header = request.headers.get("Authorization", "")
         if not auth_header.startswith("Bearer "):
             return error("Token ausente", 401)

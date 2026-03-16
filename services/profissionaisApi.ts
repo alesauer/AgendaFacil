@@ -11,6 +11,7 @@ export type ProfissionalApi = {
 };
 
 export type ProfissionalPayload = {
+  id?: string;
   nome: string;
   cargo?: string;
   telefone?: string;

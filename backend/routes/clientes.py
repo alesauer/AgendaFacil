@@ -50,7 +50,22 @@ def update_cliente(cliente_id: str):
 @clientes_bp.delete("/<cliente_id>")
 @auth_required
 def delete_cliente(cliente_id: str):
-    deleted = ClientesRepository.delete(g.barbearia_id, cliente_id)
-    if not deleted:
-        return error("Cliente não encontrado", 404)
-    return success({"id": deleted["id"]})
+    try:
+        if ClientesRepository.has_linked_appointments(g.barbearia_id, cliente_id):
+            return error(
+                "Este cliente possui agendamentos vinculados. Cancele/exclua os agendamentos antes de excluir o cliente.",
+                409,
+            )
+
+        deleted = ClientesRepository.delete(g.barbearia_id, cliente_id)
+        if not deleted:
+            return error("Cliente não encontrado", 404)
+        return success({"id": deleted["id"]})
+    except Exception as exc:
+        message = str(exc).lower()
+        if "foreign key" in message or "fk_agendamentos_cliente_tenant" in message:
+            return error(
+                "Este cliente possui agendamentos vinculados. Cancele/exclua os agendamentos antes de excluir o cliente.",
+                409,
+            )
+        return error("Falha interna ao excluir cliente.", 500)

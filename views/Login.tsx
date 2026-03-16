@@ -3,7 +3,7 @@ import { useAppContext } from '../App';
 import { User as UserIcon, Lock, Phone, ArrowRight, X, Mail, CheckCircle } from 'lucide-react';
 
 export const Login: React.FC = () => {
-  const { login } = useAppContext();
+  const { login, brandIdentity } = useAppContext();
   const [isClient, setIsClient] = useState(true);
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
@@ -53,14 +53,15 @@ export const Login: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
+    <div className="min-h-screen flex items-center justify-center bg-gray-100 p-4">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden">
         
         {/* Header Toggle */}
         <div className="flex text-sm font-medium border-b">
           <button 
             onClick={() => setIsClient(true)}
-            className={`flex-1 py-4 text-center transition-colors ${isClient ? 'bg-blue-600 text-white' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'}`}
+            className={`flex-1 py-4 text-center transition-colors ${isClient ? 'text-white' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'}`}
+            style={isClient ? { backgroundColor: brandIdentity.primaryColor || '#2563eb' } : undefined}
           >
             <div className="flex items-center justify-center gap-2">
               <UserIcon size={18} />
@@ -69,7 +70,8 @@ export const Login: React.FC = () => {
           </button>
           <button 
             onClick={() => setIsClient(false)}
-            className={`flex-1 py-4 text-center transition-colors ${!isClient ? 'bg-indigo-600 text-white' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'}`}
+            className={`flex-1 py-4 text-center transition-colors ${!isClient ? 'text-white' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'}`}
+            style={!isClient ? { backgroundColor: brandIdentity.primaryColor || '#2563eb' } : undefined}
           >
             <div className="flex items-center justify-center gap-2">
               <Lock size={18} />
@@ -80,7 +82,7 @@ export const Login: React.FC = () => {
 
         <div className="p-8">
           <div className="text-center mb-8">
-            <h1 className="text-2xl font-bold text-gray-800">Bem-vindo ao AgendeFácil</h1>
+            <h1 className="text-2xl font-bold text-gray-800">Bem-vindo ao {brandIdentity.name || 'AgendeFácil'}</h1>
             <p className="text-gray-500 mt-2">
               {isClient ? 'Acesse seu histórico e agende serviços.' : 'Gerencie sua unidade e equipe.'}
             </p>
@@ -124,7 +126,8 @@ export const Login: React.FC = () => {
                   <button 
                     type="button"
                     onClick={() => setIsForgotModalOpen(true)}
-                    className="text-xs font-medium text-indigo-600 hover:text-indigo-800 transition-colors"
+                    className="text-xs font-medium transition-colors"
+                    style={{ color: brandIdentity.primaryColor || '#2563eb' }}
                   >
                     Esqueci minha senha
                   </button>
@@ -141,9 +144,8 @@ export const Login: React.FC = () => {
             <button
               type="submit"
               disabled={isLoading}
-              className={`w-full flex items-center justify-center py-3 px-4 border border-transparent rounded-lg text-white font-medium focus:outline-none focus:ring-2 focus:ring-offset-2 transition-all transform active:scale-95 disabled:opacity-70 disabled:cursor-not-allowed
-                ${isClient ? 'bg-blue-600 hover:bg-blue-700 focus:ring-blue-500' : 'bg-indigo-600 hover:bg-indigo-700 focus:ring-indigo-500'}
-              `}
+              className="w-full flex items-center justify-center py-3 px-4 border border-transparent rounded-lg text-white font-medium focus:outline-none focus:ring-2 focus:ring-offset-2 transition-all transform active:scale-95 disabled:opacity-70 disabled:cursor-not-allowed"
+              style={{ backgroundColor: brandIdentity.primaryColor || '#2563eb' }}
             >
               {isLoading ? 'Processando...' : (
                 <span className="flex items-center gap-2">
@@ -187,7 +189,7 @@ export const Login: React.FC = () => {
               ) : (
                 <form onSubmit={handleRecoverySubmit} className="space-y-6">
                   <div className="text-center mb-6">
-                    <div className="w-16 h-16 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4" style={{ backgroundColor: brandIdentity.secondaryColor || '#eff6ff', color: brandIdentity.primaryColor || '#2563eb' }}>
                       <Mail size={32} />
                     </div>
                     <p className="text-sm text-gray-500">
@@ -206,7 +208,7 @@ export const Login: React.FC = () => {
                         placeholder="seu@email.com"
                         value={recoveryEmail}
                         onChange={(e) => setRecoveryEmail(e.target.value)}
-                        className="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition-colors text-gray-600"
+                        className="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 transition-colors text-gray-600"
                         required
                       />
                     </div>
@@ -215,7 +217,8 @@ export const Login: React.FC = () => {
                   <button
                     type="submit"
                     disabled={isRecovering}
-                    className="w-full flex items-center justify-center py-3 px-4 border border-transparent rounded-lg text-white font-medium bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-all transform active:scale-95 disabled:opacity-70 disabled:cursor-not-allowed"
+                    className="w-full flex items-center justify-center py-3 px-4 border border-transparent rounded-lg text-white font-medium focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-all transform active:scale-95 disabled:opacity-70 disabled:cursor-not-allowed"
+                    style={{ backgroundColor: brandIdentity.primaryColor || '#2563eb' }}
                   >
                     {isRecovering ? 'Processando...' : 'Enviar Link de Recuperação'}
                   </button>

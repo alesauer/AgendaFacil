@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAppContext } from '../App';
 import { useNavigate } from 'react-router-dom';
-import { Client } from '../types';
+import { BrandIdentity, Client, Service } from '../types';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { LayoutDashboard, Users, Calendar, Settings, LogOut, Plus, Edit, Trash2, DollarSign, X, Clock, Tag, Image as ImageIcon, Search, ChevronLeft, ChevronRight, Bell, Mail, MessageSquare, Shield, Globe, Menu, Scissors, Sparkles, Smile, Zap, Heart, Share2, RotateCcw, ChevronDown, Lock, Camera, Store, User as UserIcon, Palette, Check, CreditCard, Receipt, BarChart3, Phone, Headphones, ExternalLink, List } from 'lucide-react';
 import { MOCK_APPOINTMENTS } from '../constants';
@@ -33,8 +33,22 @@ const ServiceIcon = ({ name, className }: { name?: string, className?: string })
   }
 };
 
-const DashboardHome = () => {
-  const { appointments, services, professionals } = useAppContext();
+const BrandIcon = ({ name, className }: { name?: string, className?: string }) => {
+  switch ((name || '').toLowerCase()) {
+    case 'store': return <Store className={className} />;
+    case 'user': return <UserIcon className={className} />;
+    case 'sparkles': return <Sparkles className={className} />;
+    case 'heart': return <Heart className={className} />;
+    case 'zap': return <Zap className={className} />;
+    case 'scissors':
+    default:
+      return <Scissors className={className} />;
+  }
+};
+
+const DashboardHome = ({ onViewAllRecent }: { onViewAllRecent: () => void }) => {
+  const { appointments, services, professionals, clients } = useAppContext();
+  const [recentSearchTerm, setRecentSearchTerm] = useState('');
   
   // Quick Stats Calculation
   const totalRevenue = appointments.reduce((acc, curr) => acc + curr.totalValue, 0);
@@ -58,6 +72,23 @@ const DashboardHome = () => {
     { name: 'Combo', value: 300 },
     { name: 'Estética', value: 200 },
   ];
+
+  const recentAppointments = appointments.filter(apt => {
+    const service = services.find(s => s.id === apt.serviceId);
+    const professional = professionals.find(p => p.id === apt.professionalId);
+    const client = clients.find(c => c.id === apt.clientId);
+
+    const haystack = [
+      client?.name || '',
+      service?.title || '',
+      professional?.name || '',
+      apt.status || '',
+      apt.date || '',
+      apt.time || '',
+    ].join(' ').toLowerCase();
+
+    return haystack.includes(recentSearchTerm.trim().toLowerCase());
+  });
 
   return (
     <div className="space-y-6">
@@ -128,7 +159,19 @@ const DashboardHome = () => {
       <div className="bg-white rounded-xl shadow-sm overflow-hidden">
         <div className="px-6 py-4 border-b flex justify-between items-center">
             <h3 className="font-bold text-gray-800">Agendamentos Recentes</h3>
-            <button className="text-sm text-blue-600 hover:underline">Ver Todos</button>
+            <button onClick={onViewAllRecent} className="text-sm text-blue-600 hover:underline">Ver Todos</button>
+        </div>
+        <div className="px-6 py-3 border-b bg-gray-50/60">
+          <div className="relative max-w-md">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+            <input
+              type="text"
+              placeholder="Pesquisar agendamentos recentes..."
+              value={recentSearchTerm}
+              onChange={(e) => setRecentSearchTerm(e.target.value)}
+              className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-white"
+            />
+          </div>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm text-left">
@@ -139,19 +182,19 @@ const DashboardHome = () => {
                 <th className="px-6 py-3">Profissional</th>
                 <th className="px-6 py-3">Data/Hora</th>
                 <th className="px-6 py-3">Status</th>
-                <th className="px-6 py-3 text-right">Ação</th>
               </tr>
             </thead>
             <tbody className="divide-y">
-                {appointments.slice(0, 5).map(apt => {
+              {recentAppointments.slice(0, 5).map(apt => {
                     const service = services.find(s => s.id === apt.serviceId);
                     const professional = professionals.find(p => p.id === apt.professionalId);
+                  const client = clients.find(c => c.id === apt.clientId);
                     return (
                         <tr key={apt.id} className="hover:bg-gray-50">
-                            <td className="px-6 py-3 font-medium">Cliente {apt.clientId}</td>
+                      <td className="px-6 py-3 font-medium">{client?.name || 'Cliente não encontrado'}</td>
                             <td className="px-6 py-3">{service?.title || 'Serviço não encontrado'}</td>
                             <td className="px-6 py-3">{professional?.name || 'Não atribuído'}</td>
-                            <td className="px-6 py-3">{apt.date.split('-').reverse().join('/')} - {apt.time}</td>
+                            <td className="px-6 py-3">{safeDateBr(apt.date)} - {apt.time || '--:--'}</td>
                             <td className="px-6 py-3">
                                  <span className={`text-xs px-2 py-1 rounded-full ${
                                      apt.status === 'CONFIRMED' ? 'bg-green-100 text-green-700' : 
@@ -162,12 +205,16 @@ const DashboardHome = () => {
                                       apt.status === 'PENDING_PAYMENT' ? 'Aguardando' :
                                       apt.status === 'CANCELLED' ? 'Cancelado' : apt.status}</span>
                             </td>
-                            <td className="px-6 py-3 text-right">
-                                <button className="text-gray-400 hover:text-blue-600"><Edit size={16} /></button>
-                            </td>
                         </tr>
                     );
                 })}
+                {recentAppointments.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="px-6 py-8 text-center text-gray-500">
+                      Nenhum agendamento encontrado para o filtro informado.
+                    </td>
+                  </tr>
+                )}
             </tbody>
           </table>
         </div>
@@ -177,8 +224,12 @@ const DashboardHome = () => {
 };
 
 const ServicesManagement = () => {
-  const { services, deleteService, addService, updateService, categories, appointments } = useAppContext();
+  const { services, deleteService, addService, updateService, categories } = useAppContext();
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+    const [serviceToDelete, setServiceToDelete] = useState<Service | null>(null);
+    const [deleteError, setDeleteError] = useState<string | null>(null);
+    const [isDeletingService, setIsDeletingService] = useState(false);
   const [selectedServiceId, setSelectedServiceId] = useState<string | null>(null);
     const [formData, setFormData] = useState({
         title: '',
@@ -354,6 +405,73 @@ const ServicesManagement = () => {
                     </div>
                 </div>
             )}
+
+            {isDeleteModalOpen && serviceToDelete && (
+              <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-fade-in">
+                  <div className="px-6 py-4 border-b flex justify-between items-center bg-gray-50">
+                    <h3 className="font-bold text-gray-900">Confirmar exclusão</h3>
+                    <button
+                      onClick={() => {
+                        setIsDeleteModalOpen(false);
+                        setServiceToDelete(null);
+                        setDeleteError(null);
+                      }}
+                      className="text-gray-400 hover:text-gray-600"
+                    >
+                      <X size={20} />
+                    </button>
+                  </div>
+                  <div className="p-6 space-y-4">
+                    <p className="text-sm text-gray-600">
+                      Deseja realmente excluir o serviço <span className="font-semibold text-gray-900">{serviceToDelete.title || 'Sem nome'}</span>?
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      Se houver agendamentos vinculados, a API bloqueará a exclusão e exibirá a mensagem de erro.
+                    </p>
+                    {deleteError && (
+                      <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                        {deleteError}
+                      </div>
+                    )}
+                    <div className="pt-2 flex gap-3">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsDeleteModalOpen(false);
+                          setServiceToDelete(null);
+                          setDeleteError(null);
+                        }}
+                        className="flex-1 px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50 transition-colors"
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (!serviceToDelete || isDeletingService) return;
+                          setIsDeletingService(true);
+                          const result = await deleteService(serviceToDelete.id);
+                          if (!result.success) {
+                            setDeleteError(result.error || 'Falha ao excluir serviço.');
+                            setIsDeletingService(false);
+                            return;
+                          }
+                          setIsDeleteModalOpen(false);
+                          setServiceToDelete(null);
+                          setDeleteError(null);
+                          setIsDeletingService(false);
+                        }}
+                        className="flex-1 px-4 py-2.5 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                        disabled={isDeletingService}
+                      >
+                        {isDeletingService ? 'Excluindo...' : 'Excluir'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
             
             <div className="bg-white rounded-xl shadow-sm overflow-hidden border border-gray-100">
                 <table className="w-full text-sm text-left">
@@ -374,13 +492,13 @@ const ServicesManagement = () => {
                                             <ServiceIcon name={service.iconName} className="w-5 h-5" />
                                         </div>
                                         <div>
-                                            <p className="font-medium text-gray-900">{service.title}</p>
-                                            <p className="text-xs text-gray-500">{service.category}</p>
+                                            <p className="font-medium text-gray-900">{service.title || 'Serviço sem nome'}</p>
+                                            <p className="text-xs text-gray-500">{service.category || 'Sem categoria'}</p>
                                         </div>
                                     </div>
                                 </td>
-                                <td className="px-6 py-3">R$ {service.price.toFixed(2)}</td>
-                                <td className="px-6 py-3">{service.durationMinutes} min</td>
+                                      <td className="px-6 py-3">R$ {Number(service.price || 0).toFixed(2)}</td>
+                                      <td className="px-6 py-3">{Number(service.durationMinutes || 0)} min</td>
                                 <td className="px-6 py-3 text-right space-x-3">
                                   <button
                                     onClick={() => {
@@ -399,18 +517,9 @@ const ServicesManagement = () => {
                                   ><Edit size={18} /></button>
                                     <button
                                       onClick={() => {
-                                        const hasLinkedAppointments = appointments.some(
-                                          apt => apt.serviceId === service.id && apt.status !== 'CANCELLED'
-                                        );
-
-                                        if (hasLinkedAppointments) {
-                                          alert('Este serviço possui agendamentos vinculados. Cancele/ajuste os agendamentos antes de excluir.');
-                                          return;
-                                        }
-
-                                        if (window.confirm('Tem certeza que deseja excluir este serviço?')) {
-                                          deleteService(service.id);
-                                        }
+                                        setDeleteError(null);
+                                        setServiceToDelete(service);
+                                        setIsDeleteModalOpen(true);
                                       }}
                                       className="text-red-600 hover:text-red-800"
                                     ><Trash2 size={18} /></button>
@@ -425,11 +534,19 @@ const ServicesManagement = () => {
 };
 
 const ClientsManagement = () => {
-  const { clients, addClient, updateClient, deleteClient, appointments } = useAppContext();
+  const { clients, addClient, updateClient, deleteClient } = useAppContext();
     const [searchTerm, setSearchTerm] = useState('');
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+    const [isBulkDeleteModalOpen, setIsBulkDeleteModalOpen] = useState(false);
+    const [isDeletingClient, setIsDeletingClient] = useState(false);
+    const [isBulkDeletingClients, setIsBulkDeletingClients] = useState(false);
+    const [deleteClientError, setDeleteClientError] = useState<string | null>(null);
+    const [bulkDeleteClientError, setBulkDeleteClientError] = useState<string | null>(null);
     const [modalMode, setModalMode] = useState<'ADD' | 'EDIT' | 'VIEW'>('ADD');
     const [selectedClient, setSelectedClient] = useState<Client | null>(null);
+    const [clientToDelete, setClientToDelete] = useState<Client | null>(null);
+    const [selectedClientIds, setSelectedClientIds] = useState<string[]>([]);
     const [formData, setFormData] = useState({
         name: '',
         phone: '',
@@ -440,9 +557,33 @@ const ClientsManagement = () => {
     });
 
     const filteredClients = clients.filter(c => 
-        c.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-        c.phone.includes(searchTerm)
+      (c.name || '').toLowerCase().includes(searchTerm.toLowerCase()) || 
+      (c.phone || '').includes(searchTerm)
     );
+
+    const selectedCount = selectedClientIds.length;
+    const allFilteredSelected = filteredClients.length > 0 && filteredClients.every(client => selectedClientIds.includes(client.id));
+
+    useEffect(() => {
+      setSelectedClientIds(prev => prev.filter(id => clients.some(client => client.id === id)));
+    }, [clients]);
+
+    const toggleClientSelection = (id: string) => {
+      setSelectedClientIds(prev => prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]);
+    };
+
+    const toggleSelectAllFiltered = () => {
+      if (allFilteredSelected) {
+        const filteredIds = new Set(filteredClients.map(client => client.id));
+        setSelectedClientIds(prev => prev.filter(id => !filteredIds.has(id)));
+        return;
+      }
+
+      setSelectedClientIds(prev => {
+        const merged = new Set([...prev, ...filteredClients.map(client => client.id)]);
+        return Array.from(merged);
+      });
+    };
 
     const openModal = (mode: 'ADD' | 'EDIT' | 'VIEW', client?: Client) => {
         setModalMode(mode);
@@ -491,19 +632,60 @@ const ClientsManagement = () => {
     };
 
     const handleDelete = (id: string) => {
-      const hasLinkedAppointments = appointments.some(
-        apt => apt.clientId === id && apt.status !== 'CANCELLED'
-      );
+      const targetClient = clients.find(c => c.id === id) || null;
+      setDeleteClientError(null);
+      setClientToDelete(targetClient);
+      setIsDeleteModalOpen(true);
+    };
 
-      if (hasLinkedAppointments) {
-        alert('Este cliente possui agendamentos vinculados. Cancele/ajuste os agendamentos antes de excluir.');
+    const confirmDeleteClient = async () => {
+      if (!clientToDelete) return;
+      if (isDeletingClient) return;
+      setIsDeletingClient(true);
+      const result = await deleteClient(clientToDelete.id);
+      if (!result.success) {
+        setDeleteClientError(result.error || 'Falha ao excluir cliente.');
+        setIsDeletingClient(false);
+        return;
+      }
+      setIsDeleteModalOpen(false);
+      setClientToDelete(null);
+      setDeleteClientError(null);
+      setIsDeletingClient(false);
+      setIsModalOpen(false);
+      setSelectedClientIds(prev => prev.filter(id => id !== clientToDelete.id));
+    };
+
+    const confirmBulkDeleteClients = async () => {
+      if (selectedClientIds.length === 0 || isBulkDeletingClients) return;
+      setBulkDeleteClientError(null);
+      setIsBulkDeletingClients(true);
+
+      const failedClientIds: string[] = [];
+      let successCount = 0;
+
+      for (const clientId of selectedClientIds) {
+        const result = await deleteClient(clientId);
+        if (result.success) {
+          successCount += 1;
+        } else {
+          failedClientIds.push(clientId);
+        }
+      }
+
+      if (failedClientIds.length > 0) {
+        setSelectedClientIds(failedClientIds);
+        setBulkDeleteClientError(
+          `${successCount} cliente(s) excluído(s). ${failedClientIds.length} não puderam ser excluídos por vínculo com agendamentos ou erro de API.`
+        );
+        setIsBulkDeletingClients(false);
         return;
       }
 
-        if (window.confirm('Tem certeza que deseja excluir este cliente?')) {
-            deleteClient(id);
-            setIsModalOpen(false);
-        }
+      setSelectedClientIds([]);
+      setIsBulkDeleteModalOpen(false);
+      setBulkDeleteClientError(null);
+      setIsBulkDeletingClients(false);
     };
 
     return (
@@ -529,11 +711,103 @@ const ClientsManagement = () => {
                     </button>
                 </div>
             </div>
+
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-white border border-gray-100 rounded-xl p-3">
+                  <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={allFilteredSelected}
+                      onChange={toggleSelectAllFiltered}
+                      disabled={filteredClients.length === 0}
+                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    Selecionar todos ({filteredClients.length})
+                  </label>
+
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm text-gray-600">Selecionados: <span className="font-semibold text-gray-900">{selectedCount}</span></span>
+                    <button
+                      onClick={() => {
+                        setBulkDeleteClientError(null);
+                        setIsBulkDeleteModalOpen(true);
+                      }}
+                      disabled={selectedCount === 0}
+                      className="px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      Excluir selecionados
+                    </button>
+                  </div>
+                </div>
             
-            <div className="bg-white rounded-xl shadow-sm overflow-hidden border border-gray-100">
-                <table className="w-full text-sm text-left">
+                <div className="md:hidden space-y-3">
+                  {filteredClients.map(client => (
+                    <div key={client.id} className="bg-white rounded-xl border border-gray-100 p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <label className="inline-flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={selectedClientIds.includes(client.id)}
+                            onChange={() => toggleClientSelection(client.id)}
+                            className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                          />
+                          <span className="font-medium text-gray-900">{client.name}</span>
+                        </label>
+                        <div className="flex items-center gap-3">
+                          <button
+                            onClick={() => openModal('EDIT', client)}
+                            className="text-blue-600 hover:text-blue-800"
+                          >
+                            <Edit size={18} />
+                          </button>
+                          <button
+                            onClick={() => handleDelete(client.id)}
+                            className="text-red-600 hover:text-red-800"
+                          >
+                            <Trash2 size={18} />
+                          </button>
+                        </div>
+                      </div>
+                      <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                        <div>
+                          <p className="text-xs text-gray-500">Telefone</p>
+                          <p className="text-gray-700">{client.phone}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-gray-500">Cortes</p>
+                          <p className="text-gray-700 font-medium">{client.haircutsCount}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-gray-500">Total Gasto</p>
+                          <p className="text-gray-900 font-semibold">R$ {safeMoney(client.totalSpent)}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-gray-500">Última Visita</p>
+                          <p className="text-gray-700">{safeDateBr(client.lastVisit)}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  {filteredClients.length === 0 && (
+                    <div className="bg-white rounded-xl border border-gray-100 p-6 text-center text-sm text-gray-500">
+                      Nenhum cliente encontrado.
+                    </div>
+                  )}
+                </div>
+
+                <div className="hidden md:block bg-white rounded-xl shadow-sm overflow-hidden border border-gray-100">
+                  <div className="overflow-x-auto">
+                  <table className="w-full text-sm text-left min-w-[860px]">
                     <thead className="bg-gray-50 text-gray-600 font-medium">
                     <tr>
+                      <th className="px-6 py-3 w-14">
+                        <input
+                          type="checkbox"
+                          checked={allFilteredSelected}
+                          onChange={toggleSelectAllFiltered}
+                          disabled={filteredClients.length === 0}
+                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        />
+                      </th>
                         <th className="px-6 py-3">Cliente</th>
                         <th className="px-6 py-3">Telefone</th>
                         <th className="px-6 py-3">Cortes</th>
@@ -545,6 +819,14 @@ const ClientsManagement = () => {
                     <tbody className="divide-y">
                         {filteredClients.map(client => (
                             <tr key={client.id} className="hover:bg-gray-50">
+                            <td className="px-6 py-4">
+                              <input
+                                type="checkbox"
+                                checked={selectedClientIds.includes(client.id)}
+                                onChange={() => toggleClientSelection(client.id)}
+                                className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                              />
+                            </td>
                                 <td className="px-6 py-4">
                                     <div className="flex items-center gap-3">
                                         <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold">
@@ -559,22 +841,23 @@ const ClientsManagement = () => {
                                 <td className="px-6 py-4 text-gray-600">{safeDateBr(client.lastVisit)}</td>
                                 <td className="px-6 py-4 text-right space-x-3">
                                     <button 
-                                        onClick={() => openModal('VIEW', client)}
-                                        className="text-blue-600 hover:text-blue-800 font-medium"
+                                    onClick={() => openModal('EDIT', client)}
+                                    className="text-blue-600 hover:text-blue-800"
                                     >
-                                        Ver Perfil
+                                    <Edit size={18} />
                                     </button>
                                     <button 
-                                        onClick={() => openModal('EDIT', client)}
-                                        className="text-gray-400 hover:text-gray-600"
+                                    onClick={() => handleDelete(client.id)}
+                                    className="text-red-600 hover:text-red-800"
                                     >
-                                        <Edit size={16} />
+                                    <Trash2 size={18} />
                                     </button>
                                 </td>
                             </tr>
                         ))}
                     </tbody>
                 </table>
+                    </div>
             </div>
 
             {/* Client Modal */}
@@ -631,7 +914,7 @@ const ClientsManagement = () => {
                                             Editar Perfil
                                         </button>
                                         <button 
-                                            onClick={() => handleDelete(selectedClient!.id)}
+                                          onClick={() => selectedClient && handleDelete(selectedClient.id)}
                                             className="flex-1 bg-red-50 text-red-600 py-2 rounded-lg font-medium hover:bg-red-100 transition-colors"
                                         >
                                             Excluir Cliente
@@ -721,18 +1004,137 @@ const ClientsManagement = () => {
                     </div>
                 </div>
             )}
+
+              {isDeleteModalOpen && (
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                  <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-fade-in">
+                    <div className="px-6 py-4 border-b flex justify-between items-center bg-gray-50">
+                      <h3 className="font-bold text-gray-900">Confirmar exclusão</h3>
+                      <button
+                        onClick={() => {
+                          setIsDeleteModalOpen(false);
+                          setClientToDelete(null);
+                          setDeleteClientError(null);
+                        }}
+                        className="text-gray-400 hover:text-gray-600"
+                      >
+                        <X size={20} />
+                      </button>
+                    </div>
+
+                    <div className="p-6 space-y-4">
+                      <p className="text-sm text-gray-700">
+                        Tem certeza que deseja excluir o cliente
+                        <span className="font-semibold text-gray-900"> {clientToDelete?.name || 'selecionado'}</span>?
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        Esta ação não pode ser desfeita.
+                      </p>
+                      {deleteClientError && (
+                        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                          {deleteClientError}
+                        </div>
+                      )}
+
+                      <div className="pt-2 flex gap-3">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsDeleteModalOpen(false);
+                            setClientToDelete(null);
+                            setDeleteClientError(null);
+                          }}
+                          className="flex-1 px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50"
+                        >
+                          Cancelar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={confirmDeleteClient}
+                          className="flex-1 px-4 py-2.5 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                          disabled={isDeletingClient}
+                        >
+                          {isDeletingClient ? 'Excluindo...' : 'Excluir'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {isBulkDeleteModalOpen && (
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                  <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-fade-in">
+                    <div className="px-6 py-4 border-b flex justify-between items-center bg-gray-50">
+                      <h3 className="font-bold text-gray-900">Confirmar exclusão em lote</h3>
+                      <button
+                        onClick={() => {
+                          setIsBulkDeleteModalOpen(false);
+                          setBulkDeleteClientError(null);
+                        }}
+                        className="text-gray-400 hover:text-gray-600"
+                      >
+                        <X size={20} />
+                      </button>
+                    </div>
+
+                    <div className="p-6 space-y-4">
+                      <p className="text-sm text-gray-700">
+                        Deseja excluir os <span className="font-semibold text-gray-900">{selectedCount}</span> cliente(s) selecionado(s)?
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        Clientes com agendamentos vinculados não serão excluídos.
+                      </p>
+                      {bulkDeleteClientError && (
+                        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                          {bulkDeleteClientError}
+                        </div>
+                      )}
+
+                      <div className="pt-2 flex gap-3">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsBulkDeleteModalOpen(false);
+                            setBulkDeleteClientError(null);
+                          }}
+                          className="flex-1 px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50"
+                        >
+                          Cancelar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={confirmBulkDeleteClients}
+                          disabled={isBulkDeletingClients || selectedCount === 0}
+                          className="flex-1 px-4 py-2.5 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                        >
+                          {isBulkDeletingClients ? 'Excluindo...' : 'Excluir selecionados'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
         </div>
     );
 };
 
-const CalendarManagement = () => {
-    const { appointments, services, professionals, clients, addAppointment, updateAppointment, deleteAppointment } = useAppContext();
+const CalendarManagement = ({
+  navigationRequest,
+}: {
+  navigationRequest?: { date: string; viewMode: 'DAY' | 'WEEK' | 'MONTH'; nonce: number } | null;
+}) => {
+  const { appointments, services, professionals, clients, addAppointment, updateAppointment, deleteAppointment, businessHours } = useAppContext();
     const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
     const [selectedProfessionalId, setSelectedProfessionalId] = useState<string | 'ALL'>('ALL');
     const [viewMode, setViewMode] = useState<'DAY' | 'WEEK' | 'MONTH'>('DAY');
     const [isProfessionalDropdownOpen, setIsProfessionalDropdownOpen] = useState(false);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
+    const [appointmentSubmitError, setAppointmentSubmitError] = useState<string | null>(null);
+    const [isSavingAppointment, setIsSavingAppointment] = useState(false);
+    const [clientSearchTerm, setClientSearchTerm] = useState('');
+    const [isClientSearchOpen, setIsClientSearchOpen] = useState(false);
     const [selectedAptId, setSelectedAptId] = useState<string | null>(null);
     const [formData, setFormData] = useState({
         clientId: '',
@@ -740,6 +1142,7 @@ const CalendarManagement = () => {
         professionalId: '',
         date: new Date().toISOString().split('T')[0],
         time: '09:00',
+      endTime: '09:30',
         isBlocked: false,
         isAllDay: false,
         blockReason: ''
@@ -747,12 +1150,58 @@ const CalendarManagement = () => {
 
     const selectedApt = appointments.find(a => a.id === selectedAptId);
 
-    const TIME_SLOTS = [
-        '09:00', '09:30', '10:00', '10:30', '11:00', '11:30',
-        '12:00', '12:30', '13:00', '13:30', '14:00', '14:30',
-        '15:00', '15:30', '16:00', '16:30', '17:00', '17:30',
-        '18:00', '18:30', '19:00'
-    ];
+    const filteredClients = clients
+      .filter(client => {
+        const search = clientSearchTerm.trim().toLowerCase();
+        if (!search) return true;
+        return client.name.toLowerCase().includes(search) || client.phone.toLowerCase().includes(search);
+      })
+      .slice(0, 8);
+
+    const toMinutes = (time: string): number => {
+      const normalized = typeof time === 'string' && time.includes(':') ? time : '09:00';
+      const [hours, minutes] = normalized.split(':').map(Number);
+      return (hours * 60) + minutes;
+    };
+
+    const toHHMM = (minutes: number): string => {
+      const h = Math.floor(minutes / 60);
+      const m = minutes % 60;
+      return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+    };
+
+    const getDayOfWeekFromDate = (dateStr: string): number => {
+      const jsDay = new Date(`${dateStr}T12:00:00`).getDay();
+      return jsDay === 0 ? 0 : jsDay;
+    };
+
+    const getBusinessHourForDate = (dateStr: string) => {
+      const weekday = getDayOfWeekFromDate(dateStr);
+      return businessHours.find(item => item.dayOfWeek === weekday);
+    };
+
+    const buildTimeSlots = (opening: string, closing: string) => {
+      const start = toMinutes(opening);
+      const end = toMinutes(closing);
+      if (end <= start) return ['09:00'];
+      const slots: string[] = [];
+      let cursor = start;
+      while (cursor <= end) {
+        slots.push(toHHMM(cursor));
+        cursor += 30;
+      }
+      return slots;
+    };
+
+    const selectedDateBusinessHour = getBusinessHourForDate(selectedDate);
+    const isSelectedDateOpen = selectedDateBusinessHour ? selectedDateBusinessHour.open : true;
+    const dayOpening = isSelectedDateOpen ? (selectedDateBusinessHour?.start || '09:00') : '00:00';
+    const dayClosing = isSelectedDateOpen ? (selectedDateBusinessHour?.end || '19:00') : '00:00';
+    const TIME_SLOTS = isSelectedDateOpen ? buildTimeSlots(dayOpening, dayClosing) : [];
+    const dayStartMinutes = toMinutes(dayOpening);
+    const dayEndMinutes = toMinutes(dayClosing);
+    const defaultStartTime = TIME_SLOTS[0] || '09:00';
+    const defaultEndTime = TIME_SLOTS[1] || toHHMM(toMinutes(defaultStartTime) + 30);
 
     const SLOT_HEIGHT = 80; // pixels per 30 mins
 
@@ -771,6 +1220,15 @@ const CalendarManagement = () => {
     const setToday = () => {
         setSelectedDate(new Date().toISOString().split('T')[0]);
     };
+
+    useEffect(() => {
+      if (!navigationRequest) return;
+      setSelectedDate(navigationRequest.date);
+      setViewMode(navigationRequest.viewMode);
+      setIsModalOpen(false);
+      setIsDetailsModalOpen(false);
+      setSelectedAptId(null);
+    }, [navigationRequest]);
 
     const formatDateLong = (dateStr: string) => {
         const date = new Date(dateStr + 'T12:00:00');
@@ -840,10 +1298,11 @@ const CalendarManagement = () => {
         if (apt.isAllDay) {
             return { top: '0px', height: `${TIME_SLOTS.length * SLOT_HEIGHT}px`, zIndex: 20 };
         }
-        const [hours, minutes] = apt.time.split(':').map(Number);
-        const startMinutes = (hours - 9) * 60 + minutes;
+      const normalizedTime = typeof apt.time === 'string' && apt.time.includes(':') ? apt.time : '09:00';
+      const startMinutes = toMinutes(normalizedTime) - dayStartMinutes;
         const top = (startMinutes * SLOT_HEIGHT) / 30;
-        const height = (duration * SLOT_HEIGHT) / 30;
+      const endDuration = apt.endTime ? Math.max(toMinutes(apt.endTime) - toMinutes(normalizedTime), 15) : duration;
+      const height = (endDuration * SLOT_HEIGHT) / 30;
         return { top: `${top}px`, height: `${height - 2}px` };
     };
 
@@ -858,9 +1317,81 @@ const CalendarManagement = () => {
         }
     };
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const getAppointmentRange = (apt: any): { start: number; end: number } => {
+      if (apt.status === 'BLOCKED' && apt.isAllDay) {
+        return { start: dayStartMinutes, end: dayEndMinutes };
+      }
+      const start = toMinutes(apt.time || '09:00');
+      if (apt.endTime) {
+        const end = toMinutes(apt.endTime);
+        return { start, end: end > start ? end : start + 30 };
+      }
+      const aptService = services.find(s => s.id === apt.serviceId);
+      const duration = apt.status === 'BLOCKED' ? 30 : (aptService?.durationMinutes || 30);
+      return { start, end: start + Math.max(duration, 15) };
+    };
+
+    const hasLocalConflict = (candidate: {
+      professionalId: string;
+      date: string;
+      start: number;
+      end: number;
+      idToIgnore?: string | null;
+    }): boolean => {
+      return appointments.some(apt => {
+        if (apt.professionalId !== candidate.professionalId || apt.date !== candidate.date) return false;
+        if (apt.status === 'CANCELLED') return false;
+        if (candidate.idToIgnore && apt.id === candidate.idToIgnore) return false;
+        const range = getAppointmentRange(apt);
+        return candidate.start < range.end && range.start < candidate.end;
+      });
+    };
+
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+      if (isSavingAppointment) return;
+      setAppointmentSubmitError(null);
+
+      if (!isSelectedDateOpen) {
+        setAppointmentSubmitError('A barbearia está fechada nesta data conforme o horário de funcionamento.');
+        return;
+      }
+
+      if (TIME_SLOTS.length === 0) {
+        setAppointmentSubmitError('Não há horários disponíveis para esta data.');
+        return;
+      }
+
+      if (!formData.isBlocked && !formData.clientId) {
+        setAppointmentSubmitError('Selecione um cliente válido para continuar.');
+        return;
+      }
+
         const service = services.find(s => s.id === formData.serviceId);
+        const candidateStart = formData.isAllDay ? dayStartMinutes : toMinutes(formData.time);
+      const candidateDuration = formData.isBlocked
+          ? (formData.isAllDay ? (dayEndMinutes - dayStartMinutes) : (toMinutes(formData.endTime) - toMinutes(formData.time)))
+        : (service?.durationMinutes || 30);
+      const candidateEnd = candidateStart + Math.max(candidateDuration, 15);
+
+        if (formData.isBlocked && !formData.isAllDay && toMinutes(formData.endTime) <= toMinutes(formData.time)) {
+          setAppointmentSubmitError('No bloqueio, o horário de fim deve ser maior que o início.');
+          return;
+        }
+
+      if (hasLocalConflict({
+        professionalId: formData.professionalId,
+        date: formData.date,
+        start: candidateStart,
+        end: candidateEnd,
+        idToIgnore: selectedAptId,
+      })) {
+        setAppointmentSubmitError('Este profissional já possui agendamento neste horário. Escolha outro horário.');
+        return;
+      }
+
+      setIsSavingAppointment(true);
+      let result: { success: boolean; error?: string } = { success: true };
         
         if (selectedAptId) {
             // Editing existing
@@ -870,13 +1401,14 @@ const CalendarManagement = () => {
                 serviceId: formData.isBlocked ? 'blocked' : formData.serviceId,
                 professionalId: formData.professionalId,
                 date: formData.date,
-                time: formData.isAllDay ? '09:00' : formData.time,
+                time: formData.isAllDay ? dayOpening : formData.time,
+                endTime: formData.isAllDay ? dayClosing : formData.endTime,
                 status: (formData.isBlocked ? 'BLOCKED' : 'CONFIRMED') as any,
                 totalValue: formData.isBlocked ? 0 : (service?.price || 0),
                 isAllDay: formData.isBlocked ? formData.isAllDay : false,
                 blockReason: formData.isBlocked ? formData.blockReason : undefined
             };
-            updateAppointment(updatedApt);
+              result = await updateAppointment(updatedApt);
         } else {
             // Creating new
             const newApt = {
@@ -885,24 +1417,36 @@ const CalendarManagement = () => {
                 serviceId: formData.isBlocked ? 'blocked' : formData.serviceId,
                 professionalId: formData.professionalId,
                 date: formData.date,
-                time: formData.isAllDay ? '09:00' : formData.time,
+                time: formData.isAllDay ? dayOpening : formData.time,
+                endTime: formData.isAllDay ? dayClosing : formData.endTime,
                 status: (formData.isBlocked ? 'BLOCKED' : 'CONFIRMED') as any,
                 totalValue: formData.isBlocked ? 0 : (service?.price || 0),
                 isAllDay: formData.isBlocked ? formData.isAllDay : false,
                 blockReason: formData.isBlocked ? formData.blockReason : undefined,
                 createdAt: new Date().toISOString()
             };
-            addAppointment(newApt);
+              result = await addAppointment(newApt);
         }
+
+            if (!result.success) {
+              setAppointmentSubmitError(result.error || 'Não foi possível salvar o agendamento.');
+              setIsSavingAppointment(false);
+              return;
+            }
         
         setIsModalOpen(false);
         setSelectedAptId(null);
+            setAppointmentSubmitError(null);
+            setIsSavingAppointment(false);
+        setClientSearchTerm('');
+        setIsClientSearchOpen(false);
         setFormData({
             clientId: '',
             serviceId: '',
             professionalId: '',
             date: selectedDate,
-            time: '09:00',
+            time: defaultStartTime,
+            endTime: defaultEndTime,
             isBlocked: false,
             isAllDay: false,
             blockReason: ''
@@ -919,16 +1463,20 @@ const CalendarManagement = () => {
 
     const openEdit = () => {
         if (selectedApt) {
+        const selectedClient = clients.find(c => c.id === selectedApt.clientId);
             setFormData({
                 clientId: selectedApt.clientId === 'blocked' ? '' : selectedApt.clientId,
                 serviceId: selectedApt.serviceId === 'blocked' ? '' : selectedApt.serviceId,
                 professionalId: selectedApt.professionalId,
                 date: selectedApt.date,
                 time: selectedApt.time,
+                endTime: selectedApt.endTime || '09:30',
                 isBlocked: selectedApt.status === 'BLOCKED',
                 isAllDay: selectedApt.isAllDay || false,
                 blockReason: selectedApt.blockReason || ''
             });
+              setClientSearchTerm(selectedClient?.name || '');
+              setIsClientSearchOpen(false);
             setIsDetailsModalOpen(false);
             setIsModalOpen(true);
         }
@@ -958,10 +1506,14 @@ const CalendarManagement = () => {
                                         serviceId: '',
                                         professionalId: '',
                                         date: selectedDate,
-                                        time: '09:00',
+                                        time: defaultStartTime,
+                                      endTime: defaultEndTime,
                                         isBlocked: false,
+                                      isAllDay: false,
                                         blockReason: ''
                                     });
+                                    setClientSearchTerm('');
+                                    setIsClientSearchOpen(false);
                                     setIsModalOpen(true);
                                 }}
                                 className="p-1.5 bg-blue-600 text-white rounded-full shadow-sm"
@@ -1060,10 +1612,14 @@ const CalendarManagement = () => {
                                     serviceId: '',
                                     professionalId: '',
                                     date: selectedDate,
-                                    time: '09:00',
+                                    time: defaultStartTime,
+                                  endTime: defaultEndTime,
                                     isBlocked: false,
+                                  isAllDay: false,
                                     blockReason: ''
                                 });
+                                setClientSearchTerm('');
+                                setIsClientSearchOpen(false);
                                 setIsModalOpen(true);
                             }}
                             className="hidden sm:flex items-center gap-1 bg-blue-600 text-white px-4 py-2 rounded-lg font-bold text-xs hover:bg-blue-700 transition-colors shadow-md uppercase tracking-wider whitespace-nowrap"
@@ -1242,7 +1798,14 @@ const CalendarManagement = () => {
                                 const dayAppointments = appointments.filter(apt => apt.date === day);
                                 
                                 return (
-                                    <div key={day} className={`border-r border-b p-1 md:p-2 min-h-[80px] md:min-h-[100px] transition-colors hover:bg-gray-50/50 ${!isCurrentMonth ? 'bg-gray-50/30' : ''} ${isToday ? 'bg-blue-50/10' : ''}`}>
+                                    <div
+                                      key={day}
+                                      onClick={() => {
+                                        setSelectedDate(day);
+                                        setViewMode('DAY');
+                                      }}
+                                      className={`border-r border-b p-1 md:p-2 min-h-[80px] md:min-h-[100px] transition-colors hover:bg-gray-50/50 cursor-pointer ${!isCurrentMonth ? 'bg-gray-50/30' : ''} ${isToday ? 'bg-blue-50/10' : ''}`}
+                                    >
                                         <div className="flex justify-between items-center mb-1 md:mb-2">
                                             <span className={`text-xs md:text-sm font-bold w-6 h-6 md:w-7 md:h-7 flex items-center justify-center rounded-full ${isToday ? 'bg-blue-600 text-white' : isCurrentMonth ? 'text-gray-700' : 'text-gray-300'}`}>
                                                 {d.getDate()}
@@ -1257,10 +1820,11 @@ const CalendarManagement = () => {
                                                 return (
                                                     <div 
                                                         key={apt.id} 
-                                                        onClick={() => {
-                                                            setSelectedAptId(apt.id);
-                                                            setIsDetailsModalOpen(true);
-                                                        }}
+                                                      onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setSelectedAptId(apt.id);
+                                                        setIsDetailsModalOpen(true);
+                                                      }}
                                                         className={`text-[8px] md:text-[10px] px-1 py-0.5 rounded border-l-2 truncate cursor-pointer transition-colors hover:brightness-95 ${getStatusColor(apt.status)}`}
                                                     >
                                                         <span className="font-bold mr-0.5">{apt.time}</span>
@@ -1288,13 +1852,18 @@ const CalendarManagement = () => {
                             <h3 className="font-bold text-gray-900">
                                 {selectedAptId ? (formData.isBlocked ? 'Editar Bloqueio' : 'Editar Agendamento') : (formData.isBlocked ? 'Bloquear Horário' : 'Novo Agendamento')}
                             </h3>
-                            <button onClick={() => { setIsModalOpen(false); setSelectedAptId(null); }} className="text-gray-400 hover:text-gray-600">
+                            <button onClick={() => { setIsModalOpen(false); setSelectedAptId(null); setAppointmentSubmitError(null); }} className="text-gray-400 hover:text-gray-600">
                                 <X size={20} />
                             </button>
                         </div>
                         
                         <div className="p-6">
                             <form onSubmit={handleSubmit} className="space-y-4">
+                              {appointmentSubmitError && (
+                                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                                  {appointmentSubmitError}
+                                </div>
+                              )}
                                 <div className="flex items-center justify-between p-3 bg-blue-50 rounded-xl border border-blue-100 mb-4">
                                     <div className="flex items-center gap-2">
                                         <Lock size={16} className="text-blue-600" />
@@ -1302,7 +1871,7 @@ const CalendarManagement = () => {
                                     </div>
                                     <button 
                                         type="button"
-                                        onClick={() => setFormData({...formData, isBlocked: !formData.isBlocked, isAllDay: !formData.isBlocked ? formData.isAllDay : false})}
+                                        onClick={() => setFormData({...formData, isBlocked: !formData.isBlocked, isAllDay: !formData.isBlocked ? formData.isAllDay : false, endTime: !formData.isBlocked && formData.isAllDay ? dayClosing : formData.endTime})}
                                         className={`w-10 h-5 rounded-full relative transition-colors ${formData.isBlocked ? 'bg-blue-600' : 'bg-gray-300'}`}
                                     >
                                         <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${formData.isBlocked ? 'right-1' : 'left-1'}`}></div>
@@ -1317,7 +1886,7 @@ const CalendarManagement = () => {
                                         </div>
                                         <button 
                                             type="button"
-                                            onClick={() => setFormData({...formData, isAllDay: !formData.isAllDay})}
+                                            onClick={() => setFormData({...formData, isAllDay: !formData.isAllDay, time: !formData.isAllDay ? dayOpening : formData.time, endTime: !formData.isAllDay ? dayClosing : formData.endTime})}
                                             className={`w-10 h-5 rounded-full relative transition-colors ${formData.isAllDay ? 'bg-gray-700' : 'bg-gray-300'}`}
                                         >
                                             <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${formData.isAllDay ? 'right-1' : 'left-1'}`}></div>
@@ -1327,19 +1896,45 @@ const CalendarManagement = () => {
 
                                 {!formData.isBlocked ? (
                                     <>
-                                        <div>
+                                        <div className="relative">
                                             <label className="block text-sm font-medium text-gray-700 mb-1">Cliente</label>
-                                            <select 
-                                                required
-                                                value={formData.clientId}
-                                                onChange={e => setFormData({...formData, clientId: e.target.value})}
-                                                className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                                            >
-                                                <option value="">Selecionar Cliente</option>
-                                                {clients.map(c => (
-                                                    <option key={c.id} value={c.id}>{c.name}</option>
-                                                ))}
-                                            </select>
+                                            <input
+                                              type="text"
+                                              required
+                                              value={clientSearchTerm}
+                                              onFocus={() => setIsClientSearchOpen(true)}
+                                              onChange={(e) => {
+                                                setClientSearchTerm(e.target.value);
+                                                setFormData({ ...formData, clientId: '' });
+                                                setIsClientSearchOpen(true);
+                                              }}
+                                              placeholder="Digite para buscar cliente..."
+                                              className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                                            />
+
+                                            {isClientSearchOpen && (
+                                              <div className="absolute left-0 right-0 mt-1 max-h-44 overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg z-20">
+                                                {filteredClients.length > 0 ? (
+                                                  filteredClients.map(client => (
+                                                    <button
+                                                      key={client.id}
+                                                      type="button"
+                                                      onClick={() => {
+                                                        setFormData({ ...formData, clientId: client.id });
+                                                        setClientSearchTerm(client.name);
+                                                        setIsClientSearchOpen(false);
+                                                      }}
+                                                      className="w-full text-left px-3 py-2 hover:bg-gray-50 border-b border-gray-100 last:border-b-0"
+                                                    >
+                                                      <p className="text-sm font-medium text-gray-900">{client.name}</p>
+                                                      <p className="text-xs text-gray-500">{client.phone}</p>
+                                                    </button>
+                                                  ))
+                                                ) : (
+                                                  <div className="px-3 py-2 text-sm text-gray-500">Nenhum cliente encontrado.</div>
+                                                )}
+                                              </div>
+                                            )}
                                         </div>
                                         <div>
                                             <label className="block text-sm font-medium text-gray-700 mb-1">Serviço</label>
@@ -1351,7 +1946,7 @@ const CalendarManagement = () => {
                                             >
                                                 <option value="">Selecionar Serviço</option>
                                                 {services.map(s => (
-                                                    <option key={s.id} value={s.id}>{s.title} - R$ {s.price.toFixed(2)}</option>
+                                                    <option key={s.id} value={s.id}>{s.title || 'Serviço'} - R$ {Number(s.price || 0).toFixed(2)}</option>
                                                 ))}
                                             </select>
                                         </div>
@@ -1393,35 +1988,78 @@ const CalendarManagement = () => {
                                             className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
                                         />
                                     </div>
-                                    <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Horário</label>
-                                        <select 
-                                            required
-                                            disabled={formData.isAllDay}
-                                            value={formData.time}
-                                            onChange={e => setFormData({...formData, time: e.target.value})}
-                                            className={`w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none ${formData.isAllDay ? 'bg-gray-50 text-gray-400' : ''}`}
-                                        >
-                                            {TIME_SLOTS.map(time => (
+                                        {!formData.isBlocked ? (
+                                          <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-1">Horário</label>
+                                            <select 
+                                              required
+                                              disabled={TIME_SLOTS.length === 0}
+                                              value={formData.time}
+                                              onChange={e => setFormData({...formData, time: e.target.value})}
+                                              className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                                            >
+                                              {TIME_SLOTS.length === 0 && (
+                                                <option value="">Fechado</option>
+                                              )}
+                                              {TIME_SLOTS.map(time => (
                                                 <option key={time} value={time}>{time}</option>
-                                            ))}
-                                        </select>
-                                    </div>
+                                              ))}
+                                            </select>
+                                          </div>
+                                        ) : (
+                                          <div className="grid grid-cols-2 gap-4 col-span-1 sm:col-span-1">
+                                            <div>
+                                              <label className="block text-sm font-medium text-gray-700 mb-1">Início</label>
+                                              <select 
+                                                required
+                                                disabled={formData.isAllDay || TIME_SLOTS.length === 0}
+                                                value={formData.time}
+                                                onChange={e => setFormData({...formData, time: e.target.value})}
+                                                className={`w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none ${formData.isAllDay ? 'bg-gray-50 text-gray-400' : ''}`}
+                                              >
+                                                {TIME_SLOTS.length === 0 && (
+                                                  <option value="">Fechado</option>
+                                                )}
+                                                {TIME_SLOTS.map(time => (
+                                                  <option key={time} value={time}>{time}</option>
+                                                ))}
+                                              </select>
+                                            </div>
+                                            <div>
+                                              <label className="block text-sm font-medium text-gray-700 mb-1">Fim</label>
+                                              <select 
+                                                required
+                                                disabled={formData.isAllDay || TIME_SLOTS.length === 0}
+                                                value={formData.endTime}
+                                                onChange={e => setFormData({...formData, endTime: e.target.value})}
+                                                className={`w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none ${formData.isAllDay ? 'bg-gray-50 text-gray-400' : ''}`}
+                                              >
+                                                {TIME_SLOTS.length === 0 && (
+                                                  <option value="">Fechado</option>
+                                                )}
+                                                {TIME_SLOTS.map(time => (
+                                                  <option key={time} value={time}>{time}</option>
+                                                ))}
+                                              </select>
+                                            </div>
+                                          </div>
+                                        )}
                                 </div>
                                 
                                 <div className="pt-4 flex gap-3">
                                     <button 
                                         type="button"
-                                        onClick={() => { setIsModalOpen(false); setSelectedAptId(null); }}
+                                      onClick={() => { setIsModalOpen(false); setSelectedAptId(null); setAppointmentSubmitError(null); setIsClientSearchOpen(false); }}
                                         className="flex-1 px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50"
                                     >
                                         Cancelar
                                     </button>
                                     <button 
                                         type="submit"
-                                        className={`flex-1 px-4 py-2.5 text-white rounded-lg font-medium transition-colors shadow-md ${formData.isBlocked ? 'bg-gray-700 hover:bg-gray-800' : 'bg-blue-600 hover:bg-blue-700'}`}
+                                      disabled={isSavingAppointment}
+                                      className={`flex-1 px-4 py-2.5 text-white rounded-lg font-medium transition-colors shadow-md disabled:opacity-60 disabled:cursor-not-allowed ${formData.isBlocked ? 'bg-gray-700 hover:bg-gray-800' : 'bg-blue-600 hover:bg-blue-700'}`}
                                     >
-                                        {selectedAptId ? 'Salvar' : (formData.isBlocked ? 'Bloquear' : 'Agendar')}
+                                      {isSavingAppointment ? 'Salvando...' : (selectedAptId ? 'Salvar' : (formData.isBlocked ? 'Bloquear' : 'Agendar'))}
                                     </button>
                                 </div>
                             </form>
@@ -1459,7 +2097,7 @@ const CalendarManagement = () => {
                                     <p className="text-xs text-gray-500 uppercase font-bold mb-1">Data e Hora</p>
                                     <p className="font-medium text-gray-900">
                                         {safeDateBr(selectedApt.date)} 
-                                        {selectedApt.isAllDay ? ' (Dia Todo)' : ` às ${selectedApt.time}`}
+                                      {selectedApt.isAllDay ? ' (Dia Todo)' : ` às ${selectedApt.time}${selectedApt.endTime ? ` - ${selectedApt.endTime}` : ''}`}
                                     </p>
                                 </div>
                                 <div className="p-3 bg-gray-50 rounded-lg">
@@ -1542,15 +2180,63 @@ const CalendarManagement = () => {
 const UserModal = ({ isOpen, onClose, onSave, userToEdit }: { 
   isOpen: boolean; 
   onClose: () => void; 
-  onSave: (user: any) => void;
+  onSave: (user: any) => Promise<{ success: boolean; error?: string }>;
   userToEdit?: any;
 }) => {
   const [formData, setFormData] = useState({
     name: userToEdit?.name || '',
     phone: userToEdit?.phone || '',
+    email: userToEdit?.email || '',
+    password: '',
     role: userToEdit?.role || 'EMPLOYEE',
     avatar: userToEdit?.avatar || ''
   });
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setFormData({
+      name: userToEdit?.name || '',
+      phone: userToEdit?.phone || '',
+      email: userToEdit?.email || '',
+      password: '',
+      role: userToEdit?.role || 'EMPLOYEE',
+      avatar: userToEdit?.avatar || ''
+    });
+    setSaveError(null);
+    setIsSaving(false);
+  }, [isOpen, userToEdit]);
+
+  const handleSave = async () => {
+    if (isSaving) return;
+    setSaveError(null);
+
+    if (!formData.name.trim() || !formData.phone.trim() || !formData.email.trim()) {
+      setSaveError('Nome, telefone e email são obrigatórios.');
+      return;
+    }
+
+    if (!userToEdit && !formData.password) {
+      setSaveError('Senha é obrigatória para novo usuário.');
+      return;
+    }
+
+    setIsSaving(true);
+    const result = await onSave({
+      ...formData,
+      email: formData.email.trim().toLowerCase(),
+      password: formData.password || undefined,
+    });
+
+    if (!result.success) {
+      setSaveError(result.error || 'Falha ao salvar usuário.');
+      setIsSaving(false);
+      return;
+    }
+
+    setIsSaving(false);
+  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1627,6 +2313,28 @@ const UserModal = ({ isOpen, onClose, onSave, userToEdit }: {
           </div>
 
           <div>
+            <label className="block text-sm font-bold text-gray-700 mb-1">Email</label>
+            <input 
+              type="email" 
+              value={formData.email}
+              onChange={e => setFormData(prev => ({ ...prev, email: e.target.value }))}
+              className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+              placeholder="usuario@empresa.com"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-bold text-gray-700 mb-1">Senha {userToEdit ? '(opcional para alterar)' : ''}</label>
+            <input 
+              type="password" 
+              value={formData.password}
+              onChange={e => setFormData(prev => ({ ...prev, password: e.target.value }))}
+              className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+              placeholder={userToEdit ? '•••••••• (deixe em branco para manter)' : '••••••••'}
+            />
+          </div>
+
+          <div>
             <label className="block text-sm font-bold text-gray-700 mb-1">Nível de Acesso</label>
             <select 
               value={formData.role}
@@ -1637,6 +2345,12 @@ const UserModal = ({ isOpen, onClose, onSave, userToEdit }: {
               <option value="EMPLOYEE">Funcionário / Equipe</option>
             </select>
           </div>
+
+          {saveError && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              {saveError}
+            </div>
+          )}
         </div>
 
         <div className="p-6 bg-gray-50 border-t flex gap-3">
@@ -1647,10 +2361,11 @@ const UserModal = ({ isOpen, onClose, onSave, userToEdit }: {
             Cancelar
           </button>
           <button 
-            onClick={() => onSave(formData)}
-            className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 shadow-lg shadow-blue-200 transition-all"
+            onClick={handleSave}
+            disabled={isSaving}
+            className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 shadow-lg shadow-blue-200 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            Salvar Usuário
+            {isSaving ? 'Salvando...' : 'Salvar Usuário'}
           </button>
         </div>
       </div>
@@ -1914,43 +2629,132 @@ const EmailIntegration = () => {
 
 const SettingsManagement = () => {
   const navigate = useNavigate();
-  const { users, addUser, updateUser, deleteUser, categories, addCategory, updateCategory, deleteCategory } = useAppContext();
+  const { users, addUser, updateUser, deleteUser, categories, addCategory, updateCategory, deleteCategory, businessHours, saveBusinessHours, brandIdentity, saveBrandIdentity } = useAppContext();
   const [activeSubTab, setActiveSubTab] = useState<'USERS' | 'ALERTS' | 'PROFILES' | 'HOURS' | 'INTEGRATIONS' | 'OTHER' | 'BILLING' | 'CONTACT' | 'CATEGORIES'>('USERS');
   const [isUserModalOpen, setIsUserModalOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<any>(null);
+  const [isDeleteUserModalOpen, setIsDeleteUserModalOpen] = useState(false);
+  const [userToDelete, setUserToDelete] = useState<any>(null);
+  const [deleteUserError, setDeleteUserError] = useState<string | null>(null);
+  const [isDeletingUser, setIsDeletingUser] = useState(false);
 
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<any>(null);
+  const [isDeleteCategoryModalOpen, setIsDeleteCategoryModalOpen] = useState(false);
+  const [categoryToDelete, setCategoryToDelete] = useState<any>(null);
+  const [deleteCategoryError, setDeleteCategoryError] = useState<string | null>(null);
+  const [isDeletingCategory, setIsDeletingCategory] = useState(false);
 
-  const [businessHours, setBusinessHours] = useState([
-    { id: 1, day: 'Segunda-feira', open: true, start: '09:00', end: '19:00' },
-    { id: 2, day: 'Terça-feira', open: true, start: '09:00', end: '19:00' },
-    { id: 3, day: 'Quarta-feira', open: true, start: '09:00', end: '19:00' },
-    { id: 4, day: 'Quinta-feira', open: true, start: '09:00', end: '19:00' },
-    { id: 5, day: 'Sexta-feira', open: true, start: '09:00', end: '20:00' },
-    { id: 6, day: 'Sábado', open: true, start: '08:00', end: '18:00' },
-    { id: 0, day: 'Domingo', open: false, start: '00:00', end: '00:00' },
-  ]);
+  const [localBusinessHours, setLocalBusinessHours] = useState(businessHours);
+  const [hoursSaveError, setHoursSaveError] = useState<string | null>(null);
+  const [hoursSaveSuccess, setHoursSaveSuccess] = useState<string | null>(null);
+  const [isSavingHours, setIsSavingHours] = useState(false);
+  const [identityForm, setIdentityForm] = useState<BrandIdentity>(brandIdentity);
+  const [identityError, setIdentityError] = useState<string | null>(null);
+  const [identitySuccess, setIdentitySuccess] = useState<string | null>(null);
+  const [isSavingIdentity, setIsSavingIdentity] = useState(false);
+
+  const identityPalettes = [
+    { name: 'Modern Blue', primary: '#2563eb', secondary: '#eff6ff', label: 'Confiança' },
+    { name: 'Luxury Gold', primary: '#854d0e', secondary: '#fefce8', label: 'Premium' },
+    { name: 'Classic Black', primary: '#171717', secondary: '#f5f5f5', label: 'Elegante' },
+    { name: 'Vibrant Emerald', primary: '#059669', secondary: '#ecfdf5', label: 'Fresco' },
+    { name: 'Royal Purple', primary: '#7c3aed', secondary: '#f5f3ff', label: 'Criativo' },
+    { name: 'Warm Terracotta', primary: '#c2410c', secondary: '#fff7ed', label: 'Acolhedor' },
+  ];
+
+  useEffect(() => {
+    setLocalBusinessHours(businessHours);
+  }, [businessHours]);
+
+  useEffect(() => {
+    setIdentityForm(brandIdentity);
+  }, [brandIdentity]);
 
   const toggleDay = (id: number) => {
-    setBusinessHours(prev => prev.map(h => h.id === id ? { ...h, open: !h.open } : h));
+    setLocalBusinessHours(prev => prev.map(h => h.dayOfWeek === id ? { ...h, open: !h.open } : h));
+    setHoursSaveError(null);
+    setHoursSaveSuccess(null);
   };
 
   const updateTime = (id: number, field: 'start' | 'end', value: string) => {
-    setBusinessHours(prev => prev.map(h => h.id === id ? { ...h, [field]: value } : h));
+    setLocalBusinessHours(prev => prev.map(h => h.dayOfWeek === id ? { ...h, [field]: value } : h));
+    setHoursSaveError(null);
+    setHoursSaveSuccess(null);
   };
 
-  const handleSaveUser = (data: any) => {
+  const handleSaveBusinessHours = async () => {
+    if (isSavingHours) return;
+    setIsSavingHours(true);
+    setHoursSaveError(null);
+    setHoursSaveSuccess(null);
+
+    const invalid = localBusinessHours.find(item => item.open && item.end <= item.start);
+    if (invalid) {
+      setHoursSaveError(`No dia ${invalid.day}, o horário de fim deve ser maior que o de início.`);
+      setIsSavingHours(false);
+      return;
+    }
+
+    const result = await saveBusinessHours(localBusinessHours);
+    if (!result.success) {
+      setHoursSaveError(result.error || 'Falha ao salvar horários.');
+      setIsSavingHours(false);
+      return;
+    }
+
+    setHoursSaveSuccess('Horários salvos com sucesso.');
+    setIsSavingHours(false);
+  };
+
+  const handleSaveIdentity = async () => {
+    if (isSavingIdentity) return;
+    setIdentityError(null);
+    setIdentitySuccess(null);
+
+    const name = (identityForm.name || '').trim();
+    if (!name) {
+      setIdentityError('Informe o nome da empresa.');
+      return;
+    }
+
+    setIsSavingIdentity(true);
+    const result = await saveBrandIdentity({
+      name,
+      logoUrl: identityForm.logoUrl?.trim() || undefined,
+      iconName: identityForm.iconName || 'scissors',
+      primaryColor: identityForm.primaryColor || '#2563eb',
+      secondaryColor: identityForm.secondaryColor || '#eff6ff',
+    });
+
+    if (!result.success) {
+      setIdentityError(result.error || 'Falha ao salvar identidade visual.');
+      setIsSavingIdentity(false);
+      return;
+    }
+
+    setIdentitySuccess('Identidade visual atualizada com sucesso.');
+    setIsSavingIdentity(false);
+  };
+
+  const handleSaveUser = async (data: any) => {
     if (selectedUser) {
-      updateUser({ ...selectedUser, ...data });
+      const result = await updateUser({ ...selectedUser, ...data });
+      if (!result.success) {
+        return result;
+      }
     } else {
-      addUser({
+      const result = await addUser({
         id: Date.now().toString(),
         ...data
       });
+      if (!result.success) {
+        return result;
+      }
     }
     setIsUserModalOpen(false);
     setSelectedUser(null);
+    return { success: true };
   };
 
   const openNewUser = () => {
@@ -1961,6 +2765,27 @@ const SettingsManagement = () => {
   const openEditUser = (u: any) => {
     setSelectedUser(u);
     setIsUserModalOpen(true);
+  };
+
+  const openDeleteUser = (u: any) => {
+    setDeleteUserError(null);
+    setUserToDelete(u);
+    setIsDeleteUserModalOpen(true);
+  };
+
+  const confirmDeleteUser = async () => {
+    if (!userToDelete || isDeletingUser) return;
+    setIsDeletingUser(true);
+    const result = await deleteUser(userToDelete.id);
+    if (!result.success) {
+      setDeleteUserError(result.error || 'Falha ao excluir usuário.');
+      setIsDeletingUser(false);
+      return;
+    }
+    setIsDeleteUserModalOpen(false);
+    setUserToDelete(null);
+    setDeleteUserError(null);
+    setIsDeletingUser(false);
   };
 
   const handleSaveCategory = (data: any) => {
@@ -1986,6 +2811,27 @@ const SettingsManagement = () => {
     setIsCategoryModalOpen(true);
   };
 
+  const openDeleteCategory = (c: any) => {
+    setDeleteCategoryError(null);
+    setCategoryToDelete(c);
+    setIsDeleteCategoryModalOpen(true);
+  };
+
+  const confirmDeleteCategory = async () => {
+    if (!categoryToDelete || isDeletingCategory) return;
+    setIsDeletingCategory(true);
+    const result = await deleteCategory(categoryToDelete.id);
+    if (!result.success) {
+      setDeleteCategoryError(result.error || 'Falha ao excluir categoria.');
+      setIsDeletingCategory(false);
+      return;
+    }
+    setIsDeleteCategoryModalOpen(false);
+    setCategoryToDelete(null);
+    setDeleteCategoryError(null);
+    setIsDeletingCategory(false);
+  };
+
   const tabs = [
     { id: 'USERS', label: 'Usuários', icon: <Users size={18} />, desc: 'Equipe e acessos' },
     { id: 'CATEGORIES', label: 'Categorias', icon: <Tag size={18} />, desc: 'Organize serviços' },
@@ -1997,6 +2843,9 @@ const SettingsManagement = () => {
     { id: 'CONTACT', label: 'Fale Conosco', icon: <Headphones size={18} />, desc: 'Suporte e ajuda' },
     { id: 'OTHER', label: 'Identidade', icon: <Settings size={18} />, desc: 'Marca e cores' },
   ];
+
+  const adminUsersCount = users.filter(u => u.role === 'ADMIN').length;
+  const employeeUsersCount = users.filter(u => u.role !== 'ADMIN').length;
 
   return (
     <div className="flex flex-col lg:flex-row gap-8">
@@ -2077,7 +2926,7 @@ const SettingsManagement = () => {
               </div>
               <div className="divide-y">
                 {users.map((u) => (
-                  <div key={u.id} className="py-4 flex justify-between items-center">
+                  <div key={u.id} className="py-4 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
                     <div className="flex items-center gap-3">
                       {safeAvatarSrc(u.avatar) ? (
                         <img src={safeAvatarSrc(u.avatar)} alt={u.name} className="w-10 h-10 rounded-full object-cover" referrerPolicy="no-referrer" />
@@ -2088,25 +2937,21 @@ const SettingsManagement = () => {
                       )}
                       <div>
                         <p className="font-medium text-gray-900">{u.name}</p>
-                        <p className="text-xs text-gray-500">{u.role === 'ADMIN' ? 'Administrador' : 'Equipe'} • {u.phone}</p>
+                        <p className="text-xs text-gray-500">{u.role === 'ADMIN' ? 'Administrador' : 'Equipe'} • {u.email || u.phone}</p>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 self-end sm:self-auto">
                       <button 
                         onClick={() => openEditUser(u)}
-                        className="text-gray-400 hover:text-blue-600 p-2"
+                        className="text-blue-600 hover:text-blue-800 p-2"
                       >
-                        <Edit size={16} />
+                        <Edit size={18} />
                       </button>
                       <button 
-                        onClick={() => {
-                          if (confirm('Tem certeza que deseja excluir este usuário?')) {
-                            deleteUser(u.id);
-                          }
-                        }}
-                        className="text-gray-400 hover:text-red-600 p-2"
+                        onClick={() => openDeleteUser(u)}
+                        className="text-red-600 hover:text-red-800 p-2"
                       >
-                        <Trash2 size={16} />
+                        <Trash2 size={18} />
                       </button>
                     </div>
                   </div>
@@ -2128,7 +2973,7 @@ const SettingsManagement = () => {
               </div>
               <div className="divide-y">
                 {categories.map((c) => (
-                  <div key={c.id} className="py-4 flex justify-between items-center">
+                  <div key={c.id} className="py-4 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center text-blue-600">
                         <Tag size={20} />
@@ -2138,22 +2983,18 @@ const SettingsManagement = () => {
                         <p className="text-xs text-gray-500">{c.description || 'Sem descrição'}</p>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 self-end sm:self-auto">
                       <button 
                         onClick={() => openEditCategory(c)}
-                        className="text-gray-400 hover:text-blue-600 p-2"
+                        className="text-blue-600 hover:text-blue-800 p-2"
                       >
-                        <Edit size={16} />
+                        <Edit size={18} />
                       </button>
                       <button 
-                        onClick={() => {
-                          if (confirm('Tem certeza que deseja excluir esta categoria?')) {
-                            deleteCategory(c.id);
-                          }
-                        }}
-                        className="text-gray-400 hover:text-red-600 p-2"
+                        onClick={() => openDeleteCategory(c)}
+                        className="text-red-600 hover:text-red-800 p-2"
                       >
-                        <Trash2 size={16} />
+                        <Trash2 size={18} />
                       </button>
                     </div>
                   </div>
@@ -2175,6 +3016,120 @@ const SettingsManagement = () => {
             onSave={handleSaveCategory}
             categoryToEdit={selectedCategory}
           />
+
+          {isDeleteUserModalOpen && (
+            <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-fade-in">
+                <div className="px-6 py-4 border-b flex justify-between items-center bg-gray-50">
+                  <h3 className="font-bold text-gray-900">Confirmar exclusão</h3>
+                  <button
+                    onClick={() => {
+                      setIsDeleteUserModalOpen(false);
+                      setUserToDelete(null);
+                      setDeleteUserError(null);
+                    }}
+                    className="text-gray-400 hover:text-gray-600"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+
+                <div className="p-6 space-y-4">
+                  <p className="text-sm text-gray-700">
+                    Tem certeza que deseja excluir o usuário
+                    <span className="font-semibold text-gray-900"> {userToDelete?.name || 'selecionado'}</span>?
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    Esta ação não pode ser desfeita. Se houver agendamentos vinculados, a exclusão será bloqueada.
+                  </p>
+                  {deleteUserError && (
+                    <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                      {deleteUserError}
+                    </div>
+                  )}
+
+                  <div className="pt-2 flex gap-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsDeleteUserModalOpen(false);
+                        setUserToDelete(null);
+                        setDeleteUserError(null);
+                      }}
+                      className="flex-1 px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={confirmDeleteUser}
+                      disabled={isDeletingUser}
+                      className="flex-1 px-4 py-2.5 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      {isDeletingUser ? 'Excluindo...' : 'Excluir'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {isDeleteCategoryModalOpen && (
+            <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-fade-in">
+                <div className="px-6 py-4 border-b flex justify-between items-center bg-gray-50">
+                  <h3 className="font-bold text-gray-900">Confirmar exclusão</h3>
+                  <button
+                    onClick={() => {
+                      setIsDeleteCategoryModalOpen(false);
+                      setCategoryToDelete(null);
+                      setDeleteCategoryError(null);
+                    }}
+                    className="text-gray-400 hover:text-gray-600"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+
+                <div className="p-6 space-y-4">
+                  <p className="text-sm text-gray-700">
+                    Tem certeza que deseja excluir a categoria
+                    <span className="font-semibold text-gray-900"> {categoryToDelete?.name || 'selecionada'}</span>?
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    Esta ação não pode ser desfeita. Se houver serviços vinculados, a exclusão será bloqueada.
+                  </p>
+                  {deleteCategoryError && (
+                    <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                      {deleteCategoryError}
+                    </div>
+                  )}
+
+                  <div className="pt-2 flex gap-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsDeleteCategoryModalOpen(false);
+                        setCategoryToDelete(null);
+                        setDeleteCategoryError(null);
+                      }}
+                      className="flex-1 px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={confirmDeleteCategory}
+                      disabled={isDeletingCategory}
+                      className="flex-1 px-4 py-2.5 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      {isDeletingCategory ? 'Excluindo...' : 'Excluir'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {activeSubTab === 'ALERTS' && (
             <div className="space-y-6">
@@ -2213,12 +3168,26 @@ const SettingsManagement = () => {
               <h3 className="font-bold text-gray-800">Níveis de Acesso</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                 {[
-                  { title: 'Administrador', desc: 'Acesso total ao sistema e financeiro', icon: <Shield className="text-purple-600" /> },
-                  { title: 'Gerente', desc: 'Gestão de equipe e relatórios básicos', icon: <Users className="text-blue-600" /> },
-                  { title: 'Operacional', desc: 'Apenas visualização da própria agenda', icon: <Calendar className="text-green-600" /> }
+                  {
+                    title: 'Administrador',
+                    desc: 'Acesso total ao sistema e financeiro',
+                    icon: <Shield className="text-purple-600" />,
+                    count: adminUsersCount,
+                  },
+                  {
+                    title: 'Funcionário / Equipe',
+                    desc: 'Gestão da agenda e operações do dia a dia',
+                    icon: <Users className="text-blue-600" />,
+                    count: employeeUsersCount,
+                  }
                 ].map((p, i) => (
                   <div key={i} className="p-4 border rounded-xl hover:border-blue-300 transition-colors cursor-pointer">
-                    <div className="mb-2">{p.icon}</div>
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      {p.icon}
+                      <span className="text-xs font-bold px-2 py-1 rounded-full bg-gray-100 text-gray-700">
+                        {p.count} usuário{p.count === 1 ? '' : 's'}
+                      </span>
+                    </div>
                     <p className="font-bold text-gray-900">{p.title}</p>
                     <p className="text-xs text-gray-500 mt-1">{p.desc}</p>
                   </div>
@@ -2240,14 +3209,14 @@ const SettingsManagement = () => {
               </div>
 
               <div className="space-y-3">
-                {businessHours.map((h) => (
+                {localBusinessHours.map((h) => (
                   <div 
-                    key={h.id} 
+                    key={h.dayOfWeek} 
                     className={`flex flex-col sm:flex-row sm:items-center justify-between p-4 rounded-xl border transition-all ${h.open ? 'bg-white border-gray-100' : 'bg-gray-50 border-transparent opacity-60'}`}
                   >
                     <div className="flex items-center gap-4 mb-3 sm:mb-0">
                       <button 
-                        onClick={() => toggleDay(h.id)}
+                        onClick={() => toggleDay(h.dayOfWeek)}
                         className={`w-12 h-6 rounded-full relative transition-colors ${h.open ? 'bg-blue-600' : 'bg-gray-300'}`}
                       >
                         <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${h.open ? 'right-1' : 'left-1'}`}></div>
@@ -2262,7 +3231,7 @@ const SettingsManagement = () => {
                           <input 
                             type="time" 
                             value={h.start}
-                            onChange={(e) => updateTime(h.id, 'start', e.target.value)}
+                            onChange={(e) => updateTime(h.dayOfWeek, 'start', e.target.value)}
                             className="p-1.5 border border-gray-200 rounded-lg text-xs font-medium focus:ring-2 focus:ring-blue-500 outline-none"
                           />
                         </div>
@@ -2271,7 +3240,7 @@ const SettingsManagement = () => {
                           <input 
                             type="time" 
                             value={h.end}
-                            onChange={(e) => updateTime(h.id, 'end', e.target.value)}
+                            onChange={(e) => updateTime(h.dayOfWeek, 'end', e.target.value)}
                             className="p-1.5 border border-gray-200 rounded-lg text-xs font-medium focus:ring-2 focus:ring-blue-500 outline-none"
                           />
                         </div>
@@ -2295,9 +3264,25 @@ const SettingsManagement = () => {
                 </div>
               </div>
 
+              {hoursSaveError && (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                  {hoursSaveError}
+                </div>
+              )}
+
+              {hoursSaveSuccess && (
+                <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
+                  {hoursSaveSuccess}
+                </div>
+              )}
+
               <div className="pt-4 flex justify-end">
-                <button className="px-6 py-2.5 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 shadow-lg shadow-blue-100 transition-all text-sm">
-                  Salvar Horários
+                <button
+                  onClick={handleSaveBusinessHours}
+                  disabled={isSavingHours}
+                  className="px-6 py-2.5 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 shadow-lg shadow-blue-100 transition-all text-sm disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {isSavingHours ? 'Salvando...' : 'Salvar Horários'}
                 </button>
               </div>
             </div>
@@ -2550,18 +3535,33 @@ const SettingsManagement = () => {
                   
                   <div className="flex flex-wrap gap-6 items-start">
                     <div className="w-24 h-24 rounded-2xl bg-gray-100 border-2 border-dashed border-gray-200 flex items-center justify-center text-gray-400 overflow-hidden relative group">
-                      <Scissors size={40} />
+                      {identityForm.logoUrl ? (
+                        <img src={identityForm.logoUrl} alt="Logo da barbearia" className="w-full h-full object-cover" />
+                      ) : (
+                        <BrandIcon name={identityForm.iconName} className="w-10 h-10" />
+                      )}
                       <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-[10px] font-bold uppercase">
                         Preview
                       </div>
                     </div>
 
                     <div className="flex-1 space-y-4 min-w-[280px]">
-                      <div>
-                        <button className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors">
-                          <Camera size={16} />
-                          Fazer upload de foto
-                        </button>
+                      <div className="space-y-2">
+                        <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider">URL da logo (opcional)</label>
+                        <div className="flex items-center gap-2">
+                          <span className="p-2 bg-gray-100 rounded-lg text-gray-500"><Camera size={14} /></span>
+                          <input
+                            type="text"
+                            value={identityForm.logoUrl || ''}
+                            onChange={(e) => {
+                              setIdentityForm(prev => ({ ...prev, logoUrl: e.target.value }));
+                              setIdentityError(null);
+                              setIdentitySuccess(null);
+                            }}
+                            placeholder="https://... ou data:image/..."
+                            className="w-full p-2.5 bg-white border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                          />
+                        </div>
                       </div>
 
                       <div>
@@ -2577,7 +3577,13 @@ const SettingsManagement = () => {
                           ].map((item) => (
                             <button 
                               key={item.id}
-                              className={`w-10 h-10 rounded-lg flex items-center justify-center transition-all border ${item.id === 'scissors' ? 'bg-blue-50 border-blue-200 text-blue-600' : 'bg-white border-gray-200 text-gray-400 hover:border-gray-300 hover:text-gray-600'}`}
+                              type="button"
+                              onClick={() => {
+                                setIdentityForm(prev => ({ ...prev, iconName: item.id }));
+                                setIdentityError(null);
+                                setIdentitySuccess(null);
+                              }}
+                              className={`w-10 h-10 rounded-lg flex items-center justify-center transition-all border ${identityForm.iconName === item.id ? 'bg-blue-50 border-blue-200 text-blue-600' : 'bg-white border-gray-200 text-gray-400 hover:border-gray-300 hover:text-gray-600'}`}
                             >
                               <item.icon size={20} />
                             </button>
@@ -2598,45 +3604,79 @@ const SettingsManagement = () => {
                     <div className="space-y-4">
                       <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Paletas Sugeridas</p>
                       <div className="grid grid-cols-2 gap-3">
-                        {[
-                          { name: 'Modern Blue', primary: '#2563eb', secondary: '#eff6ff', label: 'Confiança' },
-                          { name: 'Luxury Gold', primary: '#854d0e', secondary: '#fefce8', label: 'Premium' },
-                          { name: 'Classic Black', primary: '#171717', secondary: '#f5f5f5', label: 'Elegante' },
-                          { name: 'Vibrant Emerald', primary: '#059669', secondary: '#ecfdf5', label: 'Fresco' },
-                          { name: 'Royal Purple', primary: '#7c3aed', secondary: '#f5f3ff', label: 'Criativo' },
-                          { name: 'Warm Terracotta', primary: '#c2410c', secondary: '#fff7ed', label: 'Acolhedor' }
-                        ].map((palette) => (
+                        {identityPalettes.map((palette) => (
                           <button 
                             key={palette.name}
-                            className={`p-3 rounded-xl border text-left transition-all group hover:shadow-md ${palette.name === 'Modern Blue' ? 'border-blue-200 bg-blue-50/30 ring-1 ring-blue-100' : 'border-gray-100 bg-white hover:border-gray-200'}`}
+                            type="button"
+                            onClick={() => {
+                              setIdentityForm(prev => ({
+                                ...prev,
+                                primaryColor: palette.primary,
+                                secondaryColor: palette.secondary,
+                              }));
+                              setIdentityError(null);
+                              setIdentitySuccess(null);
+                            }}
+                            className={`p-3 rounded-xl border text-left transition-all group hover:shadow-md ${identityForm.primaryColor === palette.primary && identityForm.secondaryColor === palette.secondary ? 'border-blue-200 bg-blue-50/30 ring-1 ring-blue-100' : 'border-gray-100 bg-white hover:border-gray-200'}`}
                           >
                             <div className="flex items-center justify-between mb-2">
                               <div className="flex gap-1">
                                 <div className="w-4 h-4 rounded-full" style={{ backgroundColor: palette.primary }} />
                                 <div className="w-4 h-4 rounded-full" style={{ backgroundColor: palette.secondary }} />
                               </div>
-                              {palette.name === 'Modern Blue' && <Check size={12} className="text-blue-600" />}
+                              {identityForm.primaryColor === palette.primary && identityForm.secondaryColor === palette.secondary && <Check size={12} className="text-blue-600" />}
                             </div>
                             <p className="text-[11px] font-bold text-gray-700">{palette.name}</p>
                             <p className="text-[10px] text-gray-400">{palette.label}</p>
                           </button>
                         ))}
                       </div>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Cor Primária</label>
+                          <input
+                            type="text"
+                            value={identityForm.primaryColor || ''}
+                            onChange={(e) => {
+                              setIdentityForm(prev => ({ ...prev, primaryColor: e.target.value }));
+                              setIdentityError(null);
+                              setIdentitySuccess(null);
+                            }}
+                            placeholder="#2563eb"
+                            className="w-full p-2 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Cor Secundária</label>
+                          <input
+                            type="text"
+                            value={identityForm.secondaryColor || ''}
+                            onChange={(e) => {
+                              setIdentityForm(prev => ({ ...prev, secondaryColor: e.target.value }));
+                              setIdentityError(null);
+                              setIdentitySuccess(null);
+                            }}
+                            placeholder="#eff6ff"
+                            className="w-full p-2 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 outline-none"
+                          />
+                        </div>
+                      </div>
                     </div>
 
                     <div className="space-y-4">
                       <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Preview da Interface</p>
-                      <div className="bg-gray-50 rounded-2xl p-6 border border-gray-100 space-y-4">
+                      <div className="rounded-2xl p-6 border border-gray-100 space-y-4" style={{ backgroundColor: identityForm.secondaryColor || '#f9fafb' }}>
                         <div className="flex gap-2">
-                          <button className="px-4 py-2 bg-blue-600 text-white rounded-lg text-xs font-bold shadow-lg shadow-blue-100">
+                          <button className="px-4 py-2 text-white rounded-lg text-xs font-bold" style={{ backgroundColor: identityForm.primaryColor || '#2563eb' }}>
                             Agendar Agora
                           </button>
-                          <button className="px-4 py-2 bg-white border border-blue-200 text-blue-600 rounded-lg text-xs font-bold">
+                          <button className="px-4 py-2 bg-white rounded-lg text-xs font-bold" style={{ border: `1px solid ${identityForm.primaryColor || '#2563eb'}`, color: identityForm.primaryColor || '#2563eb' }}>
                             Cancelar
                           </button>
                         </div>
                         <div className="flex gap-2">
-                          <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded-full text-[10px] font-bold">
+                          <span className="px-2 py-1 rounded-full text-[10px] font-bold" style={{ backgroundColor: identityForm.secondaryColor || '#eff6ff', color: identityForm.primaryColor || '#2563eb' }}>
                             Confirmado
                           </span>
                         </div>
@@ -2670,11 +3710,37 @@ const SettingsManagement = () => {
                 <div className="space-y-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Nome da Empresa</label>
-                    <input type="text" defaultValue="AgendeFácil Barbearia" className="w-full p-2 border rounded-lg" />
+                    <input
+                      type="text"
+                      value={identityForm.name || ''}
+                      onChange={(e) => {
+                        setIdentityForm(prev => ({ ...prev, name: e.target.value }));
+                        setIdentityError(null);
+                        setIdentitySuccess(null);
+                      }}
+                      className="w-full p-2 border rounded-lg"
+                    />
                   </div>
+
+                  {identityError && (
+                    <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                      {identityError}
+                    </div>
+                  )}
+
+                  {identitySuccess && (
+                    <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
+                      {identitySuccess}
+                    </div>
+                  )}
+
                   <div className="pt-4">
-                    <button className="bg-blue-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-blue-700">
-                      Salvar Alterações
+                    <button
+                      onClick={handleSaveIdentity}
+                      disabled={isSavingIdentity}
+                      className="bg-blue-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      {isSavingIdentity ? 'Salvando...' : 'Salvar Alterações'}
                     </button>
                   </div>
                 </div>
@@ -2756,14 +3822,30 @@ const CategoryModal = ({ isOpen, onClose, onSave, categoryToEdit }: { isOpen: bo
 };
 
 export const AdminDashboard: React.FC = () => {
-  const { user, logout } = useAppContext();
+  const { user, logout, brandIdentity } = useAppContext();
   const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'SERVICES' | 'USERS' | 'AGENDA' | 'SETTINGS'>('DASHBOARD');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [agendaNavigationRequest, setAgendaNavigationRequest] = useState<{
+    date: string;
+    viewMode: 'DAY' | 'WEEK' | 'MONTH';
+    nonce: number;
+  } | null>(null);
 
   const toggleMobileMenu = () => setIsMobileMenuOpen(!isMobileMenuOpen);
 
   const handleTabChange = (tab: 'DASHBOARD' | 'SERVICES' | 'USERS' | 'AGENDA' | 'SETTINGS') => {
     setActiveTab(tab);
+    setIsMobileMenuOpen(false);
+  };
+
+  const handleViewAllRecent = () => {
+    const today = new Date().toISOString().split('T')[0];
+    setAgendaNavigationRequest({
+      date: today,
+      viewMode: 'DAY',
+      nonce: Date.now(),
+    });
+    setActiveTab('AGENDA');
     setIsMobileMenuOpen(false);
   };
 
@@ -2784,8 +3866,9 @@ export const AdminDashboard: React.FC = () => {
       `}>
         <div className="p-6 border-b flex justify-between items-center">
           <div>
-            <h1 className="text-2xl font-bold text-blue-600 flex items-center gap-2">
-              <LayoutDashboard /> AgendeFácil
+            <h1 className="text-2xl font-bold flex items-center gap-2" style={{ color: brandIdentity.primaryColor || '#2563eb' }}>
+              <BrandIcon name={brandIdentity.iconName} className="w-6 h-6" />
+              {brandIdentity.name || 'AgendeFácil'}
             </h1>
             <p className="text-xs text-gray-500 mt-1">Painel Administrativo</p>
           </div>
@@ -2802,16 +3885,16 @@ export const AdminDashboard: React.FC = () => {
             <LayoutDashboard size={20} /> Visão Geral
           </button>
           <button 
-             onClick={() => handleTabChange('SERVICES')}
-             className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'SERVICES' ? 'bg-blue-50 text-blue-600 font-medium' : 'text-gray-600 hover:bg-gray-50'}`}
-          >
-            <DollarSign size={20} /> Serviços
-          </button>
-          <button 
              onClick={() => handleTabChange('AGENDA')}
              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'AGENDA' ? 'bg-blue-50 text-blue-600 font-medium' : 'text-gray-600 hover:bg-gray-50'}`}
           >
             <Calendar size={20} /> Agenda
+          </button>
+          <button 
+             onClick={() => handleTabChange('SERVICES')}
+             className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'SERVICES' ? 'bg-blue-50 text-blue-600 font-medium' : 'text-gray-600 hover:bg-gray-50'}`}
+          >
+            <DollarSign size={20} /> Serviços
           </button>
           <button 
             onClick={() => handleTabChange('USERS')}
@@ -2857,10 +3940,10 @@ export const AdminDashboard: React.FC = () => {
          </header>
 
          <div className={`p-4 md:p-6 ${activeTab === 'AGENDA' ? 'flex-1 overflow-hidden' : ''}`}>
-            {activeTab === 'DASHBOARD' && <DashboardHome />}
+            {activeTab === 'DASHBOARD' && <DashboardHome onViewAllRecent={handleViewAllRecent} />}
             {activeTab === 'SERVICES' && <ServicesManagement />}
             {activeTab === 'USERS' && <ClientsManagement />}
-            {activeTab === 'AGENDA' && <CalendarManagement />}
+            {activeTab === 'AGENDA' && <CalendarManagement navigationRequest={agendaNavigationRequest} />}
             {activeTab === 'SETTINGS' && <SettingsManagement />}
          </div>
       </main>

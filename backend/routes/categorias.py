@@ -42,7 +42,22 @@ def update_categoria(categoria_id: str):
 @categorias_bp.delete("/<categoria_id>")
 @auth_required
 def delete_categoria(categoria_id: str):
-    deleted = CategoriasRepository.delete(g.barbearia_id, categoria_id)
-    if not deleted:
-        return error("Categoria não encontrada", 404)
-    return success({"id": deleted["id"]})
+    try:
+        if CategoriasRepository.has_linked_services(g.barbearia_id, categoria_id):
+            return error(
+                "Esta categoria possui serviços vinculados. Realoque ou exclua os serviços antes de excluir a categoria.",
+                409,
+            )
+
+        deleted = CategoriasRepository.delete(g.barbearia_id, categoria_id)
+        if not deleted:
+            return error("Categoria não encontrada", 404)
+        return success({"id": deleted["id"]})
+    except Exception as exc:
+        message = str(exc).lower()
+        if "foreign key" in message:
+            return error(
+                "Esta categoria possui serviços vinculados. Realoque ou exclua os serviços antes de excluir a categoria.",
+                409,
+            )
+        return error("Falha interna ao excluir categoria.", 500)

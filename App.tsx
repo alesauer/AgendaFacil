@@ -1,13 +1,15 @@
 import React, { useState, useEffect, createContext, useContext } from 'react';
 import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
-import { User, AppNotification, Appointment, Service, Professional, Client, Category } from './types';
+import { User, AppNotification, Appointment, Service, Professional, Client, Category, BusinessHour, BrandIdentity } from './types';
 import { MOCK_NOTIFICATIONS } from './constants';
-import { AgendamentoApi, createAgendamentoApi, deleteAgendamentoApi, listAgendamentosApi, updateAgendamentoApi } from './services/agendamentosApi';
-import { loginApi, meApi } from './services/authApi';
+import { AgendamentoApi, createAgendamentoApi, createBloqueioApi, deleteAgendamentoApi, deleteBloqueioApi, listAgendamentosApi, updateAgendamentoApi, updateBloqueioApi } from './services/agendamentosApi';
+import { AuthUser, createAuthUserApi, deleteAuthUserApi, listAuthUsersApi, loginApi, meApi, updateAuthUserApi } from './services/authApi';
 import { CategoriaApi, createCategoriaApi, deleteCategoriaApi, listCategoriasApi, updateCategoriaApi } from './services/categoriasApi';
 import { ClienteApi, createClienteApi, deleteClienteApi, listClientesApi, updateClienteApi } from './services/clientesApi';
 import { createProfissionalApi, deleteProfissionalApi, listProfissionaisApi, ProfissionalApi, updateProfissionalApi } from './services/profissionaisApi';
 import { createServicoApi, deleteServicoApi, listServicosApi, ServicoApi, updateServicoApi } from './services/servicosApi';
+import { HorarioFuncionamentoApi, listHorariosFuncionamentoApi, saveHorariosFuncionamentoApi } from './services/horariosApi';
+import { getIdentidadeApi, getIdentidadePublicaApi, IdentidadeApi, saveIdentidadeApi } from './services/identidadeApi';
 import { Login } from './views/Login';
 import { ClientPortal } from './views/ClientPortal';
 import { AdminDashboard } from './views/AdminDashboard';
@@ -22,26 +24,30 @@ interface AppContextType {
   notifications: AppNotification[];
   markNotificationRead: (id: string) => void;
   appointments: Appointment[];
-  addAppointment: (apt: Appointment) => void;
-  updateAppointment: (apt: Appointment) => void;
+  addAppointment: (apt: Appointment) => Promise<{ success: boolean; error?: string }>;
+  updateAppointment: (apt: Appointment) => Promise<{ success: boolean; error?: string }>;
   deleteAppointment: (id: string) => void;
   services: Service[];
   updateService: (service: Service) => void;
-  deleteService: (id: string) => void;
+  deleteService: (id: string) => Promise<{ success: boolean; error?: string }>;
   addService: (service: Service) => void;
   categories: Category[];
   addCategory: (category: Category) => void;
   updateCategory: (category: Category) => void;
-  deleteCategory: (id: string) => void;
+  deleteCategory: (id: string) => Promise<{ success: boolean; error?: string }>;
   professionals: Professional[];
   clients: Client[];
   addClient: (client: Client) => void;
   updateClient: (client: Client) => void;
-  deleteClient: (id: string) => void;
+  deleteClient: (id: string) => Promise<{ success: boolean; error?: string }>;
   users: User[];
-  addUser: (user: User) => void;
-  updateUser: (user: User) => void;
-  deleteUser: (id: string) => void;
+  addUser: (user: User & { password?: string }) => Promise<{ success: boolean; error?: string }>;
+  updateUser: (user: User & { password?: string }) => Promise<{ success: boolean; error?: string }>;
+  deleteUser: (id: string) => Promise<{ success: boolean; error?: string }>;
+  businessHours: BusinessHour[];
+  saveBusinessHours: (hours: BusinessHour[]) => Promise<{ success: boolean; error?: string }>;
+  brandIdentity: BrandIdentity;
+  saveBrandIdentity: (identity: BrandIdentity) => Promise<{ success: boolean; error?: string }>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -87,6 +93,27 @@ const LGPDBanner = () => {
 
 const App: React.FC = () => {
   const MAX_AVATAR_URL_LENGTH = 300000;
+  const DEFAULT_PRIMARY_COLOR = '#2563eb';
+  const DEFAULT_SECONDARY_COLOR = '#eff6ff';
+  const weekDayLabels: Record<number, string> = {
+    0: 'Domingo',
+    1: 'Segunda-feira',
+    2: 'Terça-feira',
+    3: 'Quarta-feira',
+    4: 'Quinta-feira',
+    5: 'Sexta-feira',
+    6: 'Sábado',
+  };
+
+  const defaultBusinessHours: BusinessHour[] = [
+    { dayOfWeek: 1, day: weekDayLabels[1], open: true, start: '09:00', end: '19:00' },
+    { dayOfWeek: 2, day: weekDayLabels[2], open: true, start: '09:00', end: '19:00' },
+    { dayOfWeek: 3, day: weekDayLabels[3], open: true, start: '09:00', end: '19:00' },
+    { dayOfWeek: 4, day: weekDayLabels[4], open: true, start: '09:00', end: '19:00' },
+    { dayOfWeek: 5, day: weekDayLabels[5], open: true, start: '09:00', end: '20:00' },
+    { dayOfWeek: 6, day: weekDayLabels[6], open: true, start: '08:00', end: '18:00' },
+    { dayOfWeek: 0, day: weekDayLabels[0], open: false, start: '00:00', end: '00:00' },
+  ];
 
   const normalizeAvatar = (avatar?: string | null) => {
     if (!avatar) return undefined;
@@ -107,6 +134,50 @@ const App: React.FC = () => {
   const [professionals, setProfessionals] = useState<Professional[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+  const [businessHours, setBusinessHours] = useState<BusinessHour[]>(defaultBusinessHours);
+  const [brandIdentity, setBrandIdentity] = useState<BrandIdentity>(() => {
+    try {
+      const raw = localStorage.getItem('brand_identity');
+      if (raw) {
+        const parsed = JSON.parse(raw) as BrandIdentity;
+        return {
+          name: parsed.name || 'AgendeFácil Barbearia',
+          logoUrl: parsed.logoUrl,
+          iconName: parsed.iconName || 'scissors',
+          primaryColor: parsed.primaryColor || DEFAULT_PRIMARY_COLOR,
+          secondaryColor: parsed.secondaryColor || DEFAULT_SECONDARY_COLOR,
+        };
+      }
+    } catch {
+      // ignore parse errors
+    }
+
+    return {
+      name: 'AgendeFácil Barbearia',
+      iconName: 'scissors',
+      primaryColor: DEFAULT_PRIMARY_COLOR,
+      secondaryColor: DEFAULT_SECONDARY_COLOR,
+    };
+  });
+
+  const normalizeHexColor = (value?: string): string | null => {
+    if (!value) return null;
+    const normalized = value.trim();
+    if (/^#([A-Fa-f0-9]{6})$/.test(normalized)) {
+      return normalized;
+    }
+    return null;
+  };
+
+  const shiftHexColor = (hex: string, delta: number): string => {
+    const normalized = hex.replace('#', '');
+    const red = parseInt(normalized.slice(0, 2), 16);
+    const green = parseInt(normalized.slice(2, 4), 16);
+    const blue = parseInt(normalized.slice(4, 6), 16);
+    const clamp = (value: number) => Math.max(0, Math.min(255, value));
+    const toHex = (value: number) => value.toString(16).padStart(2, '0');
+    return `#${toHex(clamp(red + delta))}${toHex(clamp(green + delta))}${toHex(clamp(blue + delta))}`;
+  };
 
   const isAdminApiSession = () => {
     return user?.role === 'ADMIN' && !!localStorage.getItem('auth_token');
@@ -156,8 +227,20 @@ const App: React.FC = () => {
     id: profissional.id,
     name: profissional.nome,
     phone: profissional.telefone || '',
+    email: '',
     role: 'EMPLOYEE',
+    active: profissional.ativo,
     avatar: normalizeAvatar(profissional.foto_url),
+  });
+
+  const mapAuthUserToUser = (authUser: AuthUser, avatar?: string): User => ({
+    id: authUser.id,
+    name: authUser.nome,
+    phone: authUser.telefone || '',
+    email: authUser.email || '',
+    role: authUser.role === 'ADMIN' ? 'ADMIN' : 'EMPLOYEE',
+    active: authUser.ativo,
+    avatar: normalizeAvatar(avatar),
   });
 
   const mapClient = (client: ClienteApi): Client => ({
@@ -174,18 +257,38 @@ const App: React.FC = () => {
     const servico = servicosAtuais.find(item => item.id === agendamento.servico_id);
     const dataNormalizada = String(agendamento.data).slice(0, 10);
     const horaNormalizada = String(agendamento.hora_inicio).slice(0, 5);
+    const horaFimNormalizada = String(agendamento.hora_fim || '').slice(0, 5);
+    const isBlocked = (agendamento.status as Appointment['status']) === 'BLOCKED' || agendamento.is_bloqueio;
     return {
       id: agendamento.id,
-      serviceId: agendamento.servico_id,
+      serviceId: isBlocked ? 'blocked' : agendamento.servico_id,
       professionalId: agendamento.profissional_id,
-      clientId: agendamento.cliente_id,
+      clientId: isBlocked ? 'blocked' : agendamento.cliente_id,
       date: dataNormalizada,
       time: horaNormalizada,
+      endTime: horaFimNormalizada || undefined,
       status: (agendamento.status as Appointment['status']) || 'CONFIRMED',
-      totalValue: servico?.price || 0,
+      totalValue: isBlocked ? 0 : (servico?.price || 0),
+      blockReason: isBlocked ? (agendamento.block_reason || undefined) : undefined,
       createdAt: `${dataNormalizada}T${horaNormalizada}:00`,
     };
   };
+
+  const mapHorarioFuncionamento = (horario: HorarioFuncionamentoApi): BusinessHour => ({
+    dayOfWeek: Number(horario.dia_semana),
+    day: weekDayLabels[Number(horario.dia_semana)] || 'Dia',
+    open: Boolean(horario.aberto),
+    start: String(horario.hora_inicio || '00:00').slice(0, 5),
+    end: String(horario.hora_fim || '00:00').slice(0, 5),
+  });
+
+  const mapIdentidade = (identidade: IdentidadeApi): BrandIdentity => ({
+    name: identidade.nome,
+    logoUrl: identidade.logo_url || undefined,
+    iconName: identidade.icone_marca || 'scissors',
+    primaryColor: identidade.cor_primaria || '#2563eb',
+    secondaryColor: identidade.cor_secundaria || '#eff6ff',
+  });
 
   const getHoraFimByServiceDuration = (horaInicio: string, durationMinutes: number): string => {
     const [hourStr, minuteStr] = horaInicio.split(':');
@@ -206,11 +309,15 @@ const App: React.FC = () => {
       setCategories(categoriasAtuais);
     }
 
-    const [servicosResult, profissionaisResult, clientesResult] = await Promise.all([
+    const [servicosResult, profissionaisResult, clientesResult, authUsersResult] = await Promise.all([
       listServicosApi(),
       listProfissionaisApi(),
       listClientesApi(),
+      listAuthUsersApi(),
     ]);
+
+    const horariosResult = await listHorariosFuncionamentoApi();
+    const identidadeResult = await getIdentidadeApi();
 
     if (servicosResult.success) {
       setServices(servicosResult.data.map(item => mapServico(item, categoriasAtuais)));
@@ -218,11 +325,25 @@ const App: React.FC = () => {
 
     if (profissionaisResult.success) {
       setProfessionals(profissionaisResult.data.map(mapProfissional));
-      setUsers(profissionaisResult.data.map(mapProfissionalToUser));
+    }
+
+    if (authUsersResult.success) {
+      const profissionaisById = new Map(
+        (profissionaisResult.success ? profissionaisResult.data : []).map(item => [item.id, item])
+      );
+      setUsers(authUsersResult.data.map(item => mapAuthUserToUser(item, profissionaisById.get(item.id)?.foto_url || undefined)));
     }
 
     if (clientesResult.success) {
       setClients(clientesResult.data.map(mapClient));
+    }
+
+    if (horariosResult.success) {
+      setBusinessHours(horariosResult.data.map(mapHorarioFuncionamento));
+    }
+
+    if (identidadeResult.success) {
+      setBrandIdentity(mapIdentidade(identidadeResult.data));
     }
 
     const servicosMapeados = servicosResult.success
@@ -238,7 +359,10 @@ const App: React.FC = () => {
     if (!categoriasResult.success) errors.push('categorias');
     if (!servicosResult.success) errors.push('serviços');
     if (!profissionaisResult.success) errors.push('profissionais');
+    if (!authUsersResult.success) errors.push('usuários');
     if (!clientesResult.success) errors.push('clientes');
+    if (!horariosResult.success) errors.push('horários de funcionamento');
+    if (!identidadeResult.success) errors.push('identidade visual');
     if (!agendamentosResult.success) errors.push('agendamentos');
 
     if (errors.length > 0) {
@@ -258,7 +382,9 @@ const App: React.FC = () => {
               id: result.data.id,
               name: result.data.nome,
               phone: result.data.telefone,
+              email: result.data.email || '',
               role: result.data.role,
+              active: result.data.ativo,
             };
             setUser(restoredUser);
             localStorage.setItem('app_user', JSON.stringify(restoredUser));
@@ -308,10 +434,53 @@ const App: React.FC = () => {
     };
   }, [authInitialized, user?.id, user?.role]);
 
+  useEffect(() => {
+    if (!authInitialized) {
+      return;
+    }
+
+    let cancelled = false;
+    const syncPublicIdentity = async () => {
+      const result = await getIdentidadePublicaApi();
+      if (!cancelled && result.success) {
+        const mapped: BrandIdentity = {
+          name: result.data.nome,
+          logoUrl: result.data.logo_url || undefined,
+          iconName: result.data.icone_marca || 'scissors',
+          primaryColor: result.data.cor_primaria || DEFAULT_PRIMARY_COLOR,
+          secondaryColor: result.data.cor_secundaria || DEFAULT_SECONDARY_COLOR,
+        };
+        setBrandIdentity(mapped);
+      }
+    };
+
+    void syncPublicIdentity();
+    return () => {
+      cancelled = true;
+    };
+  }, [authInitialized]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const primary = normalizeHexColor(brandIdentity.primaryColor) || DEFAULT_PRIMARY_COLOR;
+    const secondary = normalizeHexColor(brandIdentity.secondaryColor) || DEFAULT_SECONDARY_COLOR;
+
+    root.style.setProperty('--brand-primary', primary);
+    root.style.setProperty('--brand-primary-dark', shiftHexColor(primary, -20));
+    root.style.setProperty('--brand-primary-light', shiftHexColor(primary, 20));
+    root.style.setProperty('--brand-secondary', secondary);
+
+    try {
+      localStorage.setItem('brand_identity', JSON.stringify(brandIdentity));
+    } catch {
+      // ignore storage errors
+    }
+  }, [brandIdentity]);
+
   const login = async (phone: string, role: 'CLIENT' | 'ADMIN', password?: string) => {
     if (role === 'ADMIN') {
       const result = await loginApi({
-        telefone: phone,
+        login: phone,
         senha: password || '',
       });
 
@@ -323,7 +492,9 @@ const App: React.FC = () => {
         id: result.data.user.id,
         name: result.data.user.nome,
         phone: result.data.user.telefone,
+        email: result.data.user.email || '',
         role: result.data.user.role,
+        active: result.data.user.ativo,
       };
 
       localStorage.setItem('auth_token', result.data.token);
@@ -353,26 +524,42 @@ const App: React.FC = () => {
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
   };
 
-  const addAppointment = (apt: Appointment) => {
+  const addAppointment = async (apt: Appointment): Promise<{ success: boolean; error?: string }> => {
     if (isAdminApiSession()) {
-      void (async () => {
-        const service = services.find(item => item.id === apt.serviceId);
-        const result = await createAgendamentoApi({
-          cliente_id: apt.clientId,
+      if (apt.status === 'BLOCKED') {
+        const result = await createBloqueioApi({
           profissional_id: apt.professionalId,
-          servico_id: apt.serviceId,
           data: apt.date,
           hora_inicio: apt.time,
-          hora_fim: getHoraFimByServiceDuration(apt.time, service?.durationMinutes || 30),
-          status: apt.status,
+          hora_fim: apt.endTime || apt.time,
+          motivo: apt.blockReason || null,
         });
         if (!result.success) {
-          pushErrorNotification(('error' in result && result.error) ? result.error : 'Falha ao criar agendamento.');
-          return;
+          const message = ('error' in result && result.error) ? result.error : 'Falha ao criar bloqueio.';
+          pushErrorNotification(message);
+          return { success: false, error: message };
         }
         setAppointments(prev => [mapAgendamento(result.data, services), ...prev]);
-      })();
-      return;
+        return { success: true };
+      }
+
+      const service = services.find(item => item.id === apt.serviceId);
+      const result = await createAgendamentoApi({
+        cliente_id: apt.clientId,
+        profissional_id: apt.professionalId,
+        servico_id: apt.serviceId,
+        data: apt.date,
+        hora_inicio: apt.time,
+        hora_fim: getHoraFimByServiceDuration(apt.time, service?.durationMinutes || 30),
+        status: apt.status,
+      });
+      if (!result.success) {
+        const message = ('error' in result && result.error) ? result.error : 'Falha ao criar agendamento.';
+        pushErrorNotification(message);
+        return { success: false, error: message };
+      }
+      setAppointments(prev => [mapAgendamento(result.data, services), ...prev]);
+      return { success: true };
     }
 
     setAppointments(prev => [apt, ...prev]);
@@ -386,40 +573,64 @@ const App: React.FC = () => {
       timestamp: 'Agora'
     };
     setNotifications(prev => [newNotif, ...prev]);
+    return { success: true };
   };
 
-  const updateAppointment = (updatedApt: Appointment) => {
+  const updateAppointment = async (updatedApt: Appointment): Promise<{ success: boolean; error?: string }> => {
     if (isAdminApiSession()) {
-      void (async () => {
-        const service = services.find(item => item.id === updatedApt.serviceId);
-        const result = await updateAgendamentoApi(updatedApt.id, {
-          cliente_id: updatedApt.clientId,
+      if (updatedApt.status === 'BLOCKED') {
+        const bloqueioId = updatedApt.id.startsWith('bloqueio:') ? updatedApt.id.replace('bloqueio:', '') : updatedApt.id;
+        const result = await updateBloqueioApi(bloqueioId, {
           profissional_id: updatedApt.professionalId,
-          servico_id: updatedApt.serviceId,
           data: updatedApt.date,
           hora_inicio: updatedApt.time,
-          hora_fim: getHoraFimByServiceDuration(updatedApt.time, service?.durationMinutes || 30),
-          status: updatedApt.status,
+          hora_fim: updatedApt.endTime || updatedApt.time,
+          motivo: updatedApt.blockReason || null,
         });
         if (!result.success) {
-          pushErrorNotification(('error' in result && result.error) ? result.error : 'Falha ao atualizar agendamento.');
-          return;
+          const message = ('error' in result && result.error) ? result.error : 'Falha ao atualizar bloqueio.';
+          pushErrorNotification(message);
+          return { success: false, error: message };
         }
         const mapped = mapAgendamento(result.data, services);
         setAppointments(prev => prev.map(item => item.id === mapped.id ? mapped : item));
-      })();
-      return;
+        return { success: true };
+      }
+
+      const service = services.find(item => item.id === updatedApt.serviceId);
+      const result = await updateAgendamentoApi(updatedApt.id, {
+        cliente_id: updatedApt.clientId,
+        profissional_id: updatedApt.professionalId,
+        servico_id: updatedApt.serviceId,
+        data: updatedApt.date,
+        hora_inicio: updatedApt.time,
+        hora_fim: getHoraFimByServiceDuration(updatedApt.time, service?.durationMinutes || 30),
+        status: updatedApt.status,
+      });
+      if (!result.success) {
+        const message = ('error' in result && result.error) ? result.error : 'Falha ao atualizar agendamento.';
+        pushErrorNotification(message);
+        return { success: false, error: message };
+      }
+      const mapped = mapAgendamento(result.data, services);
+      setAppointments(prev => prev.map(item => item.id === mapped.id ? mapped : item));
+      return { success: true };
     }
 
     setAppointments(prev => prev.map(a => a.id === updatedApt.id ? updatedApt : a));
+    return { success: true };
   };
 
   const deleteAppointment = (id: string) => {
     if (isAdminApiSession()) {
       void (async () => {
-        const result = await deleteAgendamentoApi(id);
+        const isBloqueio = id.startsWith('bloqueio:');
+        const rawId = isBloqueio ? id.replace('bloqueio:', '') : id;
+        const result = isBloqueio
+          ? await deleteBloqueioApi(rawId)
+          : await deleteAgendamentoApi(rawId);
         if (!result.success) {
-          pushErrorNotification(('error' in result && result.error) ? result.error : 'Falha ao cancelar agendamento.');
+          pushErrorNotification(('error' in result && result.error) ? result.error : (isBloqueio ? 'Falha ao excluir bloqueio.' : 'Falha ao cancelar agendamento.'));
           return;
         }
         setAppointments(prev => prev.filter(a => a.id !== id));
@@ -488,22 +699,20 @@ const App: React.FC = () => {
     })();
   };
 
-  const deleteService = (id: string) => {
+  const deleteService = async (id: string): Promise<{ success: boolean; error?: string }> => {
     if (!isAdminApiSession()) {
       setServices(prev => prev.filter(s => s.id !== id));
-      return;
+      return { success: true };
     }
 
-    void (async () => {
-      const result = await deleteServicoApi(id);
-      if (!result.success) {
-        const message = ('error' in result && result.error) ? result.error : 'Falha ao excluir serviço.';
-        pushErrorNotification(message);
-        alert(message);
-        return;
-      }
-      setServices(prev => prev.filter(s => s.id !== id));
-    })();
+    const result = await deleteServicoApi(id);
+    if (!result.success) {
+      const message = ('error' in result && result.error) ? result.error : 'Falha ao excluir serviço.';
+      pushErrorNotification(message);
+      return { success: false, error: message };
+    }
+    setServices(prev => prev.filter(s => s.id !== id));
+    return { success: true };
   };
 
   const addCategory = (newCategory: Category) => {
@@ -548,20 +757,20 @@ const App: React.FC = () => {
     })();
   };
 
-  const deleteCategory = (id: string) => {
+  const deleteCategory = async (id: string): Promise<{ success: boolean; error?: string }> => {
     if (!isAdminApiSession()) {
       setCategories(prev => prev.filter(c => c.id !== id));
-      return;
+      return { success: true };
     }
 
-    void (async () => {
-      const result = await deleteCategoriaApi(id);
-      if (!result.success) {
-        pushErrorNotification(('error' in result && result.error) ? result.error : 'Falha ao excluir categoria.');
-        return;
-      }
-      setCategories(prev => prev.filter(c => c.id !== id));
-    })();
+    const result = await deleteCategoriaApi(id);
+    if (!result.success) {
+      const message = ('error' in result && result.error) ? result.error : 'Falha ao excluir categoria.';
+      pushErrorNotification(message);
+      return { success: false, error: message };
+    }
+    setCategories(prev => prev.filter(c => c.id !== id));
+    return { success: true };
   };
 
   const addClient = (newClient: Client) => {
@@ -620,98 +829,213 @@ const App: React.FC = () => {
     })();
   };
 
-  const deleteClient = (id: string) => {
+  const deleteClient = async (id: string): Promise<{ success: boolean; error?: string }> => {
     if (!isAdminApiSession()) {
       setClients(prev => prev.filter(c => c.id !== id));
-      return;
+      return { success: true };
     }
 
-    void (async () => {
-      const result = await deleteClienteApi(id);
-      if (!result.success) {
-        const message = ('error' in result && result.error) ? result.error : 'Falha ao excluir cliente.';
-        pushErrorNotification(message);
-        alert(message);
-        return;
-      }
-      setClients(prev => prev.filter(c => c.id !== id));
-    })();
+    const result = await deleteClienteApi(id);
+    if (!result.success) {
+      const message = ('error' in result && result.error) ? result.error : 'Falha ao excluir cliente.';
+      pushErrorNotification(message);
+      return { success: false, error: message };
+    }
+    setClients(prev => prev.filter(c => c.id !== id));
+    return { success: true };
   };
 
-  const addUser = (newUser: User) => {
+  const addUser = async (newUser: User & { password?: string }): Promise<{ success: boolean; error?: string }> => {
     if (!isAdminApiSession()) {
       setUsers(prev => [...prev, newUser]);
-      return;
+      return { success: true };
     }
 
-    void (async () => {
-      if (newUser.avatar && newUser.avatar.length > MAX_AVATAR_URL_LENGTH) {
-        pushErrorNotification('Imagem de avatar muito grande. Use uma imagem menor.');
-        return;
-      }
+    if (newUser.avatar && newUser.avatar.length > MAX_AVATAR_URL_LENGTH) {
+      const message = 'Imagem de avatar muito grande. Use uma imagem menor.';
+      pushErrorNotification(message);
+      return { success: false, error: message };
+    }
 
-      const result = await createProfissionalApi({
-        nome: newUser.name,
-        cargo: newUser.role === 'ADMIN' ? 'Administrador' : 'Profissional',
-        telefone: newUser.phone,
-        foto_url: normalizeAvatar(newUser.avatar) || null,
-      });
+    const email = (newUser.email || '').trim().toLowerCase();
+    if (!email || !newUser.password) {
+      const message = 'Email e senha são obrigatórios para criar usuário.';
+      pushErrorNotification(message);
+      return { success: false, error: message };
+    }
 
-      if (!result.success) {
-        pushErrorNotification(('error' in result && result.error) ? result.error : 'Falha ao criar profissional.');
-        return;
-      }
+    const authResult = await createAuthUserApi({
+      id: newUser.id,
+      nome: newUser.name,
+      telefone: newUser.phone,
+      email,
+      senha: newUser.password,
+      role: newUser.role === 'ADMIN' ? 'ADMIN' : 'EMPLOYEE',
+      ativo: newUser.active ?? true,
+    });
 
-      setUsers(prev => [...prev, mapProfissionalToUser(result.data)]);
-      setProfessionals(prev => [...prev, mapProfissional(result.data)]);
-    })();
+    if (!authResult.success) {
+      const message = ('error' in authResult && authResult.error) ? authResult.error : 'Falha ao criar usuário.';
+      pushErrorNotification(message);
+      return { success: false, error: message };
+    }
+
+    const profissionalResult = await createProfissionalApi({
+      id: authResult.data.id,
+      nome: newUser.name,
+      cargo: newUser.role === 'ADMIN' ? 'Administrador' : 'Profissional',
+      telefone: newUser.phone,
+      foto_url: normalizeAvatar(newUser.avatar) || null,
+      ativo: true,
+    });
+
+    if (!profissionalResult.success) {
+      await deleteAuthUserApi(authResult.data.id);
+      const message = ('error' in profissionalResult && profissionalResult.error) ? profissionalResult.error : 'Falha ao criar profissional associado.';
+      pushErrorNotification(message);
+      return { success: false, error: message };
+    }
+
+    setUsers(prev => [...prev, mapAuthUserToUser(authResult.data, profissionalResult.data.foto_url || undefined)]);
+    setProfessionals(prev => [...prev, mapProfissional(profissionalResult.data)]);
+    return { success: true };
   };
 
-  const updateUser = (updatedUser: User) => {
+  const updateUser = async (updatedUser: User & { password?: string }): Promise<{ success: boolean; error?: string }> => {
     if (!isAdminApiSession()) {
       setUsers(prev => prev.map(u => u.id === updatedUser.id ? updatedUser : u));
-      return;
+      return { success: true };
     }
 
-    void (async () => {
-      if (updatedUser.avatar && updatedUser.avatar.length > MAX_AVATAR_URL_LENGTH) {
-        pushErrorNotification('Imagem de avatar muito grande. Use uma imagem menor.');
-        return;
+    if (updatedUser.avatar && updatedUser.avatar.length > MAX_AVATAR_URL_LENGTH) {
+      const message = 'Imagem de avatar muito grande. Use uma imagem menor.';
+      pushErrorNotification(message);
+      return { success: false, error: message };
+    }
+
+    const email = (updatedUser.email || '').trim().toLowerCase();
+    if (!email) {
+      const message = 'Email é obrigatório.';
+      pushErrorNotification(message);
+      return { success: false, error: message };
+    }
+
+    const authResult = await updateAuthUserApi(updatedUser.id, {
+      nome: updatedUser.name,
+      telefone: updatedUser.phone,
+      email,
+      senha: updatedUser.password,
+      role: updatedUser.role === 'ADMIN' ? 'ADMIN' : 'EMPLOYEE',
+      ativo: updatedUser.active ?? true,
+    });
+
+    if (!authResult.success) {
+      const message = ('error' in authResult && authResult.error) ? authResult.error : 'Falha ao atualizar usuário.';
+      pushErrorNotification(message);
+      return { success: false, error: message };
+    }
+
+    const hasProfissional = professionals.some(p => p.id === updatedUser.id);
+    const profissionalPayload = {
+      id: updatedUser.id,
+      nome: updatedUser.name,
+      cargo: updatedUser.role === 'ADMIN' ? 'Administrador' : 'Profissional',
+      telefone: updatedUser.phone,
+      foto_url: normalizeAvatar(updatedUser.avatar) || null,
+      ativo: updatedUser.active ?? true,
+    };
+
+    const profissionalResult = hasProfissional
+      ? await updateProfissionalApi(updatedUser.id, profissionalPayload)
+      : await createProfissionalApi(profissionalPayload);
+
+    if (!profissionalResult.success) {
+      const message = ('error' in profissionalResult && profissionalResult.error) ? profissionalResult.error : 'Falha ao sincronizar profissional.';
+      pushErrorNotification(message);
+      setUsers(prev => prev.map(u => u.id === updatedUser.id ? mapAuthUserToUser(authResult.data, updatedUser.avatar) : u));
+      return { success: false, error: message };
+    }
+
+    setUsers(prev => prev.map(u => u.id === updatedUser.id ? mapAuthUserToUser(authResult.data, profissionalResult.data.foto_url || undefined) : u));
+    setProfessionals(prev => {
+      const mapped = mapProfissional(profissionalResult.data);
+      if (hasProfissional) {
+        return prev.map(p => p.id === updatedUser.id ? mapped : p);
       }
-
-      const result = await updateProfissionalApi(updatedUser.id, {
-        nome: updatedUser.name,
-        cargo: updatedUser.role === 'ADMIN' ? 'Administrador' : 'Profissional',
-        telefone: updatedUser.phone,
-        foto_url: normalizeAvatar(updatedUser.avatar) || null,
-        ativo: true,
-      });
-
-      if (!result.success) {
-        pushErrorNotification(('error' in result && result.error) ? result.error : 'Falha ao atualizar profissional.');
-        return;
-      }
-
-      setUsers(prev => prev.map(u => u.id === updatedUser.id ? mapProfissionalToUser(result.data) : u));
-      setProfessionals(prev => prev.map(p => p.id === updatedUser.id ? mapProfissional(result.data) : p));
-    })();
+      return [...prev, mapped];
+    });
+    return { success: true };
   };
 
-  const deleteUser = (id: string) => {
+  const deleteUser = async (id: string): Promise<{ success: boolean; error?: string }> => {
     if (!isAdminApiSession()) {
       setUsers(prev => prev.filter(u => u.id !== id));
-      return;
+      return { success: true };
     }
 
-    void (async () => {
-      const result = await deleteProfissionalApi(id);
-      if (!result.success) {
-        pushErrorNotification(('error' in result && result.error) ? result.error : 'Falha ao excluir profissional.');
-        return;
-      }
-      setUsers(prev => prev.filter(u => u.id !== id));
-      setProfessionals(prev => prev.filter(p => p.id !== id));
-    })();
+    const authResult = await deleteAuthUserApi(id);
+    if (!authResult.success) {
+      const message = ('error' in authResult && authResult.error) ? authResult.error : 'Falha ao excluir usuário.';
+      pushErrorNotification(message);
+      return { success: false, error: message };
+    }
+
+    const profissionalResult = await deleteProfissionalApi(id);
+    if (!profissionalResult.success) {
+      pushErrorNotification(('error' in profissionalResult && profissionalResult.error) ? profissionalResult.error : 'Usuário removido, mas não foi possível excluir profissional vinculado.');
+    }
+
+    setUsers(prev => prev.filter(u => u.id !== id));
+    setProfessionals(prev => prev.filter(p => p.id !== id));
+    return { success: true };
+  };
+
+  const saveBusinessHours = async (hours: BusinessHour[]): Promise<{ success: boolean; error?: string }> => {
+    if (!isAdminApiSession()) {
+      setBusinessHours(hours);
+      return { success: true };
+    }
+
+    const payload: HorarioFuncionamentoApi[] = hours.map(item => ({
+      dia_semana: item.dayOfWeek,
+      aberto: item.open,
+      hora_inicio: item.open ? item.start : '00:00',
+      hora_fim: item.open ? item.end : '00:00',
+    }));
+
+    const result = await saveHorariosFuncionamentoApi(payload);
+    if (!result.success) {
+      const message = ('error' in result && result.error) ? result.error : 'Falha ao salvar horários de funcionamento.';
+      pushErrorNotification(message);
+      return { success: false, error: message };
+    }
+
+    setBusinessHours(result.data.map(mapHorarioFuncionamento));
+    return { success: true };
+  };
+
+  const saveBrandIdentity = async (identity: BrandIdentity): Promise<{ success: boolean; error?: string }> => {
+    if (!isAdminApiSession()) {
+      setBrandIdentity(identity);
+      return { success: true };
+    }
+
+    const result = await saveIdentidadeApi({
+      nome: identity.name,
+      logo_url: identity.logoUrl || null,
+      icone_marca: identity.iconName || 'scissors',
+      cor_primaria: identity.primaryColor || '#2563eb',
+      cor_secundaria: identity.secondaryColor || '#eff6ff',
+    });
+
+    if (!result.success) {
+      const message = ('error' in result && result.error) ? result.error : 'Falha ao salvar identidade visual.';
+      pushErrorNotification(message);
+      return { success: false, error: message };
+    }
+
+    setBrandIdentity(mapIdentidade(result.data));
+    return { success: true };
   };
 
   const isStripeSubscriptionActive = () => localStorage.getItem('stripe_subscription_active') === 'true';
@@ -736,7 +1060,9 @@ const App: React.FC = () => {
       services, updateService, addService, deleteService,
       categories, addCategory, updateCategory, deleteCategory,
       professionals, clients, addClient, updateClient, deleteClient,
-      users, addUser, updateUser, deleteUser
+      users, addUser, updateUser, deleteUser,
+      businessHours, saveBusinessHours,
+      brandIdentity, saveBrandIdentity
     }}>
       <HashRouter>
         <div className="min-h-screen bg-gray-50 text-gray-900 font-sans">

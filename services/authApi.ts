@@ -1,13 +1,16 @@
 import { apiRequest } from './apiClient';
 
 export type LoginPayload = {
-  telefone: string;
+  telefone?: string;
+  email?: string;
+  login?: string;
   senha: string;
 };
 
 export type SignupPayload = {
   nome: string;
   telefone: string;
+  email?: string;
   senha: string;
   role?: 'ADMIN' | 'EMPLOYEE' | 'CLIENT';
 };
@@ -17,8 +20,19 @@ export type AuthUser = {
   barbearia_id: string;
   nome: string;
   telefone: string;
+  email?: string | null;
   role: 'ADMIN' | 'EMPLOYEE' | 'CLIENT';
   ativo: boolean;
+};
+
+export type TeamUserPayload = {
+  id?: string;
+  nome: string;
+  telefone: string;
+  email: string;
+  senha?: string;
+  role: 'ADMIN' | 'EMPLOYEE';
+  ativo?: boolean;
 };
 
 export type AuthResult = {
@@ -43,5 +57,31 @@ export async function signupApi(payload: SignupPayload) {
 export async function meApi() {
   return apiRequest<AuthUser>('/auth/me', {
     method: 'GET',
+  });
+}
+
+export async function listAuthUsersApi() {
+  return apiRequest<AuthUser[]>('/auth/users', {
+    method: 'GET',
+  });
+}
+
+export async function createAuthUserApi(payload: TeamUserPayload) {
+  return apiRequest<AuthUser>('/auth/users', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateAuthUserApi(userId: string, payload: TeamUserPayload) {
+  return apiRequest<AuthUser>(`/auth/users/${userId}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteAuthUserApi(userId: string) {
+  return apiRequest<{ id: string }>(`/auth/users/${userId}`, {
+    method: 'DELETE',
   });
 }

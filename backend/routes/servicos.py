@@ -69,7 +69,22 @@ def update_servico(servico_id: str):
 @servicos_bp.delete("/<servico_id>")
 @auth_required
 def delete_servico(servico_id: str):
-    deleted = ServicosRepository.delete(g.barbearia_id, servico_id)
-    if not deleted:
-        return error("Serviço não encontrado", 404)
-    return success({"id": deleted["id"]})
+    try:
+        if ServicosRepository.has_linked_appointments(g.barbearia_id, servico_id):
+            return error(
+                "Este serviço possui agendamentos vinculados. Cancele/exclua os agendamentos antes de excluir o serviço.",
+                409,
+            )
+
+        deleted = ServicosRepository.delete(g.barbearia_id, servico_id)
+        if not deleted:
+            return error("Serviço não encontrado", 404)
+        return success({"id": deleted["id"]})
+    except Exception as exc:
+        message = str(exc).lower()
+        if "foreign key" in message or "fk_agendamentos_servico_tenant" in message:
+            return error(
+                "Este serviço possui agendamentos vinculados. Cancele/exclua os agendamentos antes de excluir o serviço.",
+                409,
+            )
+        return error("Falha interna ao excluir serviço.", 500)

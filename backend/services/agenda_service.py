@@ -2,8 +2,20 @@ from backend.repositories.agendamentos_repository import AgendamentosRepository
 
 
 def _to_minutes(hhmm: str):
-    hh, mm = hhmm.split(":")
-    return int(hh) * 60 + int(mm)
+    if hasattr(hhmm, "hour") and hasattr(hhmm, "minute"):
+        return int(getattr(hhmm, "hour")) * 60 + int(getattr(hhmm, "minute"))
+
+    raw = str(hhmm or "").strip()
+    if not raw:
+        return 0
+
+    parts = raw.split(":")
+    if len(parts) < 2:
+        raise ValueError(f"Horário inválido: {hhmm}")
+
+    hh = int(parts[0])
+    mm = int(parts[1])
+    return hh * 60 + mm
 
 
 def _to_hhmm(minutes: int):

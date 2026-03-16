@@ -33,6 +33,7 @@ def list_profissionais():
 @auth_required
 def create_profissional():
     payload = request.get_json(silent=True) or {}
+    profissional_id = payload.get("id")
     nome = (payload.get("nome") or "").strip()
     cargo = (payload.get("cargo") or "").strip()
     telefone = (payload.get("telefone") or "").strip()
@@ -40,7 +41,7 @@ def create_profissional():
     if not nome:
         return error("nome é obrigatório", 400)
     profissional = ProfissionaisRepository.create(
-        g.barbearia_id, nome, cargo, telefone, foto_url
+        g.barbearia_id, nome, cargo, telefone, foto_url, profissional_id
     )
     return success(profissional, 201)
 
@@ -73,7 +74,24 @@ def update_profissional(profissional_id: str):
 @profissionais_bp.delete("/<profissional_id>")
 @auth_required
 def delete_profissional(profissional_id: str):
-    deleted = ProfissionaisRepository.delete(g.barbearia_id, profissional_id)
-    if not deleted:
-        return error("Profissional não encontrado", 404)
-    return success({"id": deleted["id"]})
+    try:
+        if ProfissionaisRepository.has_linked_appointments(
+            g.barbearia_id, profissional_id
+        ):
+            return error(
+                "Este profissional possui agendamentos vinculados. Cancele/exclua os agendamentos antes de excluir o profissional.",
+                409,
+            )
+
+        deleted = ProfissionaisRepository.delete(g.barbearia_id, profissional_id)
+        if not deleted:
+            return error("Profissional não encontrado", 404)
+        return success({"id": deleted["id"]})
+    except Exception as exc:
+        message = str(exc).lower()
+        if "foreign key" in message or "fk_agendamentos_profissional_tenant" in message:
+            return error(
+                "Este profissional possui agendamentos vinculados. Cancele/exclua os agendamentos antes de excluir o profissional.",
+                409,
+            )
+        return error("Falha interna ao excluir profissional.", 500)

@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { useAppContext } from '../App';
-import { AVAILABLE_TIMES } from '../constants';
 import { Service, Professional, Appointment } from '../types';
 import { 
   Calendar, Clock, User as UserIcon, ChevronLeft, CreditCard, CheckCircle, 
@@ -156,7 +155,7 @@ const ProfessionalSelect = ({ service, onSelect }: { service: Service, onSelect:
 };
 
 const DateTimeSelect = ({ professionalId, onSelect }: { professionalId: string, onSelect: (date: string, time: string) => void }) => {
-  const { appointments } = useAppContext();
+  const { appointments, businessHours } = useAppContext();
   const [selectedDate, setSelectedDate] = useState<string>('');
   const [selectedTime, setSelectedTime] = useState<string>('');
   
@@ -165,14 +164,42 @@ const DateTimeSelect = ({ professionalId, onSelect }: { professionalId: string, 
 
   const getAvailableTimes = (date: string) => {
     if (!date) return [];
+
+    const jsDay = new Date(`${date}T12:00:00`).getDay();
+    const dayOfWeek = jsDay === 0 ? 0 : jsDay;
+    const dayRule = businessHours.find(item => item.dayOfWeek === dayOfWeek);
+
+    if (!dayRule?.open) {
+      return [];
+    }
+
+    const toMinutes = (time: string) => {
+      const [hour, minute] = time.split(':').map(Number);
+      return (hour * 60) + minute;
+    };
+
+    const toHHMM = (minutes: number) => {
+      const h = Math.floor(minutes / 60);
+      const m = minutes % 60;
+      return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+    };
+
+    const generatedTimes: string[] = [];
+    let cursor = toMinutes(dayRule.start);
+    const end = toMinutes(dayRule.end);
+
+    while (cursor < end) {
+      generatedTimes.push(toHHMM(cursor));
+      cursor += 30;
+    }
     
     // Filter out times that are already taken by this professional on this date
     // This includes both regular appointments and BLOCKED slots
     const takenTimes = appointments
       .filter(apt => apt.date === date && apt.professionalId === professionalId && apt.status !== 'CANCELLED')
       .map(apt => apt.time);
-      
-    return AVAILABLE_TIMES.filter(time => !takenTimes.includes(time));
+
+    return generatedTimes.filter(time => !takenTimes.includes(time));
   };
 
   const availableTimes = getAvailableTimes(selectedDate);
