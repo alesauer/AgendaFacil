@@ -475,6 +475,37 @@ export const ClientPortal: React.FC = () => {
 
   // Render History
   const renderHistory = () => {
+    const normalizeStatus = (status?: string) => {
+      if ((status || '').toUpperCase() === 'COMPLETED') return 'COMPLETED_OP';
+      return (status || '').toUpperCase();
+    };
+
+    const getStatusBadgeClass = (status?: string) => {
+      switch (normalizeStatus(status)) {
+        case 'CONFIRMED': return 'bg-green-100 text-green-700';
+        case 'PENDING_PAYMENT': return 'bg-yellow-100 text-yellow-700';
+        case 'IN_PROGRESS': return 'bg-indigo-100 text-indigo-700';
+        case 'COMPLETED_OP': return 'bg-blue-100 text-blue-700';
+        case 'COMPLETED_FIN': return 'bg-emerald-100 text-emerald-700';
+        case 'REOPENED': return 'bg-orange-100 text-orange-700';
+        case 'CANCELLED': return 'bg-red-100 text-red-700';
+        default: return 'bg-gray-100 text-gray-700';
+      }
+    };
+
+    const getStatusLabel = (status?: string) => {
+      switch (normalizeStatus(status)) {
+        case 'CONFIRMED': return 'CONFIRMADO';
+        case 'PENDING_PAYMENT': return 'PENDENTE PAGAMENTO';
+        case 'IN_PROGRESS': return 'EM ATENDIMENTO';
+        case 'COMPLETED_OP': return 'CONCLUÍDO (OPERACIONAL)';
+        case 'COMPLETED_FIN': return 'CONCLUÍDO (FINANCEIRO)';
+        case 'REOPENED': return 'REABERTO';
+        case 'CANCELLED': return 'CANCELADO';
+        default: return status || 'N/A';
+      }
+    };
+
     const myApts = appointments.filter(a => a.clientId === user?.id).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     
     return (
@@ -487,12 +518,8 @@ export const ClientPortal: React.FC = () => {
             <div key={apt.id} className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
                <div className="flex justify-between items-start mb-2">
                  <div>
-                   <span className={`text-xs font-bold px-2 py-1 rounded-full ${
-                     apt.status === 'CONFIRMED' ? 'bg-green-100 text-green-700' : 
-                     apt.status === 'PENDING_PAYMENT' ? 'bg-yellow-100 text-yellow-700' :
-                     apt.status === 'CANCELLED' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-700'
-                   }`}>
-                     {apt.status === 'CONFIRMED' ? 'CONFIRMADO' : apt.status}
+                   <span className={`text-xs font-bold px-2 py-1 rounded-full ${getStatusBadgeClass(apt.status)}`}>
+                     {getStatusLabel(apt.status)}
                    </span>
                  </div>
                  <span className="text-sm font-bold text-gray-900">R$ {apt.totalValue.toFixed(2)}</span>

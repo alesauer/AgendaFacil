@@ -5,6 +5,7 @@ import { BrandIdentity, Client, Service } from '../types';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { LayoutDashboard, Users, Calendar, Settings, LogOut, Plus, Edit, Trash2, DollarSign, X, Clock, Tag, Image as ImageIcon, Search, ChevronLeft, ChevronRight, Bell, Mail, MessageSquare, Shield, Globe, Menu, Scissors, Sparkles, Smile, Zap, Heart, Share2, RotateCcw, ChevronDown, Lock, Camera, Store, User as UserIcon, Palette, Check, CreditCard, Receipt, BarChart3, Phone, Headphones, ExternalLink, List } from 'lucide-react';
 import { MOCK_APPOINTMENTS } from '../constants';
+import { createProfissionalApi, deleteProfissionalApi, updateProfissionalApi } from '../services/profissionaisApi';
 
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042'];
 
@@ -19,6 +20,39 @@ const safeAvatarSrc = (value?: string | null) => {
     return value;
   }
   return undefined;
+};
+
+const normalizeAppointmentStatus = (status?: string) => {
+  if ((status || '').toUpperCase() === 'COMPLETED') return 'COMPLETED_OP';
+  return (status || '').toUpperCase();
+};
+
+const getAppointmentStatusLabel = (status?: string) => {
+  switch (normalizeAppointmentStatus(status)) {
+    case 'PENDING_PAYMENT': return 'Aguardando';
+    case 'CONFIRMED': return 'Confirmado';
+    case 'IN_PROGRESS': return 'Em atendimento';
+    case 'COMPLETED_OP': return 'Concluído (Op.)';
+    case 'COMPLETED_FIN': return 'Concluído (Fin.)';
+    case 'REOPENED': return 'Reaberto';
+    case 'CANCELLED': return 'Cancelado';
+    case 'BLOCKED': return 'Bloqueado';
+    default: return status || 'N/A';
+  }
+};
+
+const getAppointmentStatusChipClass = (status?: string) => {
+  switch (normalizeAppointmentStatus(status)) {
+    case 'CONFIRMED': return 'bg-green-100 text-green-700';
+    case 'PENDING_PAYMENT': return 'bg-yellow-100 text-yellow-700';
+    case 'IN_PROGRESS': return 'bg-indigo-100 text-indigo-700';
+    case 'COMPLETED_OP': return 'bg-blue-100 text-blue-700';
+    case 'COMPLETED_FIN': return 'bg-emerald-100 text-emerald-700';
+    case 'REOPENED': return 'bg-orange-100 text-orange-700';
+    case 'CANCELLED': return 'bg-red-100 text-red-700';
+    case 'BLOCKED': return 'bg-gray-200 text-gray-700';
+    default: return 'bg-gray-100 text-gray-700';
+  }
 };
 
 const ServiceIcon = ({ name, className }: { name?: string, className?: string }) => {
@@ -196,14 +230,9 @@ const DashboardHome = ({ onViewAllRecent }: { onViewAllRecent: () => void }) => 
                             <td className="px-6 py-3">{professional?.name || 'Não atribuído'}</td>
                             <td className="px-6 py-3">{safeDateBr(apt.date)} - {apt.time || '--:--'}</td>
                             <td className="px-6 py-3">
-                                 <span className={`text-xs px-2 py-1 rounded-full ${
-                                     apt.status === 'CONFIRMED' ? 'bg-green-100 text-green-700' : 
-                                     apt.status === 'PENDING_PAYMENT' ? 'bg-yellow-100 text-yellow-700' :
-                                     apt.status === 'CANCELLED' ? 'bg-red-100 text-red-700' :
-                                     'bg-gray-100 text-gray-700'
-                                 }`}>{apt.status === 'CONFIRMED' ? 'Confirmado' : 
-                                      apt.status === 'PENDING_PAYMENT' ? 'Aguardando' :
-                                      apt.status === 'CANCELLED' ? 'Cancelado' : apt.status}</span>
+                                 <span className={`text-xs px-2 py-1 rounded-full ${getAppointmentStatusChipClass(apt.status)}`}>
+                                {getAppointmentStatusLabel(apt.status)}
+                                 </span>
                             </td>
                         </tr>
                     );
@@ -1124,7 +1153,7 @@ const CalendarManagement = ({
 }: {
   navigationRequest?: { date: string; viewMode: 'DAY' | 'WEEK' | 'MONTH'; nonce: number } | null;
 }) => {
-  const { appointments, services, professionals, clients, addAppointment, updateAppointment, deleteAppointment, businessHours } = useAppContext();
+  const { user, appointments, services, professionals, clients, addAppointment, updateAppointment, transitionAppointmentStatus, deleteAppointment, businessHours } = useAppContext();
     const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
     const [selectedProfessionalId, setSelectedProfessionalId] = useState<string | 'ALL'>('ALL');
     const [viewMode, setViewMode] = useState<'DAY' | 'WEEK' | 'MONTH'>('DAY');
@@ -1133,6 +1162,7 @@ const CalendarManagement = ({
     const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
     const [appointmentSubmitError, setAppointmentSubmitError] = useState<string | null>(null);
     const [isSavingAppointment, setIsSavingAppointment] = useState(false);
+    const [isTransitioningStatus, setIsTransitioningStatus] = useState(false);
     const [clientSearchTerm, setClientSearchTerm] = useState('');
     const [isClientSearchOpen, setIsClientSearchOpen] = useState(false);
     const [selectedAptId, setSelectedAptId] = useState<string | null>(null);
@@ -1149,6 +1179,9 @@ const CalendarManagement = ({
     });
 
     const selectedApt = appointments.find(a => a.id === selectedAptId);
+    const isEmployeeUser = user?.role === 'EMPLOYEE';
+    const employeeProfessionalId = user?.id || '';
+    const canManageSelectedAppointment = !selectedApt || !isEmployeeUser || selectedApt.professionalId === employeeProfessionalId;
 
     const filteredClients = clients
       .filter(client => {
@@ -1230,6 +1263,14 @@ const CalendarManagement = ({
       setSelectedAptId(null);
     }, [navigationRequest]);
 
+    useEffect(() => {
+      if (!isModalOpen || selectedAptId || !isEmployeeUser) return;
+      setFormData(prev => ({
+        ...prev,
+        professionalId: prev.professionalId || employeeProfessionalId,
+      }));
+    }, [isModalOpen, selectedAptId, isEmployeeUser, employeeProfessionalId]);
+
     const formatDateLong = (dateStr: string) => {
         const date = new Date(dateStr + 'T12:00:00');
         if (viewMode === 'MONTH') {
@@ -1307,11 +1348,14 @@ const CalendarManagement = ({
     };
 
     const getStatusColor = (status: string) => {
-        switch (status) {
+      switch (normalizeAppointmentStatus(status)) {
             case 'CONFIRMED': return 'bg-green-100 border-green-200 text-green-800';
             case 'PENDING_PAYMENT': return 'bg-yellow-100 border-yellow-200 text-yellow-800';
+        case 'IN_PROGRESS': return 'bg-indigo-100 border-indigo-200 text-indigo-800';
             case 'CANCELLED': return 'bg-red-100 border-red-200 text-red-800';
-            case 'COMPLETED': return 'bg-blue-100 border-blue-200 text-blue-800';
+        case 'COMPLETED_OP': return 'bg-blue-100 border-blue-200 text-blue-800';
+        case 'COMPLETED_FIN': return 'bg-emerald-100 border-emerald-200 text-emerald-800';
+        case 'REOPENED': return 'bg-orange-100 border-orange-200 text-orange-800';
             case 'BLOCKED': return 'bg-gray-200 border-gray-300 text-gray-600 grayscale';
             default: return 'bg-gray-100 border-gray-200 text-gray-800';
         }
@@ -1351,6 +1395,11 @@ const CalendarManagement = ({
         e.preventDefault();
       if (isSavingAppointment) return;
       setAppointmentSubmitError(null);
+
+      if (isEmployeeUser && formData.professionalId !== employeeProfessionalId) {
+        setAppointmentSubmitError('Você só pode gerenciar seus próprios agendamentos.');
+        return;
+      }
 
       if (!isSelectedDateOpen) {
         setAppointmentSubmitError('A barbearia está fechada nesta data conforme o horário de funcionamento.');
@@ -1454,6 +1503,11 @@ const CalendarManagement = ({
     };
 
     const handleDelete = () => {
+      if (!canManageSelectedAppointment) {
+        setAppointmentSubmitError('Você só pode excluir seus próprios agendamentos.');
+        setIsDetailsModalOpen(false);
+        return;
+      }
         if (selectedAptId && window.confirm('Deseja realmente excluir este agendamento?')) {
             deleteAppointment(selectedAptId);
             setIsDetailsModalOpen(false);
@@ -1463,6 +1517,10 @@ const CalendarManagement = ({
 
     const openEdit = () => {
         if (selectedApt) {
+      if (isEmployeeUser && selectedApt.professionalId !== employeeProfessionalId) {
+          setAppointmentSubmitError('Você só pode editar seus próprios agendamentos.');
+          return;
+      }
         const selectedClient = clients.find(c => c.id === selectedApt.clientId);
             setFormData({
                 clientId: selectedApt.clientId === 'blocked' ? '' : selectedApt.clientId,
@@ -1480,6 +1538,62 @@ const CalendarManagement = ({
             setIsDetailsModalOpen(false);
             setIsModalOpen(true);
         }
+    };
+
+    const getStatusAction = (status?: string): { label: string; target: Appointment['status']; adminOnly?: boolean } | null => {
+      switch (normalizeAppointmentStatus(status)) {
+        case 'CONFIRMED':
+        case 'PENDING_PAYMENT':
+        case 'REOPENED':
+          return { label: 'Iniciar Atendimento', target: 'IN_PROGRESS' };
+        case 'IN_PROGRESS':
+          return { label: 'Concluir Operacional', target: 'COMPLETED_OP' };
+        case 'COMPLETED_OP':
+          return { label: 'Concluir Financeiro', target: 'COMPLETED_FIN', adminOnly: true };
+        case 'COMPLETED_FIN':
+          return { label: 'Reabrir Atendimento', target: 'REOPENED', adminOnly: true };
+        default:
+          return null;
+      }
+    };
+
+    const handleStatusTransition = async () => {
+      if (!selectedApt || selectedApt.status === 'BLOCKED') return;
+      if (!canManageSelectedAppointment) {
+        setAppointmentSubmitError('Você só pode gerenciar seus próprios agendamentos.');
+        return;
+      }
+
+      const action = getStatusAction(selectedApt.status);
+      if (!action) return;
+      if (action.adminOnly && user?.role !== 'ADMIN') {
+        setAppointmentSubmitError('Somente administradores podem executar esta ação.');
+        return;
+      }
+
+      const options: { reason?: string; paymentMethod?: string; totalValue?: number } = {};
+
+      if (action.target === 'COMPLETED_FIN') {
+        const paymentMethod = window.prompt('Informe a forma de pagamento (ex: PIX, Cartão, Dinheiro):', selectedApt.paymentMethod || 'PIX');
+        if (!paymentMethod || !paymentMethod.trim()) return;
+        options.paymentMethod = paymentMethod.trim();
+        options.totalValue = selectedApt.totalValue || 0;
+      }
+
+      if (action.target === 'REOPENED') {
+        const reason = window.prompt('Informe o motivo da reabertura:');
+        if (!reason || !reason.trim()) return;
+        options.reason = reason.trim();
+      }
+
+      setIsTransitioningStatus(true);
+      setAppointmentSubmitError(null);
+      const result = await transitionAppointmentStatus(selectedApt.id, action.target, options);
+      setIsTransitioningStatus(false);
+
+      if (!result.success) {
+        setAppointmentSubmitError(result.error || 'Não foi possível alterar o status do agendamento.');
+      }
     };
 
     const filteredProfessionals = selectedProfessionalId === 'ALL' 
@@ -1504,7 +1618,7 @@ const CalendarManagement = ({
                                     setFormData({ 
                                         clientId: '',
                                         serviceId: '',
-                                        professionalId: '',
+                                        professionalId: isEmployeeUser ? employeeProfessionalId : '',
                                         date: selectedDate,
                                         time: defaultStartTime,
                                       endTime: defaultEndTime,
@@ -1610,7 +1724,7 @@ const CalendarManagement = ({
                                 setFormData({ 
                                     clientId: '',
                                     serviceId: '',
-                                    professionalId: '',
+                                    professionalId: isEmployeeUser ? employeeProfessionalId : '',
                                     date: selectedDate,
                                     time: defaultStartTime,
                                   endTime: defaultEndTime,
@@ -1967,6 +2081,7 @@ const CalendarManagement = ({
                                     <label className="block text-sm font-medium text-gray-700 mb-1">Profissional</label>
                                     <select 
                                         required
+                                    disabled={isEmployeeUser}
                                         value={formData.professionalId}
                                         onChange={e => setFormData({...formData, professionalId: e.target.value})}
                                         className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
@@ -2089,6 +2204,11 @@ const CalendarManagement = ({
                                         {selectedApt.status === 'BLOCKED' ? 'Horário Bloqueado' : (clients.find(c => c.id === selectedApt.clientId)?.name || 'Cliente')}
                                     </h4>
                                     <p className="text-gray-500">{selectedApt.status === 'BLOCKED' ? 'Indisponível para clientes' : (clients.find(c => c.id === selectedApt.clientId)?.phone || '')}</p>
+                                    <div className="mt-2">
+                                      <span className={`text-xs px-2 py-1 rounded-full ${getAppointmentStatusChipClass(selectedApt.status)}`}>
+                                        {getAppointmentStatusLabel(selectedApt.status)}
+                                      </span>
+                                    </div>
                                 </div>
                             </div>
 
@@ -2124,16 +2244,38 @@ const CalendarManagement = ({
                                 )}
                             </div>
 
+                            {appointmentSubmitError && (
+                              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                                {appointmentSubmitError}
+                              </div>
+                            )}
+
                             <div className="flex gap-3 pt-4">
+                                {selectedApt.status !== 'BLOCKED' && (() => {
+                                  const action = getStatusAction(selectedApt.status);
+                                  if (!action) return null;
+                                  const disabled = !canManageSelectedAppointment || isTransitioningStatus || (action.adminOnly && user?.role !== 'ADMIN');
+                                  return (
+                                    <button
+                                      onClick={handleStatusTransition}
+                                      disabled={disabled}
+                                      className="flex-1 bg-emerald-600 text-white py-2.5 rounded-lg font-medium hover:bg-emerald-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                      {isTransitioningStatus ? 'Atualizando...' : action.label}
+                                    </button>
+                                  );
+                                })()}
                                 <button 
                                     onClick={openEdit}
-                                    className="flex-1 bg-blue-600 text-white py-2.5 rounded-lg font-medium hover:bg-blue-700 transition-colors flex items-center justify-center gap-2"
+                                disabled={!canManageSelectedAppointment}
+                                className="flex-1 bg-blue-600 text-white py-2.5 rounded-lg font-medium hover:bg-blue-700 transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
                                     <Edit size={18} /> Editar
                                 </button>
                                 <button 
                                     onClick={handleDelete}
-                                    className="flex-1 bg-red-50 text-red-600 py-2.5 rounded-lg font-medium hover:bg-red-100 transition-colors flex items-center justify-center gap-2"
+                                disabled={!canManageSelectedAppointment}
+                                className="flex-1 bg-red-50 text-red-600 py-2.5 rounded-lg font-medium hover:bg-red-100 transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
                                     <Trash2 size={18} /> Excluir
                                 </button>
@@ -2177,11 +2319,12 @@ const CalendarManagement = ({
     );
 };
 
-const UserModal = ({ isOpen, onClose, onSave, userToEdit }: { 
+const UserModal = ({ isOpen, onClose, onSave, userToEdit, entityLabel = 'Usuário' }: { 
   isOpen: boolean; 
   onClose: () => void; 
   onSave: (user: any) => Promise<{ success: boolean; error?: string }>;
   userToEdit?: any;
+  entityLabel?: string;
 }) => {
   const [formData, setFormData] = useState({
     name: userToEdit?.name || '',
@@ -2218,7 +2361,7 @@ const UserModal = ({ isOpen, onClose, onSave, userToEdit }: {
     }
 
     if (!userToEdit && !formData.password) {
-      setSaveError('Senha é obrigatória para novo usuário.');
+      setSaveError(`Senha é obrigatória para novo ${entityLabel.toLowerCase()}.`);
       return;
     }
 
@@ -2230,7 +2373,7 @@ const UserModal = ({ isOpen, onClose, onSave, userToEdit }: {
     });
 
     if (!result.success) {
-      setSaveError(result.error || 'Falha ao salvar usuário.');
+      setSaveError(result.error || `Falha ao salvar ${entityLabel.toLowerCase()}.`);
       setIsSaving(false);
       return;
     }
@@ -2266,7 +2409,7 @@ const UserModal = ({ isOpen, onClose, onSave, userToEdit }: {
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">
       <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden animate-fade-in shadow-2xl">
         <div className="p-6 border-b flex justify-between items-center bg-gray-50">
-          <h3 className="text-xl font-bold text-gray-800">{userToEdit ? 'Editar Usuário' : 'Novo Usuário'}</h3>
+          <h3 className="text-xl font-bold text-gray-800">{userToEdit ? `Editar ${entityLabel}` : `Novo ${entityLabel}`}</h3>
           <button onClick={onClose} className="p-2 hover:bg-gray-200 rounded-full transition-colors">
             <X size={20} className="text-gray-500" />
           </button>
@@ -2365,7 +2508,249 @@ const UserModal = ({ isOpen, onClose, onSave, userToEdit }: {
             disabled={isSaving}
             className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 shadow-lg shadow-blue-200 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            {isSaving ? 'Salvando...' : 'Salvar Usuário'}
+            {isSaving ? 'Salvando...' : `Salvar ${entityLabel}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const ProfessionalModal = ({ isOpen, onClose, onSave, professionalToEdit }: {
+  isOpen: boolean;
+  onClose: () => void;
+  onSave: (payload: any) => Promise<{ success: boolean; error?: string }>;
+  professionalToEdit?: any;
+}) => {
+  const linkedUser = professionalToEdit?.linkedUser;
+  const [formData, setFormData] = useState({
+    name: professionalToEdit?.name || '',
+    phone: professionalToEdit?.linkedPhone || professionalToEdit?.phone || '',
+    cargo: professionalToEdit?.role || 'Profissional',
+    avatar: professionalToEdit?.avatar || '',
+    hasAccess: Boolean(linkedUser),
+    email: professionalToEdit?.linkedEmail || '',
+    password: '',
+    accessRole: professionalToEdit?.linkedAccessRole || 'EMPLOYEE',
+  });
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const existingLinkedUser = professionalToEdit?.linkedUser;
+    setFormData({
+      name: professionalToEdit?.name || '',
+      phone: professionalToEdit?.linkedPhone || professionalToEdit?.phone || '',
+      cargo: professionalToEdit?.role || 'Profissional',
+      avatar: professionalToEdit?.avatar || '',
+      hasAccess: Boolean(existingLinkedUser),
+      email: professionalToEdit?.linkedEmail || '',
+      password: '',
+      accessRole: professionalToEdit?.linkedAccessRole || 'EMPLOYEE',
+    });
+    setSaveError(null);
+    setIsSaving(false);
+  }, [isOpen, professionalToEdit]);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const maxSizeInBytes = 1024 * 1024;
+      if (file.size > maxSizeInBytes) {
+        alert('A imagem é muito grande. Use um arquivo de até 1MB.');
+        return;
+      }
+
+      if (!file.type.startsWith('image/')) {
+        alert('Arquivo inválido. Selecione uma imagem.');
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setFormData(prev => ({ ...prev, avatar: reader.result as string }));
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleSave = async () => {
+    if (isSaving) return;
+    setSaveError(null);
+
+    if (!formData.name.trim()) {
+      setSaveError('Nome é obrigatório.');
+      return;
+    }
+
+    if (formData.hasAccess && !formData.email.trim()) {
+      setSaveError('Email é obrigatório para criar acesso ao sistema.');
+      return;
+    }
+
+    if (formData.hasAccess && !professionalToEdit?.linkedUser && !formData.password) {
+      setSaveError('Defina uma senha para criar o acesso ao sistema.');
+      return;
+    }
+
+    setIsSaving(true);
+    const result = await onSave({
+      ...formData,
+      email: formData.email.trim().toLowerCase(),
+      password: formData.password || undefined,
+    });
+
+    if (!result.success) {
+      setSaveError(result.error || 'Falha ao salvar profissional.');
+      setIsSaving(false);
+      return;
+    }
+
+    setIsSaving(false);
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">
+      <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden animate-fade-in shadow-2xl">
+        <div className="p-6 border-b flex justify-between items-center bg-gray-50">
+          <h3 className="text-xl font-bold text-gray-800">{professionalToEdit ? 'Editar Profissional' : 'Novo Profissional'}</h3>
+          <button onClick={onClose} className="p-2 hover:bg-gray-200 rounded-full transition-colors">
+            <X size={20} className="text-gray-500" />
+          </button>
+        </div>
+
+        <div className="p-6 space-y-4">
+          <div className="flex flex-col items-center gap-4 mb-4">
+            <div className="relative group">
+              <div className="w-24 h-24 rounded-full bg-gray-100 border-2 border-dashed border-gray-300 flex items-center justify-center overflow-hidden">
+                {safeAvatarSrc(formData.avatar) ? (
+                  <img src={safeAvatarSrc(formData.avatar)} alt="Avatar" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                ) : (
+                  <ImageIcon size={32} className="text-gray-400" />
+                )}
+              </div>
+              <label className="absolute bottom-0 right-0 p-2 bg-blue-600 text-white rounded-full cursor-pointer shadow-lg hover:bg-blue-700 transition-colors">
+                <Plus size={16} />
+                <input type="file" className="hidden" accept="image/*" onChange={handleFileChange} />
+              </label>
+            </div>
+            <p className="text-xs text-gray-500">Clique no ícone para carregar uma foto</p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-bold text-gray-700 mb-1">Nome Completo</label>
+            <input
+              type="text"
+              value={formData.name}
+              onChange={e => setFormData(prev => ({ ...prev, name: e.target.value }))}
+              className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+              placeholder="Ex: João Silva"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-bold text-gray-700 mb-1">Telefone / WhatsApp</label>
+            <input
+              type="text"
+              value={formData.phone}
+              onChange={e => setFormData(prev => ({ ...prev, phone: e.target.value }))}
+              className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+              placeholder="(00) 00000-0000"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-bold text-gray-700 mb-1">Cargo</label>
+            <input
+              type="text"
+              value={formData.cargo}
+              onChange={e => setFormData(prev => ({ ...prev, cargo: e.target.value }))}
+              className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+              placeholder="Ex: Barbeiro"
+            />
+          </div>
+
+          <div className="rounded-xl border border-blue-100 bg-blue-50 p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-bold text-blue-900">Permitir acesso ao sistema</p>
+                <p className="text-xs text-blue-700">Quando ativo, o profissional poderá fazer login na aba Administrador/Equipe.</p>
+              </div>
+              <button
+                type="button"
+                disabled={Boolean(linkedUser)}
+                onClick={() => setFormData(prev => ({ ...prev, hasAccess: !prev.hasAccess }))}
+                className={`w-11 h-6 rounded-full relative transition-colors ${formData.hasAccess ? 'bg-blue-600' : 'bg-gray-300'} ${linkedUser ? 'opacity-60 cursor-not-allowed' : ''}`}
+              >
+                <span className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${formData.hasAccess ? 'right-1' : 'left-1'}`} />
+              </button>
+            </div>
+            {linkedUser && (
+              <p className="text-[11px] text-blue-700 mt-2">Acesso já vinculado. Para remover acesso, use a gestão de usuários.</p>
+            )}
+          </div>
+
+          {formData.hasAccess && (
+            <>
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-1">Email de acesso</label>
+                <input
+                  type="email"
+                  value={formData.email}
+                  onChange={e => setFormData(prev => ({ ...prev, email: e.target.value }))}
+                  className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                  placeholder="usuario@empresa.com"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-1">Senha {linkedUser ? '(opcional para alterar)' : ''}</label>
+                <input
+                  type="password"
+                  value={formData.password}
+                  onChange={e => setFormData(prev => ({ ...prev, password: e.target.value }))}
+                  className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                  placeholder={linkedUser ? '•••••••• (deixe em branco para manter)' : '••••••••'}
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-1">Nível de acesso</label>
+                <select
+                  value={formData.accessRole}
+                  onChange={e => setFormData(prev => ({ ...prev, accessRole: e.target.value as any }))}
+                  className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                >
+                  <option value="EMPLOYEE">Funcionário / Equipe</option>
+                  <option value="ADMIN">Administrador</option>
+                </select>
+              </div>
+            </>
+          )}
+
+          {saveError && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              {saveError}
+            </div>
+          )}
+        </div>
+
+        <div className="p-6 bg-gray-50 border-t flex gap-3">
+          <button
+            onClick={onClose}
+            className="flex-1 py-3 border border-gray-200 rounded-xl font-bold text-gray-600 hover:bg-white transition-all"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={isSaving}
+            className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 shadow-lg shadow-blue-200 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            {isSaving ? 'Salvando...' : 'Salvar Profissional'}
           </button>
         </div>
       </div>
@@ -2629,14 +3014,15 @@ const EmailIntegration = () => {
 
 const SettingsManagement = () => {
   const navigate = useNavigate();
-  const { users, addUser, updateUser, deleteUser, categories, addCategory, updateCategory, deleteCategory, businessHours, saveBusinessHours, brandIdentity, saveBrandIdentity } = useAppContext();
-  const [activeSubTab, setActiveSubTab] = useState<'USERS' | 'ALERTS' | 'PROFILES' | 'HOURS' | 'INTEGRATIONS' | 'OTHER' | 'BILLING' | 'CONTACT' | 'CATEGORIES'>('USERS');
-  const [isUserModalOpen, setIsUserModalOpen] = useState(false);
-  const [selectedUser, setSelectedUser] = useState<any>(null);
-  const [isDeleteUserModalOpen, setIsDeleteUserModalOpen] = useState(false);
-  const [userToDelete, setUserToDelete] = useState<any>(null);
-  const [deleteUserError, setDeleteUserError] = useState<string | null>(null);
-  const [isDeletingUser, setIsDeletingUser] = useState(false);
+  const { users, professionals, addUser, updateUser, deleteUser, categories, addCategory, updateCategory, deleteCategory, businessHours, saveBusinessHours, brandIdentity, saveBrandIdentity } = useAppContext();
+  const [activeSubTab, setActiveSubTab] = useState<'PROFESSIONALS' | 'ALERTS' | 'PROFILES' | 'HOURS' | 'INTEGRATIONS' | 'OTHER' | 'BILLING' | 'CONTACT' | 'CATEGORIES'>('PROFESSIONALS');
+
+  const [isProfessionalModalOpen, setIsProfessionalModalOpen] = useState(false);
+  const [selectedProfessional, setSelectedProfessional] = useState<any>(null);
+  const [isDeleteProfessionalModalOpen, setIsDeleteProfessionalModalOpen] = useState(false);
+  const [professionalToDelete, setProfessionalToDelete] = useState<any>(null);
+  const [deleteProfessionalError, setDeleteProfessionalError] = useState<string | null>(null);
+  const [isDeletingProfessional, setIsDeletingProfessional] = useState(false);
 
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<any>(null);
@@ -2737,55 +3123,121 @@ const SettingsManagement = () => {
     setIsSavingIdentity(false);
   };
 
-  const handleSaveUser = async (data: any) => {
-    if (selectedUser) {
-      const result = await updateUser({ ...selectedUser, ...data });
-      if (!result.success) {
-        return result;
-      }
-    } else {
-      const result = await addUser({
-        id: Date.now().toString(),
-        ...data
+  const handleSaveProfessional = async (data: any): Promise<{ success: boolean; error?: string }> => {
+    const nome = (data.name || '').trim();
+    const telefone = (data.phone || '').trim();
+    const cargo = (data.cargo || '').trim() || 'Profissional';
+    const fotoUrl = safeAvatarSrc(data.avatar) || null;
+
+    if (!nome) {
+      return { success: false, error: 'Nome é obrigatório.' };
+    }
+
+    const linkedUser = selectedProfessional?.linkedUser || null;
+
+    if (selectedProfessional) {
+      const profissionalResult = await updateProfissionalApi(selectedProfessional.id, {
+        nome,
+        cargo,
+        telefone,
+        foto_url: fotoUrl,
+        ativo: true,
       });
-      if (!result.success) {
-        return result;
+
+      if (!profissionalResult.success) {
+        return { success: false, error: ('error' in profissionalResult && profissionalResult.error) ? profissionalResult.error : 'Falha ao atualizar profissional.' };
+      }
+    } else if (!data.hasAccess) {
+      const profissionalResult = await createProfissionalApi({
+        nome,
+        cargo,
+        telefone,
+        foto_url: fotoUrl,
+        ativo: true,
+      });
+
+      if (!profissionalResult.success) {
+        return { success: false, error: ('error' in profissionalResult && profissionalResult.error) ? profissionalResult.error : 'Falha ao criar profissional.' };
       }
     }
-    setIsUserModalOpen(false);
-    setSelectedUser(null);
+
+    if (data.hasAccess) {
+      const accessPayload = {
+        name: nome,
+        phone: telefone,
+        email: (data.email || '').trim().toLowerCase(),
+        password: data.password,
+        role: data.accessRole === 'ADMIN' ? 'ADMIN' : 'EMPLOYEE',
+        avatar: data.avatar,
+      };
+
+      if (selectedProfessional && linkedUser) {
+        const result = await updateUser({ ...linkedUser, ...accessPayload });
+        if (!result.success) {
+          return result;
+        }
+      } else if (selectedProfessional && !linkedUser) {
+        if (!accessPayload.password) {
+          return { success: false, error: 'Defina uma senha para criar o acesso do profissional.' };
+        }
+        const result = await addUser({
+          ...accessPayload,
+          id: selectedProfessional.id,
+        });
+        if (!result.success) {
+          return result;
+        }
+      } else {
+        if (!accessPayload.password) {
+          return { success: false, error: 'Defina uma senha para criar o acesso do profissional.' };
+        }
+        const result = await addUser(accessPayload);
+        if (!result.success) {
+          return result;
+        }
+      }
+    }
+
+    setIsProfessionalModalOpen(false);
+    setSelectedProfessional(null);
     return { success: true };
   };
 
-  const openNewUser = () => {
-    setSelectedUser(null);
-    setIsUserModalOpen(true);
+  const openNewProfessional = () => {
+    setSelectedProfessional(null);
+    setIsProfessionalModalOpen(true);
   };
 
-  const openEditUser = (u: any) => {
-    setSelectedUser(u);
-    setIsUserModalOpen(true);
+  const openEditProfessional = (professional: any) => {
+    setSelectedProfessional(professional);
+    setIsProfessionalModalOpen(true);
   };
 
-  const openDeleteUser = (u: any) => {
-    setDeleteUserError(null);
-    setUserToDelete(u);
-    setIsDeleteUserModalOpen(true);
+  const openDeleteProfessional = (professional: any) => {
+    setDeleteProfessionalError(null);
+    setProfessionalToDelete(professional);
+    setIsDeleteProfessionalModalOpen(true);
   };
 
-  const confirmDeleteUser = async () => {
-    if (!userToDelete || isDeletingUser) return;
-    setIsDeletingUser(true);
-    const result = await deleteUser(userToDelete.id);
+  const confirmDeleteProfessional = async () => {
+    if (!professionalToDelete || isDeletingProfessional) return;
+    setIsDeletingProfessional(true);
+
+    const linkedUser = users.find(user => user.id === professionalToDelete.id);
+
+    const result = linkedUser
+      ? await deleteUser(professionalToDelete.id)
+      : await deleteProfissionalApi(professionalToDelete.id);
     if (!result.success) {
-      setDeleteUserError(result.error || 'Falha ao excluir usuário.');
-      setIsDeletingUser(false);
+      setDeleteProfessionalError(result.error || 'Falha ao excluir profissional.');
+      setIsDeletingProfessional(false);
       return;
     }
-    setIsDeleteUserModalOpen(false);
-    setUserToDelete(null);
-    setDeleteUserError(null);
-    setIsDeletingUser(false);
+
+    setIsDeleteProfessionalModalOpen(false);
+    setProfessionalToDelete(null);
+    setDeleteProfessionalError(null);
+    setIsDeletingProfessional(false);
   };
 
   const handleSaveCategory = (data: any) => {
@@ -2833,7 +3285,7 @@ const SettingsManagement = () => {
   };
 
   const tabs = [
-    { id: 'USERS', label: 'Usuários', icon: <Users size={18} />, desc: 'Equipe e acessos' },
+    { id: 'PROFESSIONALS', label: 'Profissionais', icon: <Scissors size={18} />, desc: 'Equipe de atendimento' },
     { id: 'CATEGORIES', label: 'Categorias', icon: <Tag size={18} />, desc: 'Organize serviços' },
     { id: 'ALERTS', label: 'Alertas', icon: <Bell size={18} />, desc: 'WhatsApp e e-mail' },
     { id: 'PROFILES', label: 'Perfis', icon: <Shield size={18} />, desc: 'Níveis de permissão' },
@@ -2846,6 +3298,16 @@ const SettingsManagement = () => {
 
   const adminUsersCount = users.filter(u => u.role === 'ADMIN').length;
   const employeeUsersCount = users.filter(u => u.role !== 'ADMIN').length;
+  const settingsProfessionals = professionals.map((professional) => {
+    const linkedUser = users.find(user => user.id === professional.id);
+    return {
+      ...professional,
+      linkedUser,
+      linkedAccessRole: linkedUser?.role,
+      linkedEmail: linkedUser?.email,
+      linkedPhone: linkedUser?.phone,
+    };
+  });
 
   return (
     <div className="flex flex-col lg:flex-row gap-8">
@@ -2913,42 +3375,50 @@ const SettingsManagement = () => {
       {/* Main Content Area */}
       <div className="flex-1">
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 sm:p-8 min-h-[500px]">
-          {activeSubTab === 'USERS' && (
+          {activeSubTab === 'PROFESSIONALS' && (
             <div className="space-y-6">
               <div className="flex justify-between items-center">
-                <h3 className="font-bold text-gray-800">Usuários da Equipe</h3>
+                <h3 className="font-bold text-gray-800">Profissionais</h3>
                 <button 
-                  onClick={openNewUser}
+                  onClick={openNewProfessional}
                   className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-blue-700 text-sm"
                 >
-                  <Plus size={16} /> Novo Usuário
+                  <Plus size={16} /> Novo Profissional
                 </button>
               </div>
               <div className="divide-y">
-                {users.map((u) => (
-                  <div key={u.id} className="py-4 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
+                {settingsProfessionals.map((professional) => (
+                  <div key={professional.id} className="py-4 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
                     <div className="flex items-center gap-3">
-                      {safeAvatarSrc(u.avatar) ? (
-                        <img src={safeAvatarSrc(u.avatar)} alt={u.name} className="w-10 h-10 rounded-full object-cover" referrerPolicy="no-referrer" />
+                      {safeAvatarSrc(professional.avatar) ? (
+                        <img src={safeAvatarSrc(professional.avatar)} alt={professional.name} className="w-10 h-10 rounded-full object-cover" referrerPolicy="no-referrer" />
                       ) : (
                         <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center text-gray-500 font-bold">
-                          {safeInitial(u.name)}
+                          {safeInitial(professional.name)}
                         </div>
                       )}
                       <div>
-                        <p className="font-medium text-gray-900">{u.name}</p>
-                        <p className="text-xs text-gray-500">{u.role === 'ADMIN' ? 'Administrador' : 'Equipe'} • {u.email || u.phone}</p>
+                        <p className="font-medium text-gray-900">{professional.name}</p>
+                        <p className="text-xs text-gray-500">
+                          {professional.role || 'Profissional'}
+                          {(professional.linkedEmail || professional.linkedPhone)
+                            ? ` • ${professional.linkedEmail || professional.linkedPhone}`
+                            : ' • Sem acesso ao sistema'}
+                        </p>
+                        <span className={`inline-flex mt-1 items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${professional.linkedUser ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+                          {professional.linkedUser ? 'Com acesso' : 'Sem acesso'}
+                        </span>
                       </div>
                     </div>
                     <div className="flex items-center gap-2 self-end sm:self-auto">
                       <button 
-                        onClick={() => openEditUser(u)}
+                        onClick={() => openEditProfessional(professional)}
                         className="text-blue-600 hover:text-blue-800 p-2"
                       >
                         <Edit size={18} />
                       </button>
                       <button 
-                        onClick={() => openDeleteUser(u)}
+                        onClick={() => openDeleteProfessional(professional)}
                         className="text-red-600 hover:text-red-800 p-2"
                       >
                         <Trash2 size={18} />
@@ -2956,6 +3426,9 @@ const SettingsManagement = () => {
                     </div>
                   </div>
                 ))}
+                {settingsProfessionals.length === 0 && (
+                  <div className="py-6 text-sm text-gray-500">Nenhum profissional cadastrado.</div>
+                )}
               </div>
             </div>
           )}
@@ -3003,11 +3476,11 @@ const SettingsManagement = () => {
             </div>
           )}
 
-          <UserModal 
-            isOpen={isUserModalOpen}
-            onClose={() => setIsUserModalOpen(false)}
-            onSave={handleSaveUser}
-            userToEdit={selectedUser}
+          <ProfessionalModal 
+            isOpen={isProfessionalModalOpen}
+            onClose={() => setIsProfessionalModalOpen(false)}
+            onSave={handleSaveProfessional}
+            professionalToEdit={selectedProfessional}
           />
 
           <CategoryModal 
@@ -3017,58 +3490,52 @@ const SettingsManagement = () => {
             categoryToEdit={selectedCategory}
           />
 
-          {isDeleteUserModalOpen && (
+          {isDeleteProfessionalModalOpen && (
             <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
               <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-fade-in">
                 <div className="px-6 py-4 border-b flex justify-between items-center bg-gray-50">
                   <h3 className="font-bold text-gray-900">Confirmar exclusão</h3>
                   <button
                     onClick={() => {
-                      setIsDeleteUserModalOpen(false);
-                      setUserToDelete(null);
-                      setDeleteUserError(null);
+                      if (isDeletingProfessional) return;
+                      setIsDeleteProfessionalModalOpen(false);
+                      setProfessionalToDelete(null);
+                      setDeleteProfessionalError(null);
                     }}
-                    className="text-gray-400 hover:text-gray-600"
+                    className="p-2 rounded-full hover:bg-gray-200 transition-colors"
                   >
-                    <X size={20} />
+                    <X size={18} className="text-gray-500" />
                   </button>
                 </div>
-
-                <div className="p-6 space-y-4">
+                <div className="px-6 py-5 space-y-3">
                   <p className="text-sm text-gray-700">
-                    Tem certeza que deseja excluir o usuário
-                    <span className="font-semibold text-gray-900"> {userToDelete?.name || 'selecionado'}</span>?
+                    Deseja realmente excluir o profissional <span className="font-semibold">{professionalToDelete?.name}</span>?
                   </p>
-                  <p className="text-xs text-gray-500">
-                    Esta ação não pode ser desfeita. Se houver agendamentos vinculados, a exclusão será bloqueada.
-                  </p>
-                  {deleteUserError && (
+                  {deleteProfessionalError && (
                     <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                      {deleteUserError}
+                      {deleteProfessionalError}
                     </div>
                   )}
-
-                  <div className="pt-2 flex gap-3">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsDeleteUserModalOpen(false);
-                        setUserToDelete(null);
-                        setDeleteUserError(null);
-                      }}
-                      className="flex-1 px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50"
-                    >
-                      Cancelar
-                    </button>
-                    <button
-                      type="button"
-                      onClick={confirmDeleteUser}
-                      disabled={isDeletingUser}
-                      className="flex-1 px-4 py-2.5 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-                    >
-                      {isDeletingUser ? 'Excluindo...' : 'Excluir'}
-                    </button>
-                  </div>
+                </div>
+                <div className="px-6 py-4 bg-gray-50 border-t flex gap-3">
+                  <button
+                    onClick={() => {
+                      if (isDeletingProfessional) return;
+                      setIsDeleteProfessionalModalOpen(false);
+                      setProfessionalToDelete(null);
+                      setDeleteProfessionalError(null);
+                    }}
+                    className="flex-1 py-2.5 border border-gray-200 rounded-xl text-sm font-bold text-gray-600 hover:bg-white transition-all"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={confirmDeleteProfessional}
+                    disabled={isDeletingProfessional}
+                    className="flex-1 py-2.5 bg-red-600 text-white rounded-xl text-sm font-bold hover:bg-red-700 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    {isDeletingProfessional ? 'Excluindo...' : 'Excluir'}
+                  </button>
                 </div>
               </div>
             </div>
@@ -3823,7 +4290,8 @@ const CategoryModal = ({ isOpen, onClose, onSave, categoryToEdit }: { isOpen: bo
 
 export const AdminDashboard: React.FC = () => {
   const { user, logout, brandIdentity } = useAppContext();
-  const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'SERVICES' | 'USERS' | 'AGENDA' | 'SETTINGS'>('DASHBOARD');
+  const isAdminUser = user?.role === 'ADMIN';
+  const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'SERVICES' | 'USERS' | 'AGENDA' | 'SETTINGS'>(isAdminUser ? 'DASHBOARD' : 'AGENDA');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [agendaNavigationRequest, setAgendaNavigationRequest] = useState<{
     date: string;
@@ -3833,7 +4301,16 @@ export const AdminDashboard: React.FC = () => {
 
   const toggleMobileMenu = () => setIsMobileMenuOpen(!isMobileMenuOpen);
 
+  useEffect(() => {
+    if (!isAdminUser) {
+      setActiveTab('AGENDA');
+    }
+  }, [isAdminUser]);
+
   const handleTabChange = (tab: 'DASHBOARD' | 'SERVICES' | 'USERS' | 'AGENDA' | 'SETTINGS') => {
+    if (!isAdminUser && tab !== 'AGENDA') {
+      return;
+    }
     setActiveTab(tab);
     setIsMobileMenuOpen(false);
   };
@@ -3878,36 +4355,42 @@ export const AdminDashboard: React.FC = () => {
         </div>
         
         <nav className="flex-1 p-4 space-y-2">
-          <button 
-            onClick={() => handleTabChange('DASHBOARD')}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'DASHBOARD' ? 'bg-blue-50 text-blue-600 font-medium' : 'text-gray-600 hover:bg-gray-50'}`}
-          >
-            <LayoutDashboard size={20} /> Visão Geral
-          </button>
+          {isAdminUser && (
+            <button 
+              onClick={() => handleTabChange('DASHBOARD')}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'DASHBOARD' ? 'bg-blue-50 text-blue-600 font-medium' : 'text-gray-600 hover:bg-gray-50'}`}
+            >
+              <LayoutDashboard size={20} /> Visão Geral
+            </button>
+          )}
           <button 
              onClick={() => handleTabChange('AGENDA')}
              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'AGENDA' ? 'bg-blue-50 text-blue-600 font-medium' : 'text-gray-600 hover:bg-gray-50'}`}
           >
             <Calendar size={20} /> Agenda
           </button>
-          <button 
-             onClick={() => handleTabChange('SERVICES')}
-             className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'SERVICES' ? 'bg-blue-50 text-blue-600 font-medium' : 'text-gray-600 hover:bg-gray-50'}`}
-          >
-            <DollarSign size={20} /> Serviços
-          </button>
-          <button 
-            onClick={() => handleTabChange('USERS')}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'USERS' ? 'bg-blue-50 text-blue-600 font-medium' : 'text-gray-600 hover:bg-gray-50'}`}
-          >
-            <Users size={20} /> Clientes
-          </button>
-          <button 
-            onClick={() => handleTabChange('SETTINGS')}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'SETTINGS' ? 'bg-blue-50 text-blue-600 font-medium' : 'text-gray-600 hover:bg-gray-50'}`}
-          >
-            <Settings size={20} /> Configurações
-          </button>
+          {isAdminUser && (
+            <>
+              <button 
+                 onClick={() => handleTabChange('SERVICES')}
+                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'SERVICES' ? 'bg-blue-50 text-blue-600 font-medium' : 'text-gray-600 hover:bg-gray-50'}`}
+              >
+                <DollarSign size={20} /> Serviços
+              </button>
+              <button 
+                onClick={() => handleTabChange('USERS')}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'USERS' ? 'bg-blue-50 text-blue-600 font-medium' : 'text-gray-600 hover:bg-gray-50'}`}
+              >
+                <Users size={20} /> Clientes
+              </button>
+              <button 
+                onClick={() => handleTabChange('SETTINGS')}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'SETTINGS' ? 'bg-blue-50 text-blue-600 font-medium' : 'text-gray-600 hover:bg-gray-50'}`}
+              >
+                <Settings size={20} /> Configurações
+              </button>
+            </>
+          )}
         </nav>
 
         <div className="p-4 border-t">
@@ -3940,11 +4423,11 @@ export const AdminDashboard: React.FC = () => {
          </header>
 
          <div className={`p-4 md:p-6 ${activeTab === 'AGENDA' ? 'flex-1 overflow-hidden' : ''}`}>
-            {activeTab === 'DASHBOARD' && <DashboardHome onViewAllRecent={handleViewAllRecent} />}
-            {activeTab === 'SERVICES' && <ServicesManagement />}
-            {activeTab === 'USERS' && <ClientsManagement />}
+          {activeTab === 'DASHBOARD' && isAdminUser && <DashboardHome onViewAllRecent={handleViewAllRecent} />}
+          {activeTab === 'SERVICES' && isAdminUser && <ServicesManagement />}
+          {activeTab === 'USERS' && isAdminUser && <ClientsManagement />}
             {activeTab === 'AGENDA' && <CalendarManagement navigationRequest={agendaNavigationRequest} />}
-            {activeTab === 'SETTINGS' && <SettingsManagement />}
+          {activeTab === 'SETTINGS' && isAdminUser && <SettingsManagement />}
          </div>
       </main>
     </div>

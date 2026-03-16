@@ -2,7 +2,7 @@ import React, { useState, useEffect, createContext, useContext } from 'react';
 import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { User, AppNotification, Appointment, Service, Professional, Client, Category, BusinessHour, BrandIdentity } from './types';
 import { MOCK_NOTIFICATIONS } from './constants';
-import { AgendamentoApi, createAgendamentoApi, createBloqueioApi, deleteAgendamentoApi, deleteBloqueioApi, listAgendamentosApi, updateAgendamentoApi, updateBloqueioApi } from './services/agendamentosApi';
+import { AgendamentoApi, createAgendamentoApi, createBloqueioApi, deleteAgendamentoApi, deleteBloqueioApi, listAgendamentosApi, transitionAgendamentoStatusApi, updateAgendamentoApi, updateBloqueioApi } from './services/agendamentosApi';
 import { AuthUser, createAuthUserApi, deleteAuthUserApi, listAuthUsersApi, loginApi, meApi, updateAuthUserApi } from './services/authApi';
 import { CategoriaApi, createCategoriaApi, deleteCategoriaApi, listCategoriasApi, updateCategoriaApi } from './services/categoriasApi';
 import { ClienteApi, createClienteApi, deleteClienteApi, listClientesApi, updateClienteApi } from './services/clientesApi';
@@ -19,13 +19,14 @@ import { Onboarding } from './views/Onboarding';
 
 interface AppContextType {
   user: User | null;
-  login: (phone: string, role: 'CLIENT' | 'ADMIN', password?: string) => Promise<void>;
+  login: (phone: string, role: 'CLIENT' | 'ADMIN' | 'EMPLOYEE', password?: string) => Promise<void>;
   logout: () => void;
   notifications: AppNotification[];
   markNotificationRead: (id: string) => void;
   appointments: Appointment[];
   addAppointment: (apt: Appointment) => Promise<{ success: boolean; error?: string }>;
   updateAppointment: (apt: Appointment) => Promise<{ success: boolean; error?: string }>;
+  transitionAppointmentStatus: (appointmentId: string, status: Appointment['status'], options?: { reason?: string; paymentMethod?: string; totalValue?: number; }) => Promise<{ success: boolean; error?: string }>;
   deleteAppointment: (id: string) => void;
   services: Service[];
   updateService: (service: Service) => void;
@@ -183,6 +184,10 @@ const App: React.FC = () => {
     return user?.role === 'ADMIN' && !!localStorage.getItem('auth_token');
   };
 
+  const isBackofficeApiSession = () => {
+    return (user?.role === 'ADMIN' || user?.role === 'EMPLOYEE') && !!localStorage.getItem('auth_token');
+  };
+
   const pushErrorNotification = (message: string) => {
     const newNotif: AppNotification = {
       id: Date.now().toString(),
@@ -259,6 +264,7 @@ const App: React.FC = () => {
     const horaNormalizada = String(agendamento.hora_inicio).slice(0, 5);
     const horaFimNormalizada = String(agendamento.hora_fim || '').slice(0, 5);
     const isBlocked = (agendamento.status as Appointment['status']) === 'BLOCKED' || agendamento.is_bloqueio;
+    const normalizedStatus = agendamento.status === 'COMPLETED' ? 'COMPLETED_OP' : agendamento.status;
     return {
       id: agendamento.id,
       serviceId: isBlocked ? 'blocked' : agendamento.servico_id,
@@ -267,8 +273,15 @@ const App: React.FC = () => {
       date: dataNormalizada,
       time: horaNormalizada,
       endTime: horaFimNormalizada || undefined,
-      status: (agendamento.status as Appointment['status']) || 'CONFIRMED',
-      totalValue: isBlocked ? 0 : (servico?.price || 0),
+      status: (normalizedStatus as Appointment['status']) || 'CONFIRMED',
+      totalValue: isBlocked ? 0 : Number(agendamento.valor_final ?? (servico?.price || 0)),
+      paymentMethod: agendamento.forma_pagamento || undefined,
+      paidAt: agendamento.pago_em || undefined,
+      discount: Number(agendamento.desconto || 0),
+      isCourtesy: Boolean(agendamento.cortesia),
+      isRefunded: Boolean(agendamento.estornado),
+      operationalCompletedAt: agendamento.concluido_operacional_em || undefined,
+      financialCompletedAt: agendamento.concluido_financeiro_em || undefined,
       blockReason: isBlocked ? (agendamento.block_reason || undefined) : undefined,
       createdAt: `${dataNormalizada}T${horaNormalizada}:00`,
     };
@@ -309,12 +322,12 @@ const App: React.FC = () => {
       setCategories(categoriasAtuais);
     }
 
-    const [servicosResult, profissionaisResult, clientesResult, authUsersResult] = await Promise.all([
+    const [servicosResult, profissionaisResult, clientesResult] = await Promise.all([
       listServicosApi(),
       listProfissionaisApi(),
       listClientesApi(),
-      listAuthUsersApi(),
     ]);
+    const authUsersResult = isAdminApiSession() ? await listAuthUsersApi() : null;
 
     const horariosResult = await listHorariosFuncionamentoApi();
     const identidadeResult = await getIdentidadeApi();
@@ -327,7 +340,7 @@ const App: React.FC = () => {
       setProfessionals(profissionaisResult.data.map(mapProfissional));
     }
 
-    if (authUsersResult.success) {
+    if (authUsersResult?.success) {
       const profissionaisById = new Map(
         (profissionaisResult.success ? profissionaisResult.data : []).map(item => [item.id, item])
       );
@@ -359,7 +372,7 @@ const App: React.FC = () => {
     if (!categoriasResult.success) errors.push('categorias');
     if (!servicosResult.success) errors.push('serviços');
     if (!profissionaisResult.success) errors.push('profissionais');
-    if (!authUsersResult.success) errors.push('usuários');
+    if (authUsersResult && !authUsersResult.success) errors.push('usuários');
     if (!clientesResult.success) errors.push('clientes');
     if (!horariosResult.success) errors.push('horários de funcionamento');
     if (!identidadeResult.success) errors.push('identidade visual');
@@ -411,7 +424,7 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    if (!authInitialized || !isAdminApiSession()) {
+    if (!authInitialized || !isBackofficeApiSession()) {
       return;
     }
 
@@ -477,8 +490,8 @@ const App: React.FC = () => {
     }
   }, [brandIdentity]);
 
-  const login = async (phone: string, role: 'CLIENT' | 'ADMIN', password?: string) => {
-    if (role === 'ADMIN') {
+  const login = async (phone: string, role: 'CLIENT' | 'ADMIN' | 'EMPLOYEE', password?: string) => {
+    if (role !== 'CLIENT') {
       const result = await loginApi({
         login: phone,
         senha: password || '',
@@ -525,7 +538,11 @@ const App: React.FC = () => {
   };
 
   const addAppointment = async (apt: Appointment): Promise<{ success: boolean; error?: string }> => {
-    if (isAdminApiSession()) {
+    if (isBackofficeApiSession()) {
+      if (user?.role === 'EMPLOYEE' && apt.professionalId !== user.id) {
+        return { success: false, error: 'Você só pode gerenciar seus próprios agendamentos.' };
+      }
+
       if (apt.status === 'BLOCKED') {
         const result = await createBloqueioApi({
           profissional_id: apt.professionalId,
@@ -577,7 +594,11 @@ const App: React.FC = () => {
   };
 
   const updateAppointment = async (updatedApt: Appointment): Promise<{ success: boolean; error?: string }> => {
-    if (isAdminApiSession()) {
+    if (isBackofficeApiSession()) {
+      if (user?.role === 'EMPLOYEE' && updatedApt.professionalId !== user.id) {
+        return { success: false, error: 'Você só pode gerenciar seus próprios agendamentos.' };
+      }
+
       if (updatedApt.status === 'BLOCKED') {
         const bloqueioId = updatedApt.id.startsWith('bloqueio:') ? updatedApt.id.replace('bloqueio:', '') : updatedApt.id;
         const result = await updateBloqueioApi(bloqueioId, {
@@ -621,9 +642,51 @@ const App: React.FC = () => {
     return { success: true };
   };
 
+  const transitionAppointmentStatus = async (
+    appointmentId: string,
+    status: Appointment['status'],
+    options?: { reason?: string; paymentMethod?: string; totalValue?: number; }
+  ): Promise<{ success: boolean; error?: string }> => {
+    if (!isBackofficeApiSession()) {
+      setAppointments(prev => prev.map(item => item.id === appointmentId ? { ...item, status } : item));
+      return { success: true };
+    }
+
+    const current = appointments.find(item => item.id === appointmentId);
+    if (!current) {
+      return { success: false, error: 'Agendamento não encontrado.' };
+    }
+
+    if (user?.role === 'EMPLOYEE' && current.professionalId !== user.id) {
+      return { success: false, error: 'Você só pode gerenciar seus próprios agendamentos.' };
+    }
+
+    const result = await transitionAgendamentoStatusApi(appointmentId, {
+      status,
+      motivo: options?.reason,
+      forma_pagamento: options?.paymentMethod,
+      valor_final: options?.totalValue,
+    });
+
+    if (!result.success) {
+      const message = ('error' in result && result.error) ? result.error : 'Falha ao atualizar status do agendamento.';
+      pushErrorNotification(message);
+      return { success: false, error: message };
+    }
+
+    setAppointments(prev => prev.map(item => item.id === appointmentId ? mapAgendamento(result.data, services) : item));
+    return { success: true };
+  };
+
   const deleteAppointment = (id: string) => {
-    if (isAdminApiSession()) {
+    if (isBackofficeApiSession()) {
       void (async () => {
+        const current = appointments.find(item => item.id === id);
+        if (user?.role === 'EMPLOYEE' && current && current.professionalId !== user.id) {
+          pushErrorNotification('Você só pode excluir seus próprios agendamentos.');
+          return;
+        }
+
         const isBloqueio = id.startsWith('bloqueio:');
         const rawId = isBloqueio ? id.replace('bloqueio:', '') : id;
         const result = isBloqueio
@@ -880,14 +943,19 @@ const App: React.FC = () => {
       return { success: false, error: message };
     }
 
-    const profissionalResult = await createProfissionalApi({
+    const hasProfissional = professionals.some(p => p.id === authResult.data.id);
+    const profissionalPayload = {
       id: authResult.data.id,
       nome: newUser.name,
       cargo: newUser.role === 'ADMIN' ? 'Administrador' : 'Profissional',
       telefone: newUser.phone,
       foto_url: normalizeAvatar(newUser.avatar) || null,
       ativo: true,
-    });
+    };
+
+    const profissionalResult = hasProfissional
+      ? await updateProfissionalApi(authResult.data.id, profissionalPayload)
+      : await createProfissionalApi(profissionalPayload);
 
     if (!profissionalResult.success) {
       await deleteAuthUserApi(authResult.data.id);
@@ -897,7 +965,13 @@ const App: React.FC = () => {
     }
 
     setUsers(prev => [...prev, mapAuthUserToUser(authResult.data, profissionalResult.data.foto_url || undefined)]);
-    setProfessionals(prev => [...prev, mapProfissional(profissionalResult.data)]);
+    setProfessionals(prev => {
+      const mapped = mapProfissional(profissionalResult.data);
+      if (hasProfissional) {
+        return prev.map(p => p.id === mapped.id ? mapped : p);
+      }
+      return [...prev, mapped];
+    });
     return { success: true };
   };
 
@@ -1056,7 +1130,7 @@ const App: React.FC = () => {
   return (
     <AppContext.Provider value={{ 
       user, login, logout, notifications, markNotificationRead, 
-      appointments, addAppointment, updateAppointment, deleteAppointment,
+      appointments, addAppointment, updateAppointment, transitionAppointmentStatus, deleteAppointment,
       services, updateService, addService, deleteService,
       categories, addCategory, updateCategory, deleteCategory,
       professionals, clients, addClient, updateClient, deleteClient,
@@ -1067,14 +1141,14 @@ const App: React.FC = () => {
       <HashRouter>
         <div className="min-h-screen bg-gray-50 text-gray-900 font-sans">
           <Routes>
-            <Route path="/login" element={!user ? <Login /> : <Navigate to={shouldOpenOnboarding ? '/onboarding' : (user.role === 'ADMIN' ? '/admin' : '/client')} />} />
+            <Route path="/login" element={!user ? <Login /> : <Navigate to={shouldOpenOnboarding ? '/onboarding' : ((user.role === 'ADMIN' || user.role === 'EMPLOYEE') ? '/admin' : '/client')} />} />
             
             <Route path="/client/*" element={
               user && user.role === 'CLIENT' ? <ClientPortal /> : <Navigate to="/login" />
             } />
             
             <Route path="/admin/*" element={
-              user && user.role === 'ADMIN'
+              user && (user.role === 'ADMIN' || user.role === 'EMPLOYEE')
                 ? (shouldOpenOnboarding ? <Navigate to="/onboarding" /> : <AdminDashboard />)
                 : <Navigate to="/login" />
             } />

@@ -10,6 +10,14 @@ export type AgendamentoApi = {
   hora_inicio: string;
   hora_fim: string;
   status: string;
+  valor_final?: number | null;
+  forma_pagamento?: string | null;
+  pago_em?: string | null;
+  desconto?: number | null;
+  cortesia?: boolean;
+  estornado?: boolean;
+  concluido_operacional_em?: string | null;
+  concluido_financeiro_em?: string | null;
   block_reason?: string | null;
   is_bloqueio?: boolean;
 };
@@ -22,6 +30,13 @@ export type AgendamentoPayload = {
   hora_inicio: string;
   hora_fim: string;
   status?: string;
+};
+
+export type AgendamentoStatusPayload = {
+  status: string;
+  motivo?: string;
+  forma_pagamento?: string;
+  valor_final?: number;
 };
 
 export type BloqueioPayload = {
@@ -55,6 +70,13 @@ export async function updateAgendamentoApi(agendamentoId: string, payload: Agend
 export async function deleteAgendamentoApi(agendamentoId: string) {
   return apiRequest<{ id: string }>(`/agendamentos/${agendamentoId}`, {
     method: 'DELETE',
+  });
+}
+
+export async function transitionAgendamentoStatusApi(agendamentoId: string, payload: AgendamentoStatusPayload) {
+  return apiRequest<AgendamentoApi>(`/agendamentos/${agendamentoId}/status`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
   });
 }
 

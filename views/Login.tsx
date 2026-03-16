@@ -75,7 +75,7 @@ export const Login: React.FC = () => {
           >
             <div className="flex items-center justify-center gap-2">
               <Lock size={18} />
-              <span>Administrador</span>
+              <span>Administrador / Equipe</span>
             </div>
           </button>
         </div>

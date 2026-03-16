@@ -39,7 +39,7 @@ export interface Professional {
   specialties: string[]; // Service IDs
 }
 
-export type AppointmentStatus = 'PENDING_PAYMENT' | 'CONFIRMED' | 'COMPLETED' | 'CANCELLED' | 'BLOCKED';
+export type AppointmentStatus = 'PENDING_PAYMENT' | 'CONFIRMED' | 'IN_PROGRESS' | 'COMPLETED_OP' | 'COMPLETED_FIN' | 'REOPENED' | 'COMPLETED' | 'CANCELLED' | 'BLOCKED';
 
 export interface Appointment {
   id: string;
@@ -51,7 +51,13 @@ export interface Appointment {
   endTime?: string; // HH:mm
   status: AppointmentStatus;
   totalValue: number;
-  paymentMethod?: 'PIX' | 'CREDIT_CARD';
+  paymentMethod?: string;
+  paidAt?: string;
+  discount?: number;
+  isCourtesy?: boolean;
+  isRefunded?: boolean;
+  operationalCompletedAt?: string;
+  financialCompletedAt?: string;
   isAllDay?: boolean;
   blockReason?: string;
   createdAt: string;

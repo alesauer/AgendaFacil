@@ -73,12 +73,32 @@ def create_app():
     app = Flask(__name__)
     app.config.from_object(get_config())
     _normalize_runtime_network(app.config)
+    allowed_origins = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
+
     CORS(
         app,
-        resources={r"/*": {"origins": "*"}},
+        resources={r"/*": {"origins": allowed_origins}},
         methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Content-Type", "Authorization", "X-Barbearia-Slug"],
     )
+
+    @app.after_request
+    def ensure_cors_headers(response):
+        origin = request.headers.get("Origin")
+        if origin in allowed_origins:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Vary"] = "Origin"
+            response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+            response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Barbearia-Slug"
+        return response
+
+    @app.route("/", methods=["OPTIONS"])
+    @app.route("/<path:_path>", methods=["OPTIONS"])
+    def options_preflight(_path=""):
+        return ("", 204)
 
     init_db("")
 

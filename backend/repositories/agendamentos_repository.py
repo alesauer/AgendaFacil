@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from backend.db import is_db_ready, query_all, query_one
 from backend.repositories.base_repository import BaseRepository
 from backend.supabase_client import get_supabase_client, is_supabase_ready
@@ -5,13 +7,73 @@ from backend.supabase_client import get_supabase_client, is_supabase_ready
 
 class AgendamentosRepository(BaseRepository):
     @staticmethod
+    def get_agendamento_by_id(barbearia_id: str, agendamento_id: str):
+        AgendamentosRepository.require_tenant(barbearia_id)
+        if is_db_ready():
+            return query_one(
+                """
+                SELECT id, barbearia_id, profissional_id, status,
+                       valor_final, forma_pagamento, pago_em, desconto,
+                       cortesia, estornado, concluido_operacional_em, concluido_financeiro_em
+                FROM agendamentos
+                WHERE barbearia_id = %s AND id = %s
+                """,
+                (barbearia_id, agendamento_id),
+            )
+
+        if is_supabase_ready():
+            supabase = get_supabase_client()
+            response = (
+                supabase.table("agendamentos")
+                .select("id,barbearia_id,profissional_id,status,valor_final,forma_pagamento,pago_em,desconto,cortesia,estornado,concluido_operacional_em,concluido_financeiro_em")
+                .eq("barbearia_id", barbearia_id)
+                .eq("id", agendamento_id)
+                .limit(1)
+                .execute()
+            )
+            data = response.data or []
+            return data[0] if data else None
+
+        return None
+
+    @staticmethod
+    def get_bloqueio_by_id(barbearia_id: str, bloqueio_id: str):
+        AgendamentosRepository.require_tenant(barbearia_id)
+        if is_db_ready():
+            return query_one(
+                """
+                SELECT id, barbearia_id, profissional_id
+                FROM bloqueios
+                WHERE barbearia_id = %s AND id = %s
+                """,
+                (barbearia_id, bloqueio_id),
+            )
+
+        if is_supabase_ready():
+            supabase = get_supabase_client()
+            response = (
+                supabase.table("bloqueios")
+                .select("id,barbearia_id,profissional_id")
+                .eq("barbearia_id", barbearia_id)
+                .eq("id", bloqueio_id)
+                .limit(1)
+                .execute()
+            )
+            data = response.data or []
+            return data[0] if data else None
+
+        return None
+
+    @staticmethod
     def list_by_date(barbearia_id: str, profissional_id: str, data: str):
         AgendamentosRepository.require_tenant(barbearia_id)
         if is_db_ready():
             return query_all(
                 """
                 SELECT id, barbearia_id, cliente_id, profissional_id, servico_id,
-                       data, hora_inicio, hora_fim, status
+                      data, hora_inicio, hora_fim, status,
+                      valor_final, forma_pagamento, pago_em, desconto,
+                      cortesia, estornado, concluido_operacional_em, concluido_financeiro_em
                 FROM agendamentos
                 WHERE barbearia_id = %s
                   AND profissional_id = %s
@@ -26,7 +88,7 @@ class AgendamentosRepository(BaseRepository):
             supabase = get_supabase_client()
             response = (
                 supabase.table("agendamentos")
-                .select("id,barbearia_id,cliente_id,profissional_id,servico_id,data,hora_inicio,hora_fim,status")
+                .select("id,barbearia_id,cliente_id,profissional_id,servico_id,data,hora_inicio,hora_fim,status,valor_final,forma_pagamento,pago_em,desconto,cortesia,estornado,concluido_operacional_em,concluido_financeiro_em")
                 .eq("barbearia_id", barbearia_id)
                 .eq("profissional_id", profissional_id)
                 .eq("data", data)
@@ -90,7 +152,9 @@ class AgendamentosRepository(BaseRepository):
                 )
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id, barbearia_id, cliente_id, profissional_id, servico_id,
-                          data, hora_inicio, hora_fim, status
+                          data, hora_inicio, hora_fim, status,
+                          valor_final, forma_pagamento, pago_em, desconto,
+                          cortesia, estornado, concluido_operacional_em, concluido_financeiro_em
                 """,
                 (
                     barbearia_id,
@@ -153,7 +217,9 @@ class AgendamentosRepository(BaseRepository):
                     status = %s
                 WHERE barbearia_id = %s AND id = %s
                 RETURNING id, barbearia_id, cliente_id, profissional_id, servico_id,
-                          data, hora_inicio, hora_fim, status
+                          data, hora_inicio, hora_fim, status,
+                          valor_final, forma_pagamento, pago_em, desconto,
+                          cortesia, estornado, concluido_operacional_em, concluido_financeiro_em
                 """,
                 (
                     cliente_id,
@@ -208,6 +274,14 @@ class AgendamentosRepository(BaseRepository):
                     hora_inicio::text AS hora_inicio,
                     hora_fim::text AS hora_fim,
                     status,
+                    valor_final,
+                    forma_pagamento,
+                    pago_em,
+                    desconto,
+                    cortesia,
+                    estornado,
+                    concluido_operacional_em,
+                    concluido_financeiro_em,
                     NULL::text AS block_reason,
                     false AS is_bloqueio
                 FROM agendamentos
@@ -225,6 +299,14 @@ class AgendamentosRepository(BaseRepository):
                     hora_inicio::text AS hora_inicio,
                     hora_fim::text AS hora_fim,
                     'BLOCKED'::text AS status,
+                    NULL::numeric AS valor_final,
+                    NULL::text AS forma_pagamento,
+                    NULL::timestamptz AS pago_em,
+                    0::numeric AS desconto,
+                    false AS cortesia,
+                    false AS estornado,
+                    NULL::timestamptz AS concluido_operacional_em,
+                    NULL::timestamptz AS concluido_financeiro_em,
                     motivo AS block_reason,
                     true AS is_bloqueio
                 FROM bloqueios
@@ -239,7 +321,7 @@ class AgendamentosRepository(BaseRepository):
             supabase = get_supabase_client()
             agendamentos_response = (
                 supabase.table("agendamentos")
-                .select("id,barbearia_id,cliente_id,profissional_id,servico_id,data,hora_inicio,hora_fim,status")
+                .select("id,barbearia_id,cliente_id,profissional_id,servico_id,data,hora_inicio,hora_fim,status,valor_final,forma_pagamento,pago_em,desconto,cortesia,estornado,concluido_operacional_em,concluido_financeiro_em")
                 .eq("barbearia_id", barbearia_id)
                 .order("data", desc=True)
                 .order("hora_inicio", desc=True)
@@ -268,6 +350,14 @@ class AgendamentosRepository(BaseRepository):
                     "hora_inicio": item["hora_inicio"],
                     "hora_fim": item["hora_fim"],
                     "status": "BLOCKED",
+                    "valor_final": None,
+                    "forma_pagamento": None,
+                    "pago_em": None,
+                    "desconto": 0,
+                    "cortesia": False,
+                    "estornado": False,
+                    "concluido_operacional_em": None,
+                    "concluido_financeiro_em": None,
                     "block_reason": item.get("motivo"),
                     "is_bloqueio": True,
                 }
@@ -436,6 +526,141 @@ class AgendamentosRepository(BaseRepository):
                 .update({"status": "CANCELLED"})
                 .eq("barbearia_id", barbearia_id)
                 .eq("id", agendamento_id)
+                .execute()
+            )
+            data_response = response.data or []
+            return data_response[0] if data_response else None
+
+        return None
+
+    @staticmethod
+    def transition_status(
+        barbearia_id: str,
+        agendamento_id: str,
+        new_status: str,
+        motivo: str | None = None,
+        forma_pagamento: str | None = None,
+        valor_final: float | None = None,
+    ):
+        AgendamentosRepository.require_tenant(barbearia_id)
+        if is_db_ready():
+            return query_one(
+                """
+                UPDATE agendamentos
+                SET status = %s,
+                    forma_pagamento = CASE WHEN %s IS NULL THEN forma_pagamento ELSE %s END,
+                    valor_final = CASE WHEN %s IS NULL THEN valor_final ELSE %s END,
+                    pago_em = CASE WHEN %s = 'COMPLETED_FIN' THEN NOW() ELSE pago_em END,
+                    concluido_operacional_em = CASE WHEN %s = 'COMPLETED_OP' THEN NOW() ELSE concluido_operacional_em END,
+                    concluido_financeiro_em = CASE WHEN %s = 'COMPLETED_FIN' THEN NOW() ELSE concluido_financeiro_em END
+                WHERE barbearia_id = %s AND id = %s
+                RETURNING id, barbearia_id, cliente_id, profissional_id, servico_id,
+                          data, hora_inicio, hora_fim, status,
+                          valor_final, forma_pagamento, pago_em, desconto,
+                          cortesia, estornado, concluido_operacional_em, concluido_financeiro_em
+                """,
+                (
+                    new_status,
+                    forma_pagamento,
+                    forma_pagamento,
+                    valor_final,
+                    valor_final,
+                    new_status,
+                    new_status,
+                    new_status,
+                    barbearia_id,
+                    agendamento_id,
+                ),
+            )
+
+        if is_supabase_ready():
+            supabase = get_supabase_client()
+            now_iso = datetime.now(tz=timezone.utc).isoformat()
+            payload = {
+                "status": new_status,
+            }
+            if forma_pagamento is not None:
+                payload["forma_pagamento"] = forma_pagamento
+            if valor_final is not None:
+                payload["valor_final"] = valor_final
+            if new_status == "COMPLETED_OP":
+                payload["concluido_operacional_em"] = now_iso
+            if new_status == "COMPLETED_FIN":
+                payload["concluido_financeiro_em"] = now_iso
+                payload["pago_em"] = now_iso
+
+            response = (
+                supabase.table("agendamentos")
+                .update(payload)
+                .eq("barbearia_id", barbearia_id)
+                .eq("id", agendamento_id)
+                .execute()
+            )
+            data_response = response.data or []
+            return data_response[0] if data_response else None
+
+        return None
+
+    @staticmethod
+    def add_status_audit(
+        barbearia_id: str,
+        agendamento_id: str,
+        status_anterior: str,
+        status_novo: str,
+        changed_by_user_id: str | None,
+        changed_by_role: str | None,
+        motivo: str | None = None,
+        forma_pagamento: str | None = None,
+        valor_final: float | None = None,
+    ):
+        AgendamentosRepository.require_tenant(barbearia_id)
+        if is_db_ready():
+            return query_one(
+                """
+                INSERT INTO agendamento_status_auditoria (
+                    barbearia_id,
+                    agendamento_id,
+                    status_anterior,
+                    status_novo,
+                    motivo,
+                    forma_pagamento,
+                    valor_final,
+                    changed_by_user_id,
+                    changed_by_role
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s::uuid, %s)
+                RETURNING id
+                """,
+                (
+                    barbearia_id,
+                    agendamento_id,
+                    status_anterior,
+                    status_novo,
+                    motivo,
+                    forma_pagamento,
+                    valor_final,
+                    changed_by_user_id,
+                    changed_by_role,
+                ),
+            )
+
+        if is_supabase_ready():
+            supabase = get_supabase_client()
+            response = (
+                supabase.table("agendamento_status_auditoria")
+                .insert(
+                    {
+                        "barbearia_id": barbearia_id,
+                        "agendamento_id": agendamento_id,
+                        "status_anterior": status_anterior,
+                        "status_novo": status_novo,
+                        "motivo": motivo,
+                        "forma_pagamento": forma_pagamento,
+                        "valor_final": valor_final,
+                        "changed_by_user_id": changed_by_user_id,
+                        "changed_by_role": changed_by_role,
+                    }
+                )
                 .execute()
             )
             data_response = response.data or []

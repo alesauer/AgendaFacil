@@ -11,6 +11,57 @@ from backend.utils.http import error, success
 
 agendamentos_bp = Blueprint("agendamentos", __name__)
 
+ALLOWED_STATUS = {
+    "PENDING_PAYMENT",
+    "CONFIRMED",
+    "IN_PROGRESS",
+    "COMPLETED_OP",
+    "COMPLETED_FIN",
+    "REOPENED",
+    "CANCELLED",
+    "BLOCKED",
+    "COMPLETED",
+}
+
+TRANSITIONS = {
+    "PENDING_PAYMENT": {"CONFIRMED", "CANCELLED"},
+    "CONFIRMED": {"IN_PROGRESS", "CANCELLED", "REOPENED"},
+    "IN_PROGRESS": {"COMPLETED_OP", "CANCELLED"},
+    "COMPLETED_OP": {"COMPLETED_FIN", "REOPENED"},
+    "COMPLETED_FIN": {"REOPENED"},
+    "REOPENED": {"IN_PROGRESS", "CANCELLED"},
+}
+
+
+def _is_employee() -> bool:
+    return str(getattr(g, "user_role", "")).upper() == "EMPLOYEE"
+
+
+def _employee_profissional_guard(profissional_id: str):
+    if _is_employee() and str(profissional_id) != str(getattr(g, "user_id", "")):
+        return error("Funcionário só pode gerenciar os próprios agendamentos", 403)
+    return None
+
+
+def _normalized_status(value: str) -> str:
+    status = str(value or "").strip().upper()
+    if status == "COMPLETED":
+        return "COMPLETED_OP"
+    return status
+
+
+def _validate_status_transition(current_status: str, next_status: str):
+    normalized_current = _normalized_status(current_status)
+    normalized_next = _normalized_status(next_status)
+    if normalized_next not in ALLOWED_STATUS:
+        return error("status inválido", 400)
+    if normalized_current == normalized_next:
+        return None
+    allowed = TRANSITIONS.get(normalized_current, set())
+    if normalized_next not in allowed:
+        return error(f"Transição inválida: {normalized_current} -> {normalized_next}", 409)
+    return None
+
 
 def _weekday_from_date(data: str):
     weekday = datetime.strptime(data, "%Y-%m-%d").date().weekday() + 1
@@ -78,10 +129,17 @@ def create_agendamento():
     data = (payload.get("data") or "").strip()
     hora_inicio = (payload.get("hora_inicio") or "").strip()
     hora_fim = (payload.get("hora_fim") or "").strip()
-    status = (payload.get("status") or "CONFIRMED").strip().upper()
+    status = _normalized_status(payload.get("status") or "CONFIRMED")
 
     if not all([cliente_id, profissional_id, servico_id, data, hora_inicio, hora_fim]):
         return error("Campos obrigatórios ausentes", 400)
+
+    if status not in {"PENDING_PAYMENT", "CONFIRMED"}:
+        return error("status inválido para criação", 400)
+
+    denied = _employee_profissional_guard(profissional_id)
+    if denied:
+        return denied
 
     hours_error = _validate_within_business_hours(
         g.barbearia_id, data, hora_inicio, hora_fim
@@ -139,10 +197,29 @@ def update_agendamento(agendamento_id: str):
     data = (payload.get("data") or "").strip()
     hora_inicio = (payload.get("hora_inicio") or "").strip()
     hora_fim = (payload.get("hora_fim") or "").strip()
-    status = (payload.get("status") or "CONFIRMED").strip().upper()
+    status = _normalized_status(payload.get("status") or "CONFIRMED")
 
     if not all([cliente_id, profissional_id, servico_id, data, hora_inicio, hora_fim]):
         return error("Campos obrigatórios ausentes", 400)
+
+    existing_row = AgendamentosRepository.get_agendamento_by_id(g.barbearia_id, agendamento_id)
+    if not existing_row:
+        return error("Agendamento não encontrado", 404)
+
+    denied_existing = _employee_profissional_guard(str(existing_row.get("profissional_id") or ""))
+    if denied_existing:
+        return denied_existing
+
+    denied_target = _employee_profissional_guard(profissional_id)
+    if denied_target:
+        return denied_target
+
+    transition_error = _validate_status_transition(existing_row.get("status") or "CONFIRMED", status)
+    if transition_error:
+        return transition_error
+
+    if _is_employee() and status in {"COMPLETED_FIN", "REOPENED"}:
+        return error("Somente administradores podem concluir financeiro ou reabrir", 403)
 
     hours_error = _validate_within_business_hours(
         g.barbearia_id, data, hora_inicio, hora_fim
@@ -188,9 +265,78 @@ def update_agendamento(agendamento_id: str):
     return success(agendamento)
 
 
+@agendamentos_bp.patch("/agendamentos/<agendamento_id>/status")
+@auth_required
+def transition_agendamento_status(agendamento_id: str):
+    payload = request.get_json(silent=True) or {}
+    new_status = _normalized_status(payload.get("status") or "")
+    motivo = (payload.get("motivo") or "").strip() or None
+    forma_pagamento = (payload.get("forma_pagamento") or "").strip() or None
+    valor_final_raw = payload.get("valor_final")
+
+    try:
+        valor_final = float(valor_final_raw) if valor_final_raw is not None else None
+    except (TypeError, ValueError):
+        return error("valor_final inválido", 400)
+
+    existing = AgendamentosRepository.get_agendamento_by_id(g.barbearia_id, agendamento_id)
+    if not existing:
+        return error("Agendamento não encontrado", 404)
+
+    denied = _employee_profissional_guard(str(existing.get("profissional_id") or ""))
+    if denied:
+        return denied
+
+    transition_error = _validate_status_transition(existing.get("status") or "CONFIRMED", new_status)
+    if transition_error:
+        return transition_error
+
+    if _is_employee() and new_status in {"COMPLETED_FIN", "REOPENED"}:
+        return error("Somente administradores podem concluir financeiro ou reabrir", 403)
+
+    if new_status == "COMPLETED_FIN" and not forma_pagamento:
+        return error("forma_pagamento é obrigatória para conclusão financeira", 400)
+
+    if new_status == "REOPENED" and not motivo:
+        return error("motivo é obrigatório para reabertura", 400)
+
+    updated = AgendamentosRepository.transition_status(
+        g.barbearia_id,
+        agendamento_id,
+        new_status,
+        motivo,
+        forma_pagamento,
+        valor_final,
+    )
+    if not updated:
+        return error("Agendamento não encontrado", 404)
+
+    AgendamentosRepository.add_status_audit(
+        g.barbearia_id,
+        agendamento_id,
+        _normalized_status(existing.get("status") or "CONFIRMED"),
+        new_status,
+        str(getattr(g, "user_id", "")) or None,
+        str(getattr(g, "user_role", "")) or None,
+        motivo,
+        forma_pagamento,
+        valor_final,
+    )
+
+    return success(updated)
+
+
 @agendamentos_bp.delete("/agendamentos/<agendamento_id>")
 @auth_required
 def delete_agendamento(agendamento_id: str):
+    existing_row = AgendamentosRepository.get_agendamento_by_id(g.barbearia_id, agendamento_id)
+    if not existing_row:
+        return error("Agendamento não encontrado", 404)
+
+    denied = _employee_profissional_guard(str(existing_row.get("profissional_id") or ""))
+    if denied:
+        return denied
+
     deleted = AgendamentosRepository.cancel(g.barbearia_id, agendamento_id)
     if not deleted:
         return error("Agendamento não encontrado", 404)
@@ -210,6 +356,10 @@ def create_bloqueio():
 
         if not all([profissional_id, data, hora_inicio, hora_fim]):
             return error("profissional_id, data, hora_inicio e hora_fim são obrigatórios", 400)
+
+        denied = _employee_profissional_guard(profissional_id)
+        if denied:
+            return denied
 
         if hora_fim <= hora_inicio:
             return error("hora_fim deve ser maior que hora_inicio", 400)
@@ -285,6 +435,18 @@ def update_bloqueio(bloqueio_id: str):
         if not all([profissional_id, data, hora_inicio, hora_fim]):
             return error("profissional_id, data, hora_inicio e hora_fim são obrigatórios", 400)
 
+        existing_bloqueio = AgendamentosRepository.get_bloqueio_by_id(g.barbearia_id, bloqueio_id)
+        if not existing_bloqueio:
+            return error("Bloqueio não encontrado", 404)
+
+        denied_existing = _employee_profissional_guard(str(existing_bloqueio.get("profissional_id") or ""))
+        if denied_existing:
+            return denied_existing
+
+        denied_target = _employee_profissional_guard(profissional_id)
+        if denied_target:
+            return denied_target
+
         if hora_fim <= hora_inicio:
             return error("hora_fim deve ser maior que hora_inicio", 400)
 
@@ -351,6 +513,14 @@ def update_bloqueio(bloqueio_id: str):
 @agendamentos_bp.delete("/agenda/bloqueios/<bloqueio_id>")
 @auth_required
 def delete_bloqueio(bloqueio_id: str):
+    existing_bloqueio = AgendamentosRepository.get_bloqueio_by_id(g.barbearia_id, bloqueio_id)
+    if not existing_bloqueio:
+        return error("Bloqueio não encontrado", 404)
+
+    denied = _employee_profissional_guard(str(existing_bloqueio.get("profissional_id") or ""))
+    if denied:
+        return denied
+
     deleted = AgendamentosRepository.delete_bloqueio(g.barbearia_id, bloqueio_id)
     if not deleted:
         return error("Bloqueio não encontrado", 404)

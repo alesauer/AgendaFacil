@@ -1,6 +1,7 @@
 from flask import Blueprint, g, request
 from psycopg.errors import UniqueViolation
 from werkzeug.security import check_password_hash, generate_password_hash
+from uuid import UUID
 
 from backend.middleware.auth import auth_required, create_access_token
 from backend.repositories.auth_repository import AuthRepository
@@ -132,7 +133,15 @@ def create_user_admin():
     email = str(payload.get("email") or "").strip().lower()
     senha = payload.get("senha") or ""
     role = (payload.get("role") or "EMPLOYEE").upper()
-    user_id = (payload.get("id") or "").strip() or None
+    raw_user_id = payload.get("id")
+    user_id = str(raw_user_id).strip() if raw_user_id is not None else None
+    user_id = user_id or None
+
+    if user_id:
+        try:
+            user_id = str(UUID(user_id))
+        except (ValueError, TypeError):
+            return error("id inválido: deve ser UUID", 400)
 
     if not nome or not telefone or not email or not senha:
         return error("nome, telefone, email e senha são obrigatórios", 400)
@@ -148,15 +157,18 @@ def create_user_admin():
     if existing_email:
         return error("E-mail já cadastrado", 409)
 
-    user = AuthRepository.create_user(
-        g.barbearia_id,
-        nome,
-        telefone,
-        generate_password_hash(senha),
-        role,
-        email,
-        user_id,
-    )
+    try:
+        user = AuthRepository.create_user(
+            g.barbearia_id,
+            nome,
+            telefone,
+            generate_password_hash(senha),
+            role,
+            email,
+            user_id,
+        )
+    except UniqueViolation:
+        return error("Telefone ou e-mail já cadastrado", 409)
     return success(user, 201)
 
 
