@@ -25,6 +25,17 @@ def list_horarios_funcionamento():
         return error("Falha ao carregar horários de funcionamento.", 500)
 
 
+@horarios_bp.get("/publico")
+def list_horarios_funcionamento_publico():
+    try:
+        return success(HorariosFuncionamentoRepository.list_all(g.barbearia_id))
+    except Exception as exc:
+        message = str(exc).lower()
+        if "barbearia_horarios_funcionamento" in message and ("does not exist" in message or "relation" in message):
+            return error("Tabela de horários não encontrada. Execute a migration 004_module4_horarios_funcionamento.sql.", 500)
+        return error("Falha ao carregar horários de funcionamento.", 500)
+
+
 @horarios_bp.put("")
 @auth_required
 def save_horarios_funcionamento():

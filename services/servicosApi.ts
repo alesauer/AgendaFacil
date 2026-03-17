@@ -22,6 +22,12 @@ export async function listServicosApi() {
   });
 }
 
+export async function listServicosPublicApi() {
+  return apiRequest<ServicoApi[]>('/servicos/publico', {
+    method: 'GET',
+  });
+}
+
 export async function createServicoApi(payload: ServicoPayload) {
   return apiRequest<ServicoApi>('/servicos', {
     method: 'POST',

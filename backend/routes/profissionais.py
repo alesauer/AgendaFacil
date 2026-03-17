@@ -29,6 +29,13 @@ def list_profissionais():
     return success(ProfissionaisRepository.list_all(g.barbearia_id))
 
 
+@profissionais_bp.get("/publico")
+def list_profissionais_publico():
+    profissionais = ProfissionaisRepository.list_all(g.barbearia_id)
+    ativos = [item for item in profissionais if bool(item.get("ativo", True))]
+    return success(ativos)
+
+
 @profissionais_bp.post("")
 @auth_required
 def create_profissional():

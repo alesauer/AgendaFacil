@@ -13,6 +13,11 @@ def list_servicos():
     return success(ServicosRepository.list_all(g.barbearia_id))
 
 
+@servicos_bp.get("/publico")
+def list_servicos_publico():
+    return success(ServicosRepository.list_all(g.barbearia_id))
+
+
 @servicos_bp.post("")
 @auth_required
 def create_servico():

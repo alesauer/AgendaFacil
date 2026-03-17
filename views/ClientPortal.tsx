@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useAppContext } from '../App';
 import { Service, Professional, Appointment } from '../types';
+import { createClientePublicApi } from '../services/clientesApi';
+import { listDisponibilidadePublicApi } from '../services/agendamentosApi';
 import { 
   Calendar, Clock, User as UserIcon, ChevronLeft, CreditCard, CheckCircle, 
   Search, Scissors, CalendarDays, LogOut, Bell, X, 
@@ -154,55 +156,50 @@ const ProfessionalSelect = ({ service, onSelect }: { service: Service, onSelect:
   );
 };
 
-const DateTimeSelect = ({ professionalId, onSelect }: { professionalId: string, onSelect: (date: string, time: string) => void }) => {
-  const { appointments, businessHours } = useAppContext();
+const DateTimeSelect = ({ professionalId, serviceDurationMinutes, onSelect }: { professionalId: string, serviceDurationMinutes: number, onSelect: (date: string, time: string) => void }) => {
   const [selectedDate, setSelectedDate] = useState<string>('');
   const [selectedTime, setSelectedTime] = useState<string>('');
+  const [availableTimes, setAvailableTimes] = useState<string[]>([]);
+  const [loadingTimes, setLoadingTimes] = useState(false);
   
   // Use today as default min date
   const today = new Date().toISOString().split('T')[0];
 
-  const getAvailableTimes = (date: string) => {
-    if (!date) return [];
-
-    const jsDay = new Date(`${date}T12:00:00`).getDay();
-    const dayOfWeek = jsDay === 0 ? 0 : jsDay;
-    const dayRule = businessHours.find(item => item.dayOfWeek === dayOfWeek);
-
-    if (!dayRule?.open) {
-      return [];
+  useEffect(() => {
+    if (!selectedDate || !professionalId || !serviceDurationMinutes) {
+      setAvailableTimes([]);
+      return;
     }
 
-    const toMinutes = (time: string) => {
-      const [hour, minute] = time.split(':').map(Number);
-      return (hour * 60) + minute;
+    let cancelled = false;
+    const loadTimes = async () => {
+      setLoadingTimes(true);
+      const result = await listDisponibilidadePublicApi({
+        profissional_id: professionalId,
+        data: selectedDate,
+        duracao_min: serviceDurationMinutes,
+      });
+
+      if (cancelled) {
+        return;
+      }
+
+      if (!result.success) {
+        setAvailableTimes([]);
+        setLoadingTimes(false);
+        return;
+      }
+
+      setAvailableTimes(result.data.map(slot => slot.hora_inicio));
+      setLoadingTimes(false);
     };
 
-    const toHHMM = (minutes: number) => {
-      const h = Math.floor(minutes / 60);
-      const m = minutes % 60;
-      return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+    void loadTimes();
+
+    return () => {
+      cancelled = true;
     };
-
-    const generatedTimes: string[] = [];
-    let cursor = toMinutes(dayRule.start);
-    const end = toMinutes(dayRule.end);
-
-    while (cursor < end) {
-      generatedTimes.push(toHHMM(cursor));
-      cursor += 30;
-    }
-    
-    // Filter out times that are already taken by this professional on this date
-    // This includes both regular appointments and BLOCKED slots
-    const takenTimes = appointments
-      .filter(apt => apt.date === date && apt.professionalId === professionalId && apt.status !== 'CANCELLED')
-      .map(apt => apt.time);
-
-    return generatedTimes.filter(time => !takenTimes.includes(time));
-  };
-
-  const availableTimes = getAvailableTimes(selectedDate);
+  }, [selectedDate, professionalId, serviceDurationMinutes]);
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -220,7 +217,11 @@ const DateTimeSelect = ({ professionalId, onSelect }: { professionalId: string, 
       {selectedDate && (
         <div>
            <label className="block text-sm font-medium text-gray-700 mb-2">Horários Disponíveis</label>
-           {availableTimes.length > 0 ? (
+           {loadingTimes ? (
+             <div className="p-4 bg-gray-100 rounded-xl text-center text-gray-500 text-sm">
+               Carregando horários...
+             </div>
+           ) : availableTimes.length > 0 ? (
              <div className="grid grid-cols-4 gap-2">
                {availableTimes.map(time => (
                  <button
@@ -398,11 +399,46 @@ const PaymentChoiceStep = ({ onSelect }: { onSelect: (choice: 'NOW' | 'LATER') =
 // --- Main Client View ---
 
 export const ClientPortal: React.FC = () => {
-  const { user, logout, addAppointment, appointments, services } = useAppContext();
+  const { user, login, logout, addAppointment, appointments, services } = useAppContext();
   const [view, setView] = useState<'HOME' | 'BOOKING' | 'HISTORY'>('HOME');
   const [step, setStep] = useState(0); // 0: Service, 1: Pro, 2: Date, 3: Choice, 4: Payment, 5: Success
   const [bookingData, setBookingData] = useState<any>({});
   const [showNotifications, setShowNotifications] = useState(false);
+  const [registerName, setRegisterName] = useState('');
+  const [registerEmail, setRegisterEmail] = useState('');
+  const [registerBirthDate, setRegisterBirthDate] = useState('');
+  const [registering, setRegistering] = useState(false);
+  const [registerError, setRegisterError] = useState('');
+  const [bookingError, setBookingError] = useState('');
+
+  const needsRegistration = user?.id === '__new_client__';
+
+  const handleClientRegistration = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setRegisterError('');
+
+    if (!registerName.trim()) {
+      setRegisterError('Informe seu nome.');
+      return;
+    }
+
+    setRegistering(true);
+    const result = await createClientePublicApi({
+      nome: registerName.trim(),
+      telefone: user?.phone || '',
+      email: registerEmail.trim() || null,
+      data_nascimento: registerBirthDate || null,
+    });
+
+    if (!result.success) {
+      setRegistering(false);
+      setRegisterError(('error' in result && result.error) ? result.error : 'Não foi possível concluir seu cadastro.');
+      return;
+    }
+
+    await login(user?.phone || '', 'CLIENT');
+    setRegistering(false);
+  };
 
   const resetBooking = () => {
     setBookingData({});
@@ -410,7 +446,7 @@ export const ClientPortal: React.FC = () => {
     setView('HOME');
   };
 
-  const handleBookingComplete = (method?: 'PIX' | 'CREDIT_CARD', data?: any) => {
+  const handleBookingComplete = async (method?: 'PIX' | 'CREDIT_CARD', data?: any) => {
     const currentBooking = data || bookingData;
     const finalPrice = currentBooking.service.isPromo && currentBooking.service.promoPrice ? currentBooking.service.promoPrice : currentBooking.service.price;
     const newApt: Appointment = {
@@ -425,7 +461,12 @@ export const ClientPortal: React.FC = () => {
       paymentMethod: method,
       createdAt: new Date().toISOString()
     };
-    addAppointment(newApt);
+    const result = await addAppointment(newApt);
+    if (!result.success) {
+      setBookingError(result.error || 'Não foi possível concluir seu agendamento.');
+      return;
+    }
+    setBookingError('');
     setStep(5);
   };
 
@@ -449,10 +490,10 @@ export const ClientPortal: React.FC = () => {
   const renderWizard = () => {
     if (step === 0) return <ServiceList onSelect={(s) => { setBookingData({ ...bookingData, service: s }); setStep(1); }} />;
     if (step === 1) return <ProfessionalSelect service={bookingData.service} onSelect={(p) => { setBookingData({ ...bookingData, professional: p }); setStep(2); }} />;
-    if (step === 2) return <DateTimeSelect professionalId={bookingData.professional.id} onSelect={(d, t) => { 
+    if (step === 2) return <DateTimeSelect professionalId={bookingData.professional.id} serviceDurationMinutes={bookingData.service.durationMinutes} onSelect={(d, t) => { 
       const updatedData = { ...bookingData, date: d, time: t };
       setBookingData(updatedData); 
-      handleBookingComplete(undefined, updatedData); 
+      void handleBookingComplete(undefined, updatedData); 
     }} />;
     if (step === 5) return (
       <div className="text-center py-10 animate-fade-in">
@@ -558,7 +599,7 @@ export const ClientPortal: React.FC = () => {
              </button>
           )}
           <h1 className="font-bold text-lg text-gray-800">
-            {view === 'HOME' ? `Olá, ${user?.name.split(' ')[0]}` : 
+            {view === 'HOME' ? `Olá, ${(user?.name || '').split(' ')[0] || 'Cliente'}` : 
              view === 'BOOKING' ? 'Agendar Serviço' : 'Histórico'}
           </h1>
         </div>
@@ -587,35 +628,114 @@ export const ClientPortal: React.FC = () => {
 
       {/* Main Content */}
       <main className="flex-1 p-4 max-w-lg mx-auto w-full">
-        {view === 'HOME' && (
-          <div className="space-y-4 animate-fade-in pt-4">
-            {/* Quick Actions - Vertical Layout */}
-            <div className="grid grid-cols-1 gap-4">
-               <button onClick={() => { setView('BOOKING'); setStep(0); }} className="bg-white p-6 rounded-2xl shadow-sm hover:shadow-md transition-all text-left flex items-center gap-6 border border-transparent hover:border-blue-200 group">
-                 <div className="bg-blue-100 w-14 h-14 rounded-2xl flex items-center justify-center text-blue-600 group-hover:bg-blue-600 group-hover:text-white transition-all">
-                   <Calendar size={28} />
-                 </div>
-                 <div>
-                   <span className="font-bold text-lg text-gray-800 block">Novo Agendamento</span>
-                   <p className="text-sm text-gray-500">Escolha um serviço e reserve seu horário</p>
-                 </div>
-               </button>
-               
-               <button onClick={() => setView('HISTORY')} className="bg-white p-6 rounded-2xl shadow-sm hover:shadow-md transition-all text-left flex items-center gap-6 border border-transparent hover:border-blue-200 group">
-                 <div className="bg-purple-100 w-14 h-14 rounded-2xl flex items-center justify-center text-purple-600 group-hover:bg-purple-600 group-hover:text-white transition-all">
-                   <Clock size={28} />
-                 </div>
-                 <div>
-                   <span className="font-bold text-lg text-gray-800 block">Meus Agendamentos</span>
-                   <p className="text-sm text-gray-500">Veja e gerencie seus horários marcados</p>
-                 </div>
-               </button>
+        {needsRegistration ? (
+          <div className="animate-fade-in pt-6">
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 space-y-5">
+              <div>
+                <h2 className="text-xl font-bold text-gray-900">Complete seu cadastro</h2>
+                <p className="text-sm text-gray-500 mt-1">Antes de continuar, confirme seus dados para acessar seus agendamentos.</p>
+              </div>
+
+              <form onSubmit={handleClientRegistration} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Celular</label>
+                  <input
+                    type="tel"
+                    value={user?.phone || ''}
+                    readOnly
+                    className="w-full p-3 border border-gray-200 rounded-lg bg-gray-50 text-gray-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Nome</label>
+                  <input
+                    type="text"
+                    value={registerName}
+                    onChange={(e) => setRegisterName(e.target.value)}
+                    required
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">E-mail</label>
+                  <input
+                    type="email"
+                    value={registerEmail}
+                    onChange={(e) => setRegisterEmail(e.target.value)}
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Data de nascimento</label>
+                  <input
+                    type="date"
+                    value={registerBirthDate}
+                    onChange={(e) => setRegisterBirthDate(e.target.value)}
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                  />
+                </div>
+
+                {registerError && (
+                  <div className="bg-red-50 text-red-600 text-sm p-3 rounded-lg border border-red-100">
+                    {registerError}
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={registering}
+                  className="w-full py-3 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 transition-colors disabled:opacity-60"
+                >
+                  {registering ? 'Salvando...' : 'Concluir cadastro'}
+                </button>
+              </form>
             </div>
           </div>
-        )}
+        ) : (
+          <>
+            {view === 'HOME' && (
+              <div className="space-y-4 animate-fade-in pt-4">
+                {/* Quick Actions - Vertical Layout */}
+                <div className="grid grid-cols-1 gap-4">
+                   <button onClick={() => { setView('BOOKING'); setStep(0); }} className="bg-white p-6 rounded-2xl shadow-sm hover:shadow-md transition-all text-left flex items-center gap-6 border border-transparent hover:border-blue-200 group">
+                     <div className="bg-blue-100 w-14 h-14 rounded-2xl flex items-center justify-center text-blue-600 group-hover:bg-blue-600 group-hover:text-white transition-all">
+                       <Calendar size={28} />
+                     </div>
+                     <div>
+                       <span className="font-bold text-lg text-gray-800 block">Novo Agendamento</span>
+                       <p className="text-sm text-gray-500">Escolha um serviço e reserve seu horário</p>
+                     </div>
+                   </button>
+                   
+                   <button onClick={() => setView('HISTORY')} className="bg-white p-6 rounded-2xl shadow-sm hover:shadow-md transition-all text-left flex items-center gap-6 border border-transparent hover:border-blue-200 group">
+                     <div className="bg-purple-100 w-14 h-14 rounded-2xl flex items-center justify-center text-purple-600 group-hover:bg-purple-600 group-hover:text-white transition-all">
+                       <Clock size={28} />
+                     </div>
+                     <div>
+                       <span className="font-bold text-lg text-gray-800 block">Meus Agendamentos</span>
+                       <p className="text-sm text-gray-500">Veja e gerencie seus horários marcados</p>
+                     </div>
+                   </button>
+                </div>
+              </div>
+            )}
 
-        {view === 'BOOKING' && renderWizard()}
-        {view === 'HISTORY' && renderHistory()}
+            {view === 'BOOKING' && (
+              <>
+                {bookingError && (
+                  <div className="mb-4 bg-red-50 text-red-600 text-sm p-3 rounded-lg border border-red-100">
+                    {bookingError}
+                  </div>
+                )}
+                {renderWizard()}
+              </>
+            )}
+            {view === 'HISTORY' && renderHistory()}
+          </>
+        )}
 
       </main>
 

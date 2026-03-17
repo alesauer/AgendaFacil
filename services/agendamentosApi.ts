@@ -47,6 +47,11 @@ export type BloqueioPayload = {
   motivo?: string | null;
 };
 
+export type DisponibilidadeSlotApi = {
+  hora_inicio: string;
+  hora_fim: string;
+};
+
 export async function listAgendamentosApi() {
   return apiRequest<AgendamentoApi[]>('/agendamentos', {
     method: 'GET',
@@ -57,6 +62,29 @@ export async function createAgendamentoApi(payload: AgendamentoPayload) {
   return apiRequest<AgendamentoApi>('/agendamentos', {
     method: 'POST',
     body: JSON.stringify(payload),
+  });
+}
+
+export async function createAgendamentoPublicApi(payload: AgendamentoPayload) {
+  return apiRequest<AgendamentoApi>('/agendamentos/publico', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function listDisponibilidadePublicApi(params: {
+  profissional_id: string;
+  data: string;
+  duracao_min: number;
+}) {
+  const query = new URLSearchParams({
+    profissional_id: params.profissional_id,
+    data: params.data,
+    duracao_min: String(params.duracao_min),
+  });
+
+  return apiRequest<DisponibilidadeSlotApi[]>(`/agenda/disponibilidade/publico?${query.toString()}`, {
+    method: 'GET',
   });
 }
 

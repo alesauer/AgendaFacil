@@ -89,24 +89,40 @@ def _validate_within_business_hours(barbearia_id: str, data: str, hora_inicio: s
     return None
 
 
-@agendamentos_bp.get("/agenda/disponibilidade")
-@auth_required
-def disponibilidade():
-    profissional_id = (request.args.get("profissional_id") or "").strip()
-    data = (request.args.get("data") or "").strip()
-    duracao_min = int(request.args.get("duracao_min") or 0)
+def _validate_client_not_in_past(data: str, hora_inicio: str):
+    try:
+        appointment_start = datetime.strptime(f"{data} {hora_inicio}", "%Y-%m-%d %H:%M")
+    except Exception:
+        return "data/hora inválida. Use data YYYY-MM-DD e hora HH:MM"
 
+    now = datetime.now()
+    if appointment_start < now:
+        return "Não é permitido agendar em horário anterior ao atual"
+
+    return None
+
+
+def _filter_past_slots(data: str, slots: list[dict]):
+    today = datetime.now().date().isoformat()
+    if data != today:
+        return slots
+
+    now_hhmm = datetime.now().strftime("%H:%M")
+    return [slot for slot in slots if str(slot.get("hora_inicio") or "") >= now_hhmm]
+
+
+def _get_disponibilidade(profissional_id: str, data: str, duracao_min: int):
     if not profissional_id or not data or duracao_min <= 0:
-        return error("profissional_id, data e duracao_min são obrigatórios", 400)
+        return None, error("profissional_id, data e duracao_min são obrigatórios", 400)
 
     try:
         weekday = _weekday_from_date(data)
     except Exception:
-        return error("data inválida. Use o formato YYYY-MM-DD", 400)
+        return None, error("data inválida. Use o formato YYYY-MM-DD", 400)
 
     horario = HorariosFuncionamentoRepository.get_by_weekday(g.barbearia_id, weekday)
     if not horario.get("aberto"):
-        return success([])
+        return [], None
 
     slots = calculate_available_slots(
         g.barbearia_id,
@@ -116,6 +132,31 @@ def disponibilidade():
         horario.get("hora_inicio", "09:00"),
         horario.get("hora_fim", "18:00"),
     )
+    return _filter_past_slots(data, slots), None
+
+
+@agendamentos_bp.get("/agenda/disponibilidade")
+@auth_required
+def disponibilidade():
+    profissional_id = (request.args.get("profissional_id") or "").strip()
+    data = (request.args.get("data") or "").strip()
+    duracao_min = int(request.args.get("duracao_min") or 0)
+
+    slots, err = _get_disponibilidade(profissional_id, data, duracao_min)
+    if err:
+        return err
+    return success(slots)
+
+
+@agendamentos_bp.get("/agenda/disponibilidade/publico")
+def disponibilidade_publico():
+    profissional_id = (request.args.get("profissional_id") or "").strip()
+    data = (request.args.get("data") or "").strip()
+    duracao_min = int(request.args.get("duracao_min") or 0)
+
+    slots, err = _get_disponibilidade(profissional_id, data, duracao_min)
+    if err:
+        return err
     return success(slots)
 
 
@@ -140,6 +181,67 @@ def create_agendamento():
     denied = _employee_profissional_guard(profissional_id)
     if denied:
         return denied
+
+    hours_error = _validate_within_business_hours(
+        g.barbearia_id, data, hora_inicio, hora_fim
+    )
+    if hours_error:
+        return error(hours_error, 409)
+
+    existing = AgendamentosRepository.list_by_date(g.barbearia_id, profissional_id, data)
+    for row in existing:
+        if has_conflict(hora_inicio, hora_fim, row["hora_inicio"], row["hora_fim"]):
+            return error("Conflito de horário", 409)
+
+    blocked = AgendamentosRepository.list_bloqueios_by_date(
+        g.barbearia_id, profissional_id, data
+    )
+    for row in blocked:
+        if has_conflict(hora_inicio, hora_fim, row["hora_inicio"], row["hora_fim"]):
+            return error("Horário bloqueado", 409)
+
+    try:
+        agendamento = AgendamentosRepository.create(
+            g.barbearia_id,
+            cliente_id,
+            profissional_id,
+            servico_id,
+            data,
+            hora_inicio,
+            hora_fim,
+            status,
+        )
+    except UniqueViolation:
+        return error("Este profissional já possui agendamento neste horário", 409)
+    except Exception as exc:
+        message = str(exc).lower()
+        if "duplicate key" in message or "uq_agendamentos_profissional_data_hora" in message:
+            return error("Este profissional já possui agendamento neste horário", 409)
+        return error("Falha interna ao criar agendamento", 500)
+
+    return success(agendamento, 201)
+
+
+@agendamentos_bp.post("/agendamentos/publico")
+def create_agendamento_publico():
+    payload = request.get_json(silent=True) or {}
+    cliente_id = (payload.get("cliente_id") or "").strip()
+    profissional_id = (payload.get("profissional_id") or "").strip()
+    servico_id = (payload.get("servico_id") or "").strip()
+    data = (payload.get("data") or "").strip()
+    hora_inicio = (payload.get("hora_inicio") or "").strip()
+    hora_fim = (payload.get("hora_fim") or "").strip()
+    status = _normalized_status(payload.get("status") or "PENDING_PAYMENT")
+
+    if not all([cliente_id, profissional_id, servico_id, data, hora_inicio, hora_fim]):
+        return error("Campos obrigatórios ausentes", 400)
+
+    if status not in {"PENDING_PAYMENT", "CONFIRMED"}:
+        return error("status inválido para criação", 400)
+
+    not_past_error = _validate_client_not_in_past(data, hora_inicio)
+    if not_past_error:
+        return error(not_past_error, 409)
 
     hours_error = _validate_within_business_hours(
         g.barbearia_id, data, hora_inicio, hora_fim

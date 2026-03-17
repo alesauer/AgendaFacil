@@ -5,6 +5,72 @@ from backend.supabase_client import get_supabase_client, is_supabase_ready
 
 class ClientesRepository(BaseRepository):
     @staticmethod
+    def _is_missing_email_column_error(exc: Exception) -> bool:
+        message = str(exc).lower()
+        if "email" not in message:
+            return False
+        return (
+            "column" in message
+            or "schema cache" in message
+            or "does not exist" in message
+            or "could not find" in message
+        )
+
+    @staticmethod
+    def find_by_phone(barbearia_id: str, telefone: str):
+        ClientesRepository.require_tenant(barbearia_id)
+        if is_db_ready():
+            try:
+                return query_one(
+                    """
+                    SELECT id, barbearia_id, nome, telefone, email, data_nascimento
+                    FROM clientes
+                    WHERE barbearia_id = %s AND telefone = %s
+                    LIMIT 1
+                    """,
+                    (barbearia_id, telefone),
+                )
+            except Exception as exc:
+                if not ClientesRepository._is_missing_email_column_error(exc):
+                    raise
+                return query_one(
+                    """
+                    SELECT id, barbearia_id, nome, telefone, data_nascimento
+                    FROM clientes
+                    WHERE barbearia_id = %s AND telefone = %s
+                    LIMIT 1
+                    """,
+                    (barbearia_id, telefone),
+                )
+
+        if is_supabase_ready():
+            supabase = get_supabase_client()
+            try:
+                response = (
+                    supabase.table("clientes")
+                    .select("id,barbearia_id,nome,telefone,email,data_nascimento")
+                    .eq("barbearia_id", barbearia_id)
+                    .eq("telefone", telefone)
+                    .limit(1)
+                    .execute()
+                )
+            except Exception as exc:
+                if not ClientesRepository._is_missing_email_column_error(exc):
+                    raise
+                response = (
+                    supabase.table("clientes")
+                    .select("id,barbearia_id,nome,telefone,data_nascimento")
+                    .eq("barbearia_id", barbearia_id)
+                    .eq("telefone", telefone)
+                    .limit(1)
+                    .execute()
+                )
+            data = response.data or []
+            return data[0] if data else None
+
+        return None
+
+    @staticmethod
     def has_linked_appointments(barbearia_id: str, cliente_id: str) -> bool:
         ClientesRepository.require_tenant(barbearia_id)
         if is_db_ready():
@@ -38,90 +104,187 @@ class ClientesRepository(BaseRepository):
     def list_all(barbearia_id: str):
         ClientesRepository.require_tenant(barbearia_id)
         if is_db_ready():
-            return query_all(
-                """
-                SELECT id, barbearia_id, nome, telefone, data_nascimento
-                FROM clientes
-                WHERE barbearia_id = %s
-                ORDER BY nome
-                """,
-                (barbearia_id,),
-            )
+            try:
+                return query_all(
+                    """
+                    SELECT id, barbearia_id, nome, telefone, email, data_nascimento
+                    FROM clientes
+                    WHERE barbearia_id = %s
+                    ORDER BY nome
+                    """,
+                    (barbearia_id,),
+                )
+            except Exception as exc:
+                if not ClientesRepository._is_missing_email_column_error(exc):
+                    raise
+                return query_all(
+                    """
+                    SELECT id, barbearia_id, nome, telefone, data_nascimento
+                    FROM clientes
+                    WHERE barbearia_id = %s
+                    ORDER BY nome
+                    """,
+                    (barbearia_id,),
+                )
 
         if is_supabase_ready():
             supabase = get_supabase_client()
-            response = (
-                supabase.table("clientes")
-                .select("id,barbearia_id,nome,telefone,data_nascimento")
-                .eq("barbearia_id", barbearia_id)
-                .order("nome")
-                .execute()
-            )
+            try:
+                response = (
+                    supabase.table("clientes")
+                    .select("id,barbearia_id,nome,telefone,email,data_nascimento")
+                    .eq("barbearia_id", barbearia_id)
+                    .order("nome")
+                    .execute()
+                )
+            except Exception as exc:
+                if not ClientesRepository._is_missing_email_column_error(exc):
+                    raise
+                response = (
+                    supabase.table("clientes")
+                    .select("id,barbearia_id,nome,telefone,data_nascimento")
+                    .eq("barbearia_id", barbearia_id)
+                    .order("nome")
+                    .execute()
+                )
             return response.data or []
 
         return []
 
     @staticmethod
-    def create(barbearia_id: str, nome: str, telefone: str, data_nascimento: str | None):
+    def create(
+        barbearia_id: str,
+        nome: str,
+        telefone: str,
+        data_nascimento: str | None,
+        email: str | None = None,
+    ):
         ClientesRepository.require_tenant(barbearia_id)
         if is_db_ready():
-            return query_one(
-                """
-                INSERT INTO clientes (barbearia_id, nome, telefone, data_nascimento)
-                VALUES (%s, %s, %s, %s)
-                RETURNING id, barbearia_id, nome, telefone, data_nascimento
-                """,
-                (barbearia_id, nome, telefone, data_nascimento),
-            )
+            try:
+                return query_one(
+                    """
+                    INSERT INTO clientes (barbearia_id, nome, telefone, email, data_nascimento)
+                    VALUES (%s, %s, %s, %s, %s)
+                    RETURNING id, barbearia_id, nome, telefone, email, data_nascimento
+                    """,
+                    (barbearia_id, nome, telefone, email, data_nascimento),
+                )
+            except Exception as exc:
+                if not ClientesRepository._is_missing_email_column_error(exc):
+                    raise
+                return query_one(
+                    """
+                    INSERT INTO clientes (barbearia_id, nome, telefone, data_nascimento)
+                    VALUES (%s, %s, %s, %s)
+                    RETURNING id, barbearia_id, nome, telefone, data_nascimento
+                    """,
+                    (barbearia_id, nome, telefone, data_nascimento),
+                )
 
         if is_supabase_ready():
             supabase = get_supabase_client()
-            response = (
-                supabase.table("clientes")
-                .insert(
-                    {
-                        "barbearia_id": barbearia_id,
-                        "nome": nome,
-                        "telefone": telefone,
-                        "data_nascimento": data_nascimento,
-                    }
+            try:
+                response = (
+                    supabase.table("clientes")
+                    .insert(
+                        {
+                            "barbearia_id": barbearia_id,
+                            "nome": nome,
+                            "telefone": telefone,
+                            "email": email,
+                            "data_nascimento": data_nascimento,
+                        }
+                    )
+                    .execute()
                 )
-                .execute()
-            )
+            except Exception as exc:
+                if not ClientesRepository._is_missing_email_column_error(exc):
+                    raise
+                response = (
+                    supabase.table("clientes")
+                    .insert(
+                        {
+                            "barbearia_id": barbearia_id,
+                            "nome": nome,
+                            "telefone": telefone,
+                            "data_nascimento": data_nascimento,
+                        }
+                    )
+                    .execute()
+                )
             data = response.data or []
             return data[0] if data else None
 
         return None
 
     @staticmethod
-    def update(barbearia_id: str, cliente_id: str, nome: str, telefone: str, data_nascimento: str | None):
+    def update(
+        barbearia_id: str,
+        cliente_id: str,
+        nome: str,
+        telefone: str,
+        data_nascimento: str | None,
+        email: str | None = None,
+    ):
         ClientesRepository.require_tenant(barbearia_id)
         if is_db_ready():
-            return query_one(
-                """
-                UPDATE clientes
-                SET nome = %s, telefone = %s, data_nascimento = %s
-                WHERE barbearia_id = %s AND id = %s
-                RETURNING id, barbearia_id, nome, telefone, data_nascimento
-                """,
-                (nome, telefone, data_nascimento, barbearia_id, cliente_id),
-            )
+            try:
+                return query_one(
+                    """
+                    UPDATE clientes
+                    SET nome = %s, telefone = %s, email = %s, data_nascimento = %s
+                    WHERE barbearia_id = %s AND id = %s
+                    RETURNING id, barbearia_id, nome, telefone, email, data_nascimento
+                    """,
+                    (nome, telefone, email, data_nascimento, barbearia_id, cliente_id),
+                )
+            except Exception as exc:
+                if not ClientesRepository._is_missing_email_column_error(exc):
+                    raise
+                return query_one(
+                    """
+                    UPDATE clientes
+                    SET nome = %s, telefone = %s, data_nascimento = %s
+                    WHERE barbearia_id = %s AND id = %s
+                    RETURNING id, barbearia_id, nome, telefone, data_nascimento
+                    """,
+                    (nome, telefone, data_nascimento, barbearia_id, cliente_id),
+                )
 
         if is_supabase_ready():
             supabase = get_supabase_client()
-            response = (
-                supabase.table("clientes")
-                .update(
-                    {
-                        "nome": nome,
-                        "telefone": telefone,
-                        "data_nascimento": data_nascimento,
-                    }
+            try:
+                response = (
+                    supabase.table("clientes")
+                    .update(
+                        {
+                            "nome": nome,
+                            "telefone": telefone,
+                            "email": email,
+                            "data_nascimento": data_nascimento,
+                        }
+                    )
+                    .eq("barbearia_id", barbearia_id)
+                    .eq("id", cliente_id)
+                    .execute()
                 )
-                .eq("barbearia_id", barbearia_id)
-                .eq("id", cliente_id)
-                .execute()
-            )
+            except Exception as exc:
+                if not ClientesRepository._is_missing_email_column_error(exc):
+                    raise
+                response = (
+                    supabase.table("clientes")
+                    .update(
+                        {
+                            "nome": nome,
+                            "telefone": telefone,
+                            "data_nascimento": data_nascimento,
+                        }
+                    )
+                    .eq("barbearia_id", barbearia_id)
+                    .eq("id", cliente_id)
+                    .execute()
+                )
             data = response.data or []
             return data[0] if data else None
 

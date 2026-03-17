@@ -15,6 +15,12 @@ export async function listHorariosFuncionamentoApi() {
   });
 }
 
+export async function listHorariosFuncionamentoPublicApi() {
+  return apiRequest<HorarioFuncionamentoApi[]>('/horarios-funcionamento/publico', {
+    method: 'GET',
+  });
+}
+
 export async function saveHorariosFuncionamentoApi(horarios: HorarioFuncionamentoApi[]) {
   return apiRequest<HorarioFuncionamentoApi[]>('/horarios-funcionamento', {
     method: 'PUT',

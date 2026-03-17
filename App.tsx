@@ -2,13 +2,13 @@ import React, { useState, useEffect, createContext, useContext } from 'react';
 import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { User, AppNotification, Appointment, Service, Professional, Client, Category, BusinessHour, BrandIdentity } from './types';
 import { MOCK_NOTIFICATIONS } from './constants';
-import { AgendamentoApi, createAgendamentoApi, createBloqueioApi, deleteAgendamentoApi, deleteBloqueioApi, listAgendamentosApi, transitionAgendamentoStatusApi, updateAgendamentoApi, updateBloqueioApi } from './services/agendamentosApi';
+import { AgendamentoApi, createAgendamentoApi, createAgendamentoPublicApi, createBloqueioApi, deleteAgendamentoApi, deleteBloqueioApi, listAgendamentosApi, transitionAgendamentoStatusApi, updateAgendamentoApi, updateBloqueioApi } from './services/agendamentosApi';
 import { AuthUser, createAuthUserApi, deleteAuthUserApi, listAuthUsersApi, loginApi, meApi, updateAuthUserApi } from './services/authApi';
 import { CategoriaApi, createCategoriaApi, deleteCategoriaApi, listCategoriasApi, updateCategoriaApi } from './services/categoriasApi';
-import { ClienteApi, createClienteApi, deleteClienteApi, listClientesApi, updateClienteApi } from './services/clientesApi';
-import { createProfissionalApi, deleteProfissionalApi, listProfissionaisApi, ProfissionalApi, updateProfissionalApi } from './services/profissionaisApi';
-import { createServicoApi, deleteServicoApi, listServicosApi, ServicoApi, updateServicoApi } from './services/servicosApi';
-import { HorarioFuncionamentoApi, listHorariosFuncionamentoApi, saveHorariosFuncionamentoApi } from './services/horariosApi';
+import { ClienteApi, createClienteApi, deleteClienteApi, findClienteByPhonePublicApi, listClientesApi, updateClienteApi } from './services/clientesApi';
+import { createProfissionalApi, deleteProfissionalApi, listProfissionaisApi, listProfissionaisPublicApi, ProfissionalApi, updateProfissionalApi } from './services/profissionaisApi';
+import { createServicoApi, deleteServicoApi, listServicosApi, listServicosPublicApi, ServicoApi, updateServicoApi } from './services/servicosApi';
+import { HorarioFuncionamentoApi, listHorariosFuncionamentoApi, listHorariosFuncionamentoPublicApi, saveHorariosFuncionamentoApi } from './services/horariosApi';
 import { getIdentidadeApi, getIdentidadePublicaApi, IdentidadeApi, saveIdentidadeApi } from './services/identidadeApi';
 import { Login } from './views/Login';
 import { ClientPortal } from './views/ClientPortal';
@@ -383,6 +383,35 @@ const App: React.FC = () => {
     }
   };
 
+  const syncClientPortalData = async () => {
+    const [categoriasResult, servicosResult, profissionaisResult, horariosResult] = await Promise.all([
+      listCategoriasApi(),
+      listServicosPublicApi(),
+      listProfissionaisPublicApi(),
+      listHorariosFuncionamentoPublicApi(),
+    ]);
+
+    const categoriasAtuais = categoriasResult.success
+      ? categoriasResult.data.map(mapCategoria)
+      : categories;
+
+    if (categoriasResult.success) {
+      setCategories(categoriasAtuais);
+    }
+
+    if (servicosResult.success) {
+      setServices(servicosResult.data.map(item => mapServico(item, categoriasAtuais)));
+    }
+
+    if (profissionaisResult.success) {
+      setProfessionals(profissionaisResult.data.map(mapProfissional));
+    }
+
+    if (horariosResult.success) {
+      setBusinessHours(horariosResult.data.map(mapHorarioFuncionamento));
+    }
+  };
+
   // Check for session cookie simulation
   useEffect(() => {
     const restoreSession = async () => {
@@ -441,6 +470,30 @@ const App: React.FC = () => {
     };
 
     sync();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authInitialized, user?.id, user?.role]);
+
+  useEffect(() => {
+    if (!authInitialized || user?.role !== 'CLIENT') {
+      return;
+    }
+
+    let cancelled = false;
+
+    const sync = async () => {
+      try {
+        await syncClientPortalData();
+      } catch {
+        if (!cancelled) {
+          pushErrorNotification('Erro ao carregar serviços para agendamento.');
+        }
+      }
+    };
+
+    void sync();
 
     return () => {
       cancelled = true;
@@ -516,15 +569,29 @@ const App: React.FC = () => {
       return;
     }
 
-    const mockClientUser: User = {
-      id: 'client1',
-      name: 'João Cliente',
-      phone,
-      role: 'CLIENT',
-      avatar: 'https://ui-avatars.com/api/?name=Client&background=random'
-    };
-    setUser(mockClientUser);
-    localStorage.setItem('app_user', JSON.stringify(mockClientUser));
+    const lookup = await findClienteByPhonePublicApi(phone);
+    if (!lookup.success) {
+      throw new Error(('error' in lookup && lookup.error) ? lookup.error : 'Falha ao validar cliente');
+    }
+
+    const existingClient = lookup.data.exists ? lookup.data.cliente : null;
+    const clientUser: User = existingClient
+      ? {
+          id: existingClient.id,
+          name: existingClient.nome,
+          phone: existingClient.telefone,
+          email: existingClient.email || '',
+          role: 'CLIENT',
+        }
+      : {
+          id: '__new_client__',
+          name: 'Cadastro Pendente',
+          phone,
+          role: 'CLIENT',
+        };
+
+    setUser(clientUser);
+    localStorage.setItem('app_user', JSON.stringify(clientUser));
   };
 
   const logout = () => {
@@ -579,8 +646,24 @@ const App: React.FC = () => {
       return { success: true };
     }
 
-    setAppointments(prev => [apt, ...prev]);
-    // Simulate notification
+    const service = services.find(item => item.id === apt.serviceId);
+    const result = await createAgendamentoPublicApi({
+      cliente_id: apt.clientId,
+      profissional_id: apt.professionalId,
+      servico_id: apt.serviceId,
+      data: apt.date,
+      hora_inicio: apt.time,
+      hora_fim: getHoraFimByServiceDuration(apt.time, service?.durationMinutes || 30),
+      status: apt.status,
+    });
+
+    if (!result.success) {
+      const message = ('error' in result && result.error) ? result.error : 'Falha ao criar agendamento.';
+      return { success: false, error: message };
+    }
+
+    setAppointments(prev => [mapAgendamento(result.data, services), ...prev]);
+
     const newNotif: AppNotification = {
       id: Date.now().toString(),
       title: 'Novo Agendamento',

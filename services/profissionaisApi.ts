@@ -25,6 +25,12 @@ export async function listProfissionaisApi() {
   });
 }
 
+export async function listProfissionaisPublicApi() {
+  return apiRequest<ProfissionalApi[]>('/profissionais/publico', {
+    method: 'GET',
+  });
+}
+
 export async function createProfissionalApi(payload: ProfissionalPayload) {
   return apiRequest<ProfissionalApi>('/profissionais', {
     method: 'POST',
