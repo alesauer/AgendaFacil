@@ -399,7 +399,7 @@ const PaymentChoiceStep = ({ onSelect }: { onSelect: (choice: 'NOW' | 'LATER') =
 // --- Main Client View ---
 
 export const ClientPortal: React.FC = () => {
-  const { user, login, logout, addAppointment, appointments, services } = useAppContext();
+  const { user, login, logout, addAppointment, updateAppointment, transitionAppointmentStatus, appointments, services } = useAppContext();
   const [view, setView] = useState<'HOME' | 'BOOKING' | 'HISTORY'>('HOME');
   const [step, setStep] = useState(0); // 0: Service, 1: Pro, 2: Date, 3: Choice, 4: Payment, 5: Success
   const [bookingData, setBookingData] = useState<any>({});
@@ -410,6 +410,13 @@ export const ClientPortal: React.FC = () => {
   const [registering, setRegistering] = useState(false);
   const [registerError, setRegisterError] = useState('');
   const [bookingError, setBookingError] = useState('');
+  const [historyError, setHistoryError] = useState('');
+  const [rescheduleAppointmentId, setRescheduleAppointmentId] = useState<string | null>(null);
+  const [rescheduleDate, setRescheduleDate] = useState('');
+  const [rescheduleTime, setRescheduleTime] = useState('');
+  const [rescheduleSlots, setRescheduleSlots] = useState<string[]>([]);
+  const [loadingRescheduleSlots, setLoadingRescheduleSlots] = useState(false);
+  const [savingReschedule, setSavingReschedule] = useState(false);
 
   const needsRegistration = user?.id === '__new_client__';
 
@@ -439,6 +446,91 @@ export const ClientPortal: React.FC = () => {
     await login(user?.phone || '', 'CLIENT');
     setRegistering(false);
   };
+
+  const startReschedule = (appointmentId: string) => {
+    setHistoryError('');
+    setRescheduleAppointmentId(appointmentId);
+    setRescheduleDate('');
+    setRescheduleTime('');
+    setRescheduleSlots([]);
+  };
+
+  const handleCancelAppointment = async (appointmentId: string) => {
+    setHistoryError('');
+    const result = await transitionAppointmentStatus(appointmentId, 'CANCELLED', { reason: 'Cancelado pelo cliente' });
+    if (!result.success) {
+      setHistoryError(result.error || 'Não foi possível cancelar o agendamento.');
+    }
+  };
+
+  const handleSaveReschedule = async (apt: Appointment) => {
+    if (!rescheduleDate || !rescheduleTime) {
+      setHistoryError('Selecione nova data e horário para remarcar.');
+      return;
+    }
+
+    setHistoryError('');
+    setSavingReschedule(true);
+    const result = await updateAppointment({
+      ...apt,
+      date: rescheduleDate,
+      time: rescheduleTime,
+    });
+
+    setSavingReschedule(false);
+    if (!result.success) {
+      setHistoryError(result.error || 'Não foi possível remarcar o agendamento.');
+      return;
+    }
+
+    setRescheduleAppointmentId(null);
+    setRescheduleDate('');
+    setRescheduleTime('');
+    setRescheduleSlots([]);
+  };
+
+  useEffect(() => {
+    if (!rescheduleAppointmentId || !rescheduleDate) {
+      setRescheduleSlots([]);
+      return;
+    }
+
+    const apt = appointments.find(item => item.id === rescheduleAppointmentId);
+    const service = services.find(item => item.id === apt?.serviceId);
+    if (!apt || !service) {
+      setRescheduleSlots([]);
+      return;
+    }
+
+    let cancelled = false;
+    const loadSlots = async () => {
+      setLoadingRescheduleSlots(true);
+      const result = await listDisponibilidadePublicApi({
+        profissional_id: apt.professionalId,
+        data: rescheduleDate,
+        duracao_min: service.durationMinutes,
+      });
+
+      if (cancelled) {
+        return;
+      }
+
+      if (!result.success) {
+        setRescheduleSlots([]);
+        setLoadingRescheduleSlots(false);
+        return;
+      }
+
+      setRescheduleSlots(result.data.map(slot => slot.hora_inicio));
+      setLoadingRescheduleSlots(false);
+    };
+
+    void loadSlots();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [rescheduleAppointmentId, rescheduleDate, appointments, services]);
 
   const resetBooking = () => {
     setBookingData({});
@@ -525,8 +617,8 @@ export const ClientPortal: React.FC = () => {
       switch (normalizeStatus(status)) {
         case 'CONFIRMED': return 'bg-green-100 text-green-700';
         case 'PENDING_PAYMENT': return 'bg-yellow-100 text-yellow-700';
-        case 'IN_PROGRESS': return 'bg-indigo-100 text-indigo-700';
-        case 'COMPLETED_OP': return 'bg-blue-100 text-blue-700';
+        case 'IN_PROGRESS': return 'bg-blue-100 text-blue-700';
+        case 'COMPLETED_OP': return 'bg-violet-100 text-violet-700';
         case 'COMPLETED_FIN': return 'bg-emerald-100 text-emerald-700';
         case 'REOPENED': return 'bg-orange-100 text-orange-700';
         case 'CANCELLED': return 'bg-red-100 text-red-700';
@@ -547,11 +639,23 @@ export const ClientPortal: React.FC = () => {
       }
     };
 
-    const myApts = appointments.filter(a => a.clientId === user?.id).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    const canManageClientAppointment = (status?: string) => {
+      const normalized = normalizeStatus(status);
+      return normalized === 'CONFIRMED' || normalized === 'PENDING_PAYMENT' || normalized === 'REOPENED';
+    };
+
+    const myApts = appointments
+      .filter(a => a.clientId === user?.id)
+      .sort((a, b) => new Date(b.date || '').getTime() - new Date(a.date || '').getTime());
     
     return (
       <div className="space-y-4 animate-fade-in">
         <h2 className="text-xl font-bold text-gray-800">Meus Agendamentos</h2>
+        {historyError && (
+          <div className="bg-red-50 text-red-600 text-sm p-3 rounded-lg border border-red-100">
+            {historyError}
+          </div>
+        )}
         {myApts.length === 0 ? (
           <p className="text-gray-500 text-center py-10">Você ainda não possui agendamentos.</p>
         ) : (
@@ -563,11 +667,11 @@ export const ClientPortal: React.FC = () => {
                      {getStatusLabel(apt.status)}
                    </span>
                  </div>
-                 <span className="text-sm font-bold text-gray-900">R$ {apt.totalValue.toFixed(2)}</span>
+                 <span className="text-sm font-bold text-gray-900">R$ {Number(apt.totalValue ?? 0).toFixed(2)}</span>
                </div>
                <div className="flex items-center gap-2 text-gray-700 mb-1">
                  <CalendarDays size={16} />
-                 <span>{apt.date.split('-').reverse().join('/')} às {apt.time}</span>
+                 <span>{String(apt.date || '').split('-').reverse().join('/')} às {apt.time || '--:--'}</span>
                </div>
                <div className="flex items-center gap-2 text-gray-500 text-sm">
                  <ServiceIcon name={services.find(s => s.id === apt.serviceId)?.iconName} className="w-4 h-4" />
@@ -575,10 +679,68 @@ export const ClientPortal: React.FC = () => {
                </div>
                
                {/* Actions */}
-               {apt.status === 'CONFIRMED' && (
+               {canManageClientAppointment(apt.status) && (
                  <div className="mt-4 flex gap-2">
-                   <button className="text-red-600 text-sm font-medium hover:bg-red-50 px-3 py-1.5 rounded-lg transition-colors">Cancelar</button>
-                   <button className="text-blue-600 text-sm font-medium hover:bg-blue-50 px-3 py-1.5 rounded-lg transition-colors">Remarcar</button>
+                   <button onClick={() => void handleCancelAppointment(apt.id)} className="text-red-600 text-sm font-medium hover:bg-red-50 px-3 py-1.5 rounded-lg transition-colors">Cancelar</button>
+                   <button onClick={() => startReschedule(apt.id)} className="text-blue-600 text-sm font-medium hover:bg-blue-50 px-3 py-1.5 rounded-lg transition-colors">Remarcar</button>
+                 </div>
+               )}
+
+               {rescheduleAppointmentId === apt.id && canManageClientAppointment(apt.status) && (
+                 <div className="mt-4 space-y-3 border-t pt-4">
+                   <div>
+                     <label className="block text-sm text-gray-600 mb-1">Nova data</label>
+                     <input
+                       type="date"
+                       min={new Date().toISOString().split('T')[0]}
+                       value={rescheduleDate}
+                       onChange={(e) => { setRescheduleDate(e.target.value); setRescheduleTime(''); }}
+                       className="w-full p-2 border border-gray-300 rounded-lg"
+                     />
+                   </div>
+
+                   {rescheduleDate && (
+                     <div>
+                       <label className="block text-sm text-gray-600 mb-1">Novo horário</label>
+                       {loadingRescheduleSlots ? (
+                         <div className="text-sm text-gray-500">Carregando horários...</div>
+                       ) : rescheduleSlots.length > 0 ? (
+                         <div className="grid grid-cols-4 gap-2">
+                           {rescheduleSlots.map(slot => (
+                             <button
+                               key={slot}
+                               onClick={() => setRescheduleTime(slot)}
+                               className={`py-2 px-1 rounded-lg text-sm font-medium transition-colors ${
+                                 rescheduleTime === slot
+                                   ? 'bg-blue-600 text-white'
+                                   : 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-50'
+                               }`}
+                             >
+                               {slot}
+                             </button>
+                           ))}
+                         </div>
+                       ) : (
+                         <div className="text-sm text-gray-500">Sem horários livres nesta data.</div>
+                       )}
+                     </div>
+                   )}
+
+                   <div className="flex gap-2 pt-1">
+                     <button
+                       onClick={() => void handleSaveReschedule(apt)}
+                       disabled={!rescheduleDate || !rescheduleTime || savingReschedule}
+                       className="text-white bg-blue-600 px-3 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
+                     >
+                       {savingReschedule ? 'Salvando...' : 'Confirmar remarcação'}
+                     </button>
+                     <button
+                       onClick={() => { setRescheduleAppointmentId(null); setRescheduleDate(''); setRescheduleTime(''); setRescheduleSlots([]); }}
+                       className="text-gray-600 bg-gray-100 px-3 py-2 rounded-lg text-sm font-medium"
+                     >
+                       Cancelar
+                     </button>
+                   </div>
                  </div>
                )}
             </div>

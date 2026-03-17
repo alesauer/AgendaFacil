@@ -1,4 +1,4 @@
-from backend.db import is_db_ready, query_all, query_one
+from backend.db import execute, is_db_ready, query_all, query_one
 from backend.repositories.base_repository import BaseRepository
 from backend.supabase_client import get_supabase_client, is_supabase_ready
 
@@ -79,6 +79,7 @@ class ClientesRepository(BaseRepository):
                 SELECT 1 AS linked
                 FROM agendamentos
                 WHERE barbearia_id = %s AND cliente_id = %s
+                  AND status <> 'CANCELLED'
                 LIMIT 1
                 """,
                 (barbearia_id, cliente_id),
@@ -92,6 +93,7 @@ class ClientesRepository(BaseRepository):
                 .select("id")
                 .eq("barbearia_id", barbearia_id)
                 .eq("cliente_id", cliente_id)
+                .neq("status", "CANCELLED")
                 .limit(1)
                 .execute()
             )
@@ -294,6 +296,15 @@ class ClientesRepository(BaseRepository):
     def delete(barbearia_id: str, cliente_id: str):
         ClientesRepository.require_tenant(barbearia_id)
         if is_db_ready():
+            execute(
+                """
+                DELETE FROM agendamentos
+                WHERE barbearia_id = %s
+                  AND cliente_id = %s
+                  AND status = 'CANCELLED'
+                """,
+                (barbearia_id, cliente_id),
+            )
             return query_one(
                 """
                 DELETE FROM clientes
@@ -305,6 +316,14 @@ class ClientesRepository(BaseRepository):
 
         if is_supabase_ready():
             supabase = get_supabase_client()
+            (
+                supabase.table("agendamentos")
+                .delete()
+                .eq("barbearia_id", barbearia_id)
+                .eq("cliente_id", cliente_id)
+                .eq("status", "CANCELLED")
+                .execute()
+            )
             response = (
                 supabase.table("clientes")
                 .delete()

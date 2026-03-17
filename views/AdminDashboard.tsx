@@ -45,8 +45,8 @@ const getAppointmentStatusChipClass = (status?: string) => {
   switch (normalizeAppointmentStatus(status)) {
     case 'CONFIRMED': return 'bg-green-100 text-green-700';
     case 'PENDING_PAYMENT': return 'bg-yellow-100 text-yellow-700';
-    case 'IN_PROGRESS': return 'bg-indigo-100 text-indigo-700';
-    case 'COMPLETED_OP': return 'bg-blue-100 text-blue-700';
+    case 'IN_PROGRESS': return 'bg-blue-100 text-blue-700';
+    case 'COMPLETED_OP': return 'bg-violet-100 text-violet-700';
     case 'COMPLETED_FIN': return 'bg-emerald-100 text-emerald-700';
     case 'REOPENED': return 'bg-orange-100 text-orange-700';
     case 'CANCELLED': return 'bg-red-100 text-red-700';
@@ -1163,6 +1163,11 @@ const CalendarManagement = ({
     const [appointmentSubmitError, setAppointmentSubmitError] = useState<string | null>(null);
     const [isSavingAppointment, setIsSavingAppointment] = useState(false);
     const [isTransitioningStatus, setIsTransitioningStatus] = useState(false);
+    const [isTransitionModalOpen, setIsTransitionModalOpen] = useState(false);
+    const [pendingTransitionTarget, setPendingTransitionTarget] = useState<'COMPLETED_FIN' | 'REOPENED' | null>(null);
+    const [transitionPaymentMethod, setTransitionPaymentMethod] = useState('PIX');
+    const [transitionReason, setTransitionReason] = useState('');
+    const [transitionTotalValue, setTransitionTotalValue] = useState('');
     const [clientSearchTerm, setClientSearchTerm] = useState('');
     const [isClientSearchOpen, setIsClientSearchOpen] = useState(false);
     const [selectedAptId, setSelectedAptId] = useState<string | null>(null);
@@ -1351,9 +1356,9 @@ const CalendarManagement = ({
       switch (normalizeAppointmentStatus(status)) {
             case 'CONFIRMED': return 'bg-green-100 border-green-200 text-green-800';
             case 'PENDING_PAYMENT': return 'bg-yellow-100 border-yellow-200 text-yellow-800';
-        case 'IN_PROGRESS': return 'bg-indigo-100 border-indigo-200 text-indigo-800';
+      case 'IN_PROGRESS': return 'bg-blue-100 border-blue-200 text-blue-800';
             case 'CANCELLED': return 'bg-red-100 border-red-200 text-red-800';
-        case 'COMPLETED_OP': return 'bg-blue-100 border-blue-200 text-blue-800';
+      case 'COMPLETED_OP': return 'bg-violet-100 border-violet-200 text-violet-800';
         case 'COMPLETED_FIN': return 'bg-emerald-100 border-emerald-200 text-emerald-800';
         case 'REOPENED': return 'bg-orange-100 border-orange-200 text-orange-800';
             case 'BLOCKED': return 'bg-gray-200 border-gray-300 text-gray-600 grayscale';
@@ -1444,6 +1449,11 @@ const CalendarManagement = ({
         
         if (selectedAptId) {
             // Editing existing
+            const currentStatus = (selectedApt?.status || 'CONFIRMED') as any;
+            const nextStatus = formData.isBlocked
+              ? 'BLOCKED'
+              : (currentStatus === 'BLOCKED' ? 'CONFIRMED' : currentStatus);
+
             const updatedApt = {
                 ...selectedApt!,
                 clientId: formData.isBlocked ? 'blocked' : formData.clientId,
@@ -1452,7 +1462,7 @@ const CalendarManagement = ({
                 date: formData.date,
                 time: formData.isAllDay ? dayOpening : formData.time,
                 endTime: formData.isAllDay ? dayClosing : formData.endTime,
-                status: (formData.isBlocked ? 'BLOCKED' : 'CONFIRMED') as any,
+                status: nextStatus,
                 totalValue: formData.isBlocked ? 0 : (service?.price || 0),
                 isAllDay: formData.isBlocked ? formData.isAllDay : false,
                 blockReason: formData.isBlocked ? formData.blockReason : undefined
@@ -1543,9 +1553,10 @@ const CalendarManagement = ({
     const getStatusAction = (status?: string): { label: string; target: Appointment['status']; adminOnly?: boolean } | null => {
       switch (normalizeAppointmentStatus(status)) {
         case 'CONFIRMED':
-        case 'PENDING_PAYMENT':
         case 'REOPENED':
           return { label: 'Iniciar Atendimento', target: 'IN_PROGRESS' };
+        case 'PENDING_PAYMENT':
+          return { label: 'Confirmar Agendamento', target: 'CONFIRMED' };
         case 'IN_PROGRESS':
           return { label: 'Concluir Operacional', target: 'COMPLETED_OP' };
         case 'COMPLETED_OP':
@@ -1555,6 +1566,42 @@ const CalendarManagement = ({
         default:
           return null;
       }
+    };
+
+    const executeStatusTransition = async (
+      target: Appointment['status'],
+      options: { reason?: string; paymentMethod?: string; totalValue?: number } = {}
+    ) => {
+      if (!selectedApt || selectedApt.status === 'BLOCKED') return;
+
+      setIsTransitioningStatus(true);
+      setAppointmentSubmitError(null);
+      const result = await transitionAppointmentStatus(selectedApt.id, target, options);
+      setIsTransitioningStatus(false);
+
+      if (!result.success) {
+        setAppointmentSubmitError(result.error || 'Não foi possível alterar o status do agendamento.');
+        return;
+      }
+
+      setIsTransitionModalOpen(false);
+      setPendingTransitionTarget(null);
+      setTransitionReason('');
+      setTransitionTotalValue('');
+      setTransitionPaymentMethod('PIX');
+    };
+
+    const openTransitionModal = (target: 'COMPLETED_FIN' | 'REOPENED') => {
+      setAppointmentSubmitError(null);
+      setPendingTransitionTarget(target);
+      if (target === 'COMPLETED_FIN') {
+        setTransitionPaymentMethod(selectedApt?.paymentMethod || 'PIX');
+        setTransitionTotalValue(String(selectedApt?.totalValue ?? 0));
+      }
+      if (target === 'REOPENED') {
+        setTransitionReason('');
+      }
+      setIsTransitionModalOpen(true);
     };
 
     const handleStatusTransition = async () => {
@@ -1574,25 +1621,51 @@ const CalendarManagement = ({
       const options: { reason?: string; paymentMethod?: string; totalValue?: number } = {};
 
       if (action.target === 'COMPLETED_FIN') {
-        const paymentMethod = window.prompt('Informe a forma de pagamento (ex: PIX, Cartão, Dinheiro):', selectedApt.paymentMethod || 'PIX');
-        if (!paymentMethod || !paymentMethod.trim()) return;
-        options.paymentMethod = paymentMethod.trim();
-        options.totalValue = selectedApt.totalValue || 0;
+        openTransitionModal('COMPLETED_FIN');
+        return;
       }
 
       if (action.target === 'REOPENED') {
-        const reason = window.prompt('Informe o motivo da reabertura:');
-        if (!reason || !reason.trim()) return;
-        options.reason = reason.trim();
+        openTransitionModal('REOPENED');
+        return;
       }
 
-      setIsTransitioningStatus(true);
-      setAppointmentSubmitError(null);
-      const result = await transitionAppointmentStatus(selectedApt.id, action.target, options);
-      setIsTransitioningStatus(false);
+      await executeStatusTransition(action.target, options);
+    };
 
-      if (!result.success) {
-        setAppointmentSubmitError(result.error || 'Não foi possível alterar o status do agendamento.');
+    const handleConfirmTransitionModal = async () => {
+      if (!pendingTransitionTarget) return;
+
+      if (pendingTransitionTarget === 'COMPLETED_FIN') {
+        const paymentMethod = transitionPaymentMethod.trim();
+        if (!paymentMethod) {
+          setAppointmentSubmitError('Selecione a forma de pagamento.');
+          return;
+        }
+
+        const parsedTotalValue = Number(transitionTotalValue);
+        if (Number.isNaN(parsedTotalValue) || parsedTotalValue < 0) {
+          setAppointmentSubmitError('Informe um valor válido para concluir o financeiro.');
+          return;
+        }
+
+        await executeStatusTransition('COMPLETED_FIN', {
+          paymentMethod,
+          totalValue: parsedTotalValue,
+        });
+        return;
+      }
+
+      if (pendingTransitionTarget === 'REOPENED') {
+        const reason = transitionReason.trim();
+        if (!reason) {
+          setAppointmentSubmitError('Informe o motivo da reabertura.');
+          return;
+        }
+
+        await executeStatusTransition('REOPENED', {
+          reason,
+        });
       }
     };
 
@@ -1830,7 +1903,14 @@ const CalendarManagement = ({
                                 const d = new Date(day + 'T12:00:00');
                                 const isToday = day === new Date().toISOString().split('T')[0];
                                 return (
-                                    <div key={day} className={`w-[140px] flex-shrink-0 p-2 md:p-4 border-r text-center ${isToday ? 'bg-blue-50/30' : ''}`}>
+                          <div
+                            key={day}
+                            onClick={() => {
+                            setSelectedDate(day);
+                            setViewMode('DAY');
+                            }}
+                            className={`w-[140px] flex-shrink-0 p-2 md:p-4 border-r text-center cursor-pointer transition-colors hover:bg-gray-50 ${isToday ? 'bg-blue-50/30' : ''}`}
+                          >
                                         <p className={`text-[10px] md:text-xs font-bold uppercase tracking-wider ${isToday ? 'text-blue-600' : 'text-gray-400'}`}>
                                             {new Intl.DateTimeFormat('pt-BR', { weekday: 'short' }).format(d).replace('.', '')}
                                         </p>
@@ -2283,6 +2363,96 @@ const CalendarManagement = ({
                         </div>
                     </div>
                 </div>
+            )}
+
+            {isTransitionModalOpen && selectedApt && pendingTransitionTarget && (
+              <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-fade-in">
+                  <div className="px-6 py-4 border-b flex justify-between items-center bg-gray-50">
+                    <h3 className="font-bold text-gray-900">
+                      {pendingTransitionTarget === 'COMPLETED_FIN' ? 'Concluir Financeiro' : 'Reabrir Atendimento'}
+                    </h3>
+                    <button
+                      onClick={() => {
+                        setIsTransitionModalOpen(false);
+                        setPendingTransitionTarget(null);
+                        setAppointmentSubmitError(null);
+                      }}
+                      className="text-gray-400 hover:text-gray-600"
+                    >
+                      <X size={20} />
+                    </button>
+                  </div>
+
+                  <div className="p-6 space-y-4">
+                    {pendingTransitionTarget === 'COMPLETED_FIN' ? (
+                      <>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">Forma de pagamento</label>
+                          <select
+                            value={transitionPaymentMethod}
+                            onChange={(e) => setTransitionPaymentMethod(e.target.value)}
+                            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                          >
+                            <option value="PIX">PIX</option>
+                            <option value="CREDIT_CARD">Cartão de Crédito</option>
+                            <option value="DEBIT_CARD">Cartão de Débito</option>
+                            <option value="CASH">Dinheiro</option>
+                            <option value="TRANSFER">Transferência</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">Valor final (R$)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={transitionTotalValue}
+                            onChange={(e) => setTransitionTotalValue(e.target.value)}
+                            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                          />
+                        </div>
+                      </>
+                    ) : (
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Motivo da reabertura</label>
+                        <textarea
+                          value={transitionReason}
+                          onChange={(e) => setTransitionReason(e.target.value)}
+                          rows={4}
+                          className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                        />
+                      </div>
+                    )}
+
+                    {appointmentSubmitError && (
+                      <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                        {appointmentSubmitError}
+                      </div>
+                    )}
+
+                    <div className="flex gap-3 pt-2">
+                      <button
+                        onClick={() => {
+                          setIsTransitionModalOpen(false);
+                          setPendingTransitionTarget(null);
+                          setAppointmentSubmitError(null);
+                        }}
+                        className="flex-1 bg-gray-100 text-gray-700 py-2.5 rounded-lg font-medium hover:bg-gray-200 transition-colors"
+                      >
+                        Voltar
+                      </button>
+                      <button
+                        onClick={() => void handleConfirmTransitionModal()}
+                        disabled={isTransitioningStatus}
+                        className="flex-1 bg-emerald-600 text-white py-2.5 rounded-lg font-medium hover:bg-emerald-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {isTransitioningStatus ? 'Salvando...' : 'Confirmar'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
             )}
 
             <style>{`

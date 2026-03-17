@@ -2,7 +2,7 @@ import React, { useState, useEffect, createContext, useContext } from 'react';
 import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { User, AppNotification, Appointment, Service, Professional, Client, Category, BusinessHour, BrandIdentity } from './types';
 import { MOCK_NOTIFICATIONS } from './constants';
-import { AgendamentoApi, createAgendamentoApi, createAgendamentoPublicApi, createBloqueioApi, deleteAgendamentoApi, deleteBloqueioApi, listAgendamentosApi, transitionAgendamentoStatusApi, updateAgendamentoApi, updateBloqueioApi } from './services/agendamentosApi';
+import { AgendamentoApi, cancelAgendamentoPublicApi, createAgendamentoApi, createAgendamentoPublicApi, createBloqueioApi, deleteAgendamentoApi, deleteBloqueioApi, listAgendamentosApi, listAgendamentosPublicByClientApi, transitionAgendamentoStatusApi, updateAgendamentoApi, updateAgendamentoPublicApi, updateBloqueioApi } from './services/agendamentosApi';
 import { AuthUser, createAuthUserApi, deleteAuthUserApi, listAuthUsersApi, loginApi, meApi, updateAuthUserApi } from './services/authApi';
 import { CategoriaApi, createCategoriaApi, deleteCategoriaApi, listCategoriasApi, updateCategoriaApi } from './services/categoriasApi';
 import { ClienteApi, createClienteApi, deleteClienteApi, findClienteByPhonePublicApi, listClientesApi, updateClienteApi } from './services/clientesApi';
@@ -410,6 +410,16 @@ const App: React.FC = () => {
     if (horariosResult.success) {
       setBusinessHours(horariosResult.data.map(mapHorarioFuncionamento));
     }
+
+    if (user?.id && user.id !== '__new_client__') {
+      const agendamentosResult = await listAgendamentosPublicByClientApi(user.id);
+      if (agendamentosResult.success) {
+        const servicosMapeados = servicosResult.success
+          ? servicosResult.data.map(item => mapServico(item, categoriasAtuais))
+          : services;
+        setAppointments(agendamentosResult.data.map(item => mapAgendamento(item, servicosMapeados)));
+      }
+    }
   };
 
   // Check for session cookie simulation
@@ -721,7 +731,20 @@ const App: React.FC = () => {
       return { success: true };
     }
 
-    setAppointments(prev => prev.map(a => a.id === updatedApt.id ? updatedApt : a));
+    const service = services.find(item => item.id === updatedApt.serviceId);
+    const result = await updateAgendamentoPublicApi(updatedApt.id, {
+      cliente_id: updatedApt.clientId,
+      data: updatedApt.date,
+      hora_inicio: updatedApt.time,
+      hora_fim: getHoraFimByServiceDuration(updatedApt.time, service?.durationMinutes || 30),
+    });
+
+    if (!result.success) {
+      const message = ('error' in result && result.error) ? result.error : 'Falha ao remarcar agendamento.';
+      return { success: false, error: message };
+    }
+
+    setAppointments(prev => prev.map(a => a.id === updatedApt.id ? mapAgendamento(result.data, services) : a));
     return { success: true };
   };
 
@@ -731,7 +754,31 @@ const App: React.FC = () => {
     options?: { reason?: string; paymentMethod?: string; totalValue?: number; }
   ): Promise<{ success: boolean; error?: string }> => {
     if (!isBackofficeApiSession()) {
-      setAppointments(prev => prev.map(item => item.id === appointmentId ? { ...item, status } : item));
+      if (user?.role !== 'CLIENT') {
+        setAppointments(prev => prev.map(item => item.id === appointmentId ? { ...item, status } : item));
+        return { success: true };
+      }
+
+      if (status !== 'CANCELLED') {
+        return { success: false, error: 'Ação não permitida.' };
+      }
+
+      const current = appointments.find(item => item.id === appointmentId);
+      if (!current) {
+        return { success: false, error: 'Agendamento não encontrado.' };
+      }
+
+      const result = await cancelAgendamentoPublicApi(appointmentId, {
+        cliente_id: current.clientId,
+        motivo: options?.reason,
+      });
+
+      if (!result.success) {
+        const message = ('error' in result && result.error) ? result.error : 'Falha ao cancelar agendamento.';
+        return { success: false, error: message };
+      }
+
+      setAppointments(prev => prev.map(item => item.id === appointmentId ? mapAgendamento(result.data, services) : item));
       return { success: true };
     }
 

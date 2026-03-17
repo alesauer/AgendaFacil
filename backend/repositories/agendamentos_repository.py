@@ -7,12 +7,46 @@ from backend.supabase_client import get_supabase_client, is_supabase_ready
 
 class AgendamentosRepository(BaseRepository):
     @staticmethod
+    def list_by_client(barbearia_id: str, cliente_id: str):
+        AgendamentosRepository.require_tenant(barbearia_id)
+        if is_db_ready():
+            return query_all(
+                """
+                SELECT id, barbearia_id, cliente_id, profissional_id, servico_id,
+                       data, hora_inicio, hora_fim, status,
+                       valor_final, forma_pagamento, pago_em, desconto,
+                       cortesia, estornado, concluido_operacional_em, concluido_financeiro_em
+                FROM agendamentos
+                WHERE barbearia_id = %s
+                  AND cliente_id = %s
+                ORDER BY data DESC, hora_inicio DESC
+                """,
+                (barbearia_id, cliente_id),
+            )
+
+        if is_supabase_ready():
+            supabase = get_supabase_client()
+            response = (
+                supabase.table("agendamentos")
+                .select("id,barbearia_id,cliente_id,profissional_id,servico_id,data,hora_inicio,hora_fim,status,valor_final,forma_pagamento,pago_em,desconto,cortesia,estornado,concluido_operacional_em,concluido_financeiro_em")
+                .eq("barbearia_id", barbearia_id)
+                .eq("cliente_id", cliente_id)
+                .order("data", desc=True)
+                .order("hora_inicio", desc=True)
+                .execute()
+            )
+            return response.data or []
+
+        return []
+
+    @staticmethod
     def get_agendamento_by_id(barbearia_id: str, agendamento_id: str):
         AgendamentosRepository.require_tenant(barbearia_id)
         if is_db_ready():
             return query_one(
                 """
-                SELECT id, barbearia_id, profissional_id, status,
+                SELECT id, barbearia_id, cliente_id, profissional_id, servico_id,
+                       data, hora_inicio, hora_fim, status,
                        valor_final, forma_pagamento, pago_em, desconto,
                        cortesia, estornado, concluido_operacional_em, concluido_financeiro_em
                 FROM agendamentos
@@ -25,7 +59,7 @@ class AgendamentosRepository(BaseRepository):
             supabase = get_supabase_client()
             response = (
                 supabase.table("agendamentos")
-                .select("id,barbearia_id,profissional_id,status,valor_final,forma_pagamento,pago_em,desconto,cortesia,estornado,concluido_operacional_em,concluido_financeiro_em")
+                .select("id,barbearia_id,cliente_id,profissional_id,servico_id,data,hora_inicio,hora_fim,status,valor_final,forma_pagamento,pago_em,desconto,cortesia,estornado,concluido_operacional_em,concluido_financeiro_em")
                 .eq("barbearia_id", barbearia_id)
                 .eq("id", agendamento_id)
                 .limit(1)

@@ -32,6 +32,18 @@ export type AgendamentoPayload = {
   status?: string;
 };
 
+export type AgendamentoPublicActionPayload = {
+  cliente_id: string;
+  motivo?: string;
+};
+
+export type AgendamentoPublicReschedulePayload = {
+  cliente_id: string;
+  data: string;
+  hora_inicio: string;
+  hora_fim: string;
+};
+
 export type AgendamentoStatusPayload = {
   status: string;
   motivo?: string;
@@ -54,6 +66,13 @@ export type DisponibilidadeSlotApi = {
 
 export async function listAgendamentosApi() {
   return apiRequest<AgendamentoApi[]>('/agendamentos', {
+    method: 'GET',
+  });
+}
+
+export async function listAgendamentosPublicByClientApi(clienteId: string) {
+  const query = new URLSearchParams({ cliente_id: clienteId });
+  return apiRequest<AgendamentoApi[]>(`/agendamentos/publico?${query.toString()}`, {
     method: 'GET',
   });
 }
@@ -95,6 +114,13 @@ export async function updateAgendamentoApi(agendamentoId: string, payload: Agend
   });
 }
 
+export async function updateAgendamentoPublicApi(agendamentoId: string, payload: AgendamentoPublicReschedulePayload) {
+  return apiRequest<AgendamentoApi>(`/agendamentos/publico/${agendamentoId}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function deleteAgendamentoApi(agendamentoId: string) {
   return apiRequest<{ id: string }>(`/agendamentos/${agendamentoId}`, {
     method: 'DELETE',
@@ -103,6 +129,13 @@ export async function deleteAgendamentoApi(agendamentoId: string) {
 
 export async function transitionAgendamentoStatusApi(agendamentoId: string, payload: AgendamentoStatusPayload) {
   return apiRequest<AgendamentoApi>(`/agendamentos/${agendamentoId}/status`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function cancelAgendamentoPublicApi(agendamentoId: string, payload: AgendamentoPublicActionPayload) {
+  return apiRequest<AgendamentoApi>(`/agendamentos/publico/${agendamentoId}/cancelar`, {
     method: 'PATCH',
     body: JSON.stringify(payload),
   });

@@ -283,10 +283,126 @@ def create_agendamento_publico():
     return success(agendamento, 201)
 
 
+@agendamentos_bp.patch("/agendamentos/publico/<agendamento_id>/cancelar")
+def cancel_agendamento_publico(agendamento_id: str):
+    payload = request.get_json(silent=True) or {}
+    cliente_id = (payload.get("cliente_id") or "").strip()
+    motivo = (payload.get("motivo") or "").strip() or "Cancelado pelo cliente"
+
+    if not cliente_id:
+        return error("cliente_id é obrigatório", 400)
+
+    existing = AgendamentosRepository.get_agendamento_by_id(g.barbearia_id, agendamento_id)
+    if not existing:
+        return error("Agendamento não encontrado", 404)
+
+    if str(existing.get("cliente_id") or "") != cliente_id:
+        return error("Acesso negado", 403)
+
+    transition_error = _validate_status_transition(existing.get("status") or "CONFIRMED", "CANCELLED")
+    if transition_error:
+        return transition_error
+
+    updated = AgendamentosRepository.transition_status(
+        g.barbearia_id,
+        agendamento_id,
+        "CANCELLED",
+        motivo,
+    )
+    if not updated:
+        return error("Agendamento não encontrado", 404)
+
+    AgendamentosRepository.add_status_audit(
+        g.barbearia_id,
+        agendamento_id,
+        _normalized_status(existing.get("status") or "CONFIRMED"),
+        "CANCELLED",
+        None,
+        "CLIENT",
+        motivo,
+        None,
+        None,
+    )
+
+    return success(updated)
+
+
+@agendamentos_bp.put("/agendamentos/publico/<agendamento_id>")
+def remarca_agendamento_publico(agendamento_id: str):
+    payload = request.get_json(silent=True) or {}
+    cliente_id = (payload.get("cliente_id") or "").strip()
+    data = (payload.get("data") or "").strip()
+    hora_inicio = (payload.get("hora_inicio") or "").strip()
+    hora_fim = (payload.get("hora_fim") or "").strip()
+
+    if not all([cliente_id, data, hora_inicio, hora_fim]):
+        return error("cliente_id, data, hora_inicio e hora_fim são obrigatórios", 400)
+
+    existing = AgendamentosRepository.get_agendamento_by_id(g.barbearia_id, agendamento_id)
+    if not existing:
+        return error("Agendamento não encontrado", 404)
+
+    if str(existing.get("cliente_id") or "") != cliente_id:
+        return error("Acesso negado", 403)
+
+    if _normalized_status(existing.get("status") or "") == "CANCELLED":
+        return error("Não é possível remarcar um agendamento cancelado", 409)
+
+    not_past_error = _validate_client_not_in_past(data, hora_inicio)
+    if not_past_error:
+        return error(not_past_error, 409)
+
+    hours_error = _validate_within_business_hours(
+        g.barbearia_id, data, hora_inicio, hora_fim
+    )
+    if hours_error:
+        return error(hours_error, 409)
+
+    profissional_id = str(existing.get("profissional_id") or "")
+    existing_on_day = AgendamentosRepository.list_by_date(g.barbearia_id, profissional_id, data)
+    for row in existing_on_day:
+        if str(row.get("id")) == str(agendamento_id):
+            continue
+        if has_conflict(hora_inicio, hora_fim, row["hora_inicio"], row["hora_fim"]):
+            return error("Conflito de horário", 409)
+
+    blocked = AgendamentosRepository.list_bloqueios_by_date(
+        g.barbearia_id, profissional_id, data
+    )
+    for row in blocked:
+        if has_conflict(hora_inicio, hora_fim, row["hora_inicio"], row["hora_fim"]):
+            return error("Horário bloqueado", 409)
+
+    status = _normalized_status(existing.get("status") or "CONFIRMED")
+    updated = AgendamentosRepository.update(
+        g.barbearia_id,
+        agendamento_id,
+        cliente_id,
+        profissional_id,
+        str(existing.get("servico_id") or ""),
+        data,
+        hora_inicio,
+        hora_fim,
+        status,
+    )
+    if not updated:
+        return error("Agendamento não encontrado", 404)
+
+    return success(updated)
+
+
 @agendamentos_bp.get("/agendamentos")
 @auth_required
 def list_agendamentos():
     return success(AgendamentosRepository.list_all(g.barbearia_id))
+
+
+@agendamentos_bp.get("/agendamentos/publico")
+def list_agendamentos_publico():
+    cliente_id = (request.args.get("cliente_id") or "").strip()
+    if not cliente_id:
+        return error("cliente_id é obrigatório", 400)
+    return success(AgendamentosRepository.list_by_client(g.barbearia_id, cliente_id))
 
 
 @agendamentos_bp.put("/agendamentos/<agendamento_id>")
