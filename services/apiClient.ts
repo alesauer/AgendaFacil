@@ -48,6 +48,14 @@ const getFriendlyHttpError = (
   const normalizedPath = path.toLowerCase();
   const normalizedMethod = method.toUpperCase();
 
+  if (status === 401) {
+    return message || 'Sessão expirada ou não autenticada. Faça login novamente.';
+  }
+
+  if (status === 403) {
+    return message || 'Você não tem permissão para esta operação.';
+  }
+
   if (status === 409) {
     return message || 'Operação bloqueada por vínculo de dados.';
   }

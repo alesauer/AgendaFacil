@@ -9,6 +9,7 @@ class Config:
     SUPABASE_URL = ""
     SUPABASE_KEY = ""
     SUPABASE_ONLY = True
+    SUPABASE_NETWORK_MODE = "auto"
     BYPASS_PROXY_FOR_SUPABASE = False
     DISABLE_SYSTEM_PROXY_FOR_SUPABASE = False
     SUPABASE_HTTP_TIMEOUT_SECONDS = 8
@@ -34,6 +35,9 @@ def _hydrate_from_env(config_cls):
     config_cls.SUPABASE_URL = os.getenv("SUPABASE_URL", "")
     config_cls.SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
     config_cls.SUPABASE_ONLY = True
+    config_cls.SUPABASE_NETWORK_MODE = os.getenv("SUPABASE_NETWORK_MODE", "auto").strip().lower()
+    if config_cls.SUPABASE_NETWORK_MODE not in {"auto", "proxy", "direct"}:
+        config_cls.SUPABASE_NETWORK_MODE = "auto"
     config_cls.BYPASS_PROXY_FOR_SUPABASE = os.getenv("BYPASS_PROXY_FOR_SUPABASE", "false").lower() == "true"
     config_cls.DISABLE_SYSTEM_PROXY_FOR_SUPABASE = os.getenv("DISABLE_SYSTEM_PROXY_FOR_SUPABASE", "false").lower() == "true"
     config_cls.SUPABASE_HTTP_TIMEOUT_SECONDS = int(os.getenv("SUPABASE_HTTP_TIMEOUT_SECONDS", "8"))

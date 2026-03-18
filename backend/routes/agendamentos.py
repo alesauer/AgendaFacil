@@ -5,6 +5,7 @@ from psycopg.errors import UniqueViolation
 
 from backend.middleware.auth import auth_required
 from backend.repositories.agendamentos_repository import AgendamentosRepository
+from backend.repositories.financeiro_repository import FinanceiroRepository
 from backend.repositories.horarios_repository import HorariosFuncionamentoRepository
 from backend.services.agenda_service import calculate_available_slots, has_conflict
 from backend.utils.http import error, success
@@ -221,6 +222,19 @@ def create_agendamento():
             return error("Este profissional já possui agendamento neste horário", 409)
         return error("Falha interna ao criar agendamento", 500)
 
+    finance_warning = None
+    try:
+        receivable = FinanceiroRepository.ensure_receivable_for_agendamento(
+            g.barbearia_id, str(agendamento.get("id") or "")
+        )
+        if not receivable:
+            finance_warning = "Falha ao sincronizar financeiro na criação"
+    except Exception as exc:
+        finance_warning = str(exc)
+
+    if finance_warning:
+        agendamento["finance_warning"] = finance_warning
+
     return success(agendamento, 201)
 
 
@@ -281,6 +295,19 @@ def create_agendamento_publico():
         if "duplicate key" in message or "uq_agendamentos_profissional_data_hora" in message:
             return error("Este profissional já possui agendamento neste horário", 409)
         return error("Falha interna ao criar agendamento", 500)
+
+    finance_warning = None
+    try:
+        receivable = FinanceiroRepository.ensure_receivable_for_agendamento(
+            g.barbearia_id, str(agendamento.get("id") or "")
+        )
+        if not receivable:
+            finance_warning = "Falha ao sincronizar financeiro na criação"
+    except Exception as exc:
+        finance_warning = str(exc)
+
+    if finance_warning:
+        agendamento["finance_warning"] = finance_warning
 
     return success(agendamento, 201)
 
@@ -491,6 +518,7 @@ def transition_agendamento_status(agendamento_id: str):
     payload = request.get_json(silent=True) or {}
     new_status = _normalized_status(payload.get("status") or "")
     motivo = (payload.get("motivo") or "").strip() or None
+    observacao = (payload.get("observacao") or "").strip() or None
     forma_pagamento = (payload.get("forma_pagamento") or "").strip() or None
     valor_final_raw = payload.get("valor_final")
 
@@ -520,6 +548,41 @@ def transition_agendamento_status(agendamento_id: str):
     if new_status == "REOPENED" and not motivo:
         return error("motivo é obrigatório para reabertura", 400)
 
+    if new_status == "COMPLETED_FIN":
+        try:
+            receivable = FinanceiroRepository.ensure_receivable_for_agendamento(
+                g.barbearia_id, agendamento_id
+            )
+            if not receivable:
+                return error("Falha ao sincronizar financeiro (recebível não criado)", 503)
+
+            valor_bruto = float(receivable.get("valor_bruto") or 0)
+            valor_recebido = float(receivable.get("valor_recebido") or 0)
+            valor_estornado = float(receivable.get("valor_estornado") or 0)
+            saldo = max(valor_bruto - valor_recebido + valor_estornado, 0)
+
+            valor_candidato = valor_final if valor_final is not None else float(existing.get("valor_final") or 0)
+            if valor_candidato <= 0:
+                valor_candidato = saldo
+
+            valor_pagamento = min(valor_candidato, saldo)
+            if valor_pagamento > 0:
+                _, payment_err = FinanceiroRepository.add_payment(
+                    g.barbearia_id,
+                    str(receivable.get("id")),
+                    valor_pagamento,
+                    forma_pagamento,
+                    None,
+                    str(getattr(g, "user_id", "")) or None,
+                    str(getattr(g, "user_role", "")) or None,
+                    observacao or "Conciliação automática pela conclusão financeira",
+                    False,
+                )
+                if payment_err:
+                    return error(f"Falha ao sincronizar financeiro: {payment_err}", 503)
+        except Exception as exc:
+            return error(f"Falha ao sincronizar financeiro: {str(exc)}", 503)
+
     updated = AgendamentosRepository.transition_status(
         g.barbearia_id,
         agendamento_id,
@@ -542,6 +605,23 @@ def transition_agendamento_status(agendamento_id: str):
         forma_pagamento,
         valor_final,
     )
+
+    finance_warning = None
+    try:
+        if new_status in {"CANCELLED", "NO_SHOW"}:
+            FinanceiroRepository.mark_receivable_cancelled_if_unpaid(
+                g.barbearia_id, agendamento_id
+            )
+
+        if new_status == "REOPENED":
+            FinanceiroRepository.reopen_cancelled_receivable_if_unpaid(
+                g.barbearia_id, agendamento_id
+            )
+    except Exception as exc:
+        finance_warning = str(exc)
+
+    if finance_warning:
+        updated["finance_warning"] = finance_warning
 
     return success(updated)
 

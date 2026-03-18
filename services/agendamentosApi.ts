@@ -47,6 +47,7 @@ export type AgendamentoPublicReschedulePayload = {
 export type AgendamentoStatusPayload = {
   status: string;
   motivo?: string;
+  observacao?: string;
   forma_pagamento?: string;
   valor_final?: number;
 };

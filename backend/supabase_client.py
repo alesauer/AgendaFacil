@@ -4,6 +4,11 @@ from supabase import Client, ClientOptions, create_client
 
 _client: Client | None = None
 
+
+def reset_supabase_client():
+    global _client
+    _client = None
+
 def is_supabase_ready() -> bool:
     return bool(current_app.config.get("SUPABASE_URL") and current_app.config.get("SUPABASE_KEY"))
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, createContext, useContext } from 'react';
+import React, { useState, useEffect, createContext, useContext, useRef } from 'react';
 import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { User, AppNotification, Appointment, Service, Professional, Client, Category, BusinessHour, BrandIdentity } from './types';
 import { MOCK_NOTIFICATIONS } from './constants';
@@ -33,7 +33,7 @@ interface AppContextType {
   appointments: Appointment[];
   addAppointment: (apt: Appointment) => Promise<{ success: boolean; error?: string }>;
   updateAppointment: (apt: Appointment) => Promise<{ success: boolean; error?: string }>;
-  transitionAppointmentStatus: (appointmentId: string, status: Appointment['status'], options?: { reason?: string; paymentMethod?: string; totalValue?: number; }) => Promise<{ success: boolean; error?: string }>;
+  transitionAppointmentStatus: (appointmentId: string, status: Appointment['status'], options?: { reason?: string; paymentMethod?: string; totalValue?: number; observation?: string; }) => Promise<{ success: boolean; error?: string }>;
   deleteAppointment: (id: string) => void;
   services: Service[];
   updateService: (service: Service) => void;
@@ -143,6 +143,7 @@ const App: React.FC = () => {
   const [professionals, setProfessionals] = useState<Professional[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+  const isBackofficeSyncingRef = useRef(false);
   const [businessHours, setBusinessHours] = useState<BusinessHour[]>(defaultBusinessHours);
   const [brandIdentity, setBrandIdentity] = useState<BrandIdentity>(() => {
     try {
@@ -320,7 +321,7 @@ const App: React.FC = () => {
     return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
   };
 
-  const syncAdminData = async () => {
+  const syncAdminData = async (options?: { silent?: boolean }) => {
     const categoriasResult = await listCategoriasApi();
     const categoriasAtuais = categoriasResult.success
       ? categoriasResult.data.map(mapCategoria)
@@ -386,7 +387,7 @@ const App: React.FC = () => {
     if (!identidadeResult.success) errors.push('identidade visual');
     if (!agendamentosResult.success) errors.push('agendamentos');
 
-    if (errors.length > 0) {
+    if (errors.length > 0 && !options?.silent) {
       pushErrorNotification(`Não foi possível sincronizar: ${errors.join(', ')}. Exibindo fallback local.`);
     }
   };
@@ -456,7 +457,8 @@ const App: React.FC = () => {
         const savedUser = localStorage.getItem('app_user');
         if (savedUser) {
           const parsedUser = JSON.parse(savedUser) as User;
-          if (parsedUser.role === 'ADMIN') {
+          const isBackofficeUser = parsedUser.role === 'ADMIN' || parsedUser.role === 'EMPLOYEE';
+          if (isBackofficeUser) {
             localStorage.removeItem('app_user');
           } else {
             setUser(parsedUser);
@@ -491,6 +493,51 @@ const App: React.FC = () => {
 
     return () => {
       cancelled = true;
+    };
+  }, [authInitialized, user?.id, user?.role]);
+
+  useEffect(() => {
+    if (!authInitialized || !isBackofficeApiSession()) {
+      return;
+    }
+
+    let disposed = false;
+
+    const runSilentSync = async () => {
+      if (disposed || isBackofficeSyncingRef.current) {
+        return;
+      }
+
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        return;
+      }
+
+      isBackofficeSyncingRef.current = true;
+      try {
+        await syncAdminData({ silent: true });
+      } catch {
+        // silently ignore background sync errors
+      } finally {
+        isBackofficeSyncingRef.current = false;
+      }
+    };
+
+    const intervalId = window.setInterval(() => {
+      void runSilentSync();
+    }, 15000);
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void runSilentSync();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      disposed = true;
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [authInitialized, user?.id, user?.role]);
 
@@ -759,7 +806,7 @@ const App: React.FC = () => {
   const transitionAppointmentStatus = async (
     appointmentId: string,
     status: Appointment['status'],
-    options?: { reason?: string; paymentMethod?: string; totalValue?: number; }
+    options?: { reason?: string; paymentMethod?: string; totalValue?: number; observation?: string; }
   ): Promise<{ success: boolean; error?: string }> => {
     if (!isBackofficeApiSession()) {
       if (user?.role !== 'CLIENT') {
@@ -804,6 +851,7 @@ const App: React.FC = () => {
       motivo: options?.reason,
       forma_pagamento: options?.paymentMethod,
       valor_final: options?.totalValue,
+      observacao: options?.observation,
     });
 
     if (!result.success) {

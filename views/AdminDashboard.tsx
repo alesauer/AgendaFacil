@@ -6,6 +6,14 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { LayoutDashboard, Users, Calendar, Settings, LogOut, Plus, Edit, Trash2, DollarSign, X, Clock, Tag, Image as ImageIcon, Search, ChevronLeft, ChevronRight, Bell, Mail, MessageSquare, Shield, Globe, Menu, Scissors, Sparkles, Smile, Zap, Heart, Share2, RotateCcw, ChevronDown, Lock, Camera, Store, User as UserIcon, Palette, Check, CreditCard, Receipt, BarChart3, Phone, Headphones, ExternalLink, List, Upload } from 'lucide-react';
 import { MOCK_APPOINTMENTS } from '../constants';
 import { createProfissionalApi, deleteProfissionalApi, updateProfissionalApi } from '../services/profissionaisApi';
+import {
+  getFinanceiroResumoApi,
+  listRecebiveisApi,
+  registrarEstornoRecebivelApi,
+  registrarPagamentoRecebivelApi,
+  RecebivelApi,
+  FinanceiroResumoApi,
+} from '../services/financeiroApi';
 
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042'];
 
@@ -597,6 +605,8 @@ const ClientsManagement = () => {
     const [selectedClient, setSelectedClient] = useState<Client | null>(null);
     const [clientToDelete, setClientToDelete] = useState<Client | null>(null);
     const [selectedClientIds, setSelectedClientIds] = useState<string[]>([]);
+    const [currentPage, setCurrentPage] = useState(1);
+    const CLIENTS_PER_PAGE = 10;
     const [formData, setFormData] = useState({
         name: '',
         phone: '',
@@ -665,10 +675,25 @@ const ClientsManagement = () => {
 
     const selectedCount = selectedClientIds.length;
     const allFilteredSelected = filteredClients.length > 0 && filteredClients.every(client => selectedClientIds.includes(client.id));
+    const totalPages = Math.max(1, Math.ceil(sortedFilteredClients.length / CLIENTS_PER_PAGE));
+    const paginatedClients = useMemo(() => {
+      const start = (currentPage - 1) * CLIENTS_PER_PAGE;
+      return sortedFilteredClients.slice(start, start + CLIENTS_PER_PAGE);
+    }, [sortedFilteredClients, currentPage]);
 
     useEffect(() => {
       setSelectedClientIds(prev => prev.filter(id => clients.some(client => client.id === id)));
     }, [clients]);
+
+    useEffect(() => {
+      setCurrentPage(1);
+    }, [searchTerm, sortBy, sortDirection]);
+
+    useEffect(() => {
+      if (currentPage > totalPages) {
+        setCurrentPage(totalPages);
+      }
+    }, [currentPage, totalPages]);
 
     const toggleClientSelection = (id: string) => {
       setSelectedClientIds(prev => prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]);
@@ -994,9 +1019,31 @@ const ClientsManagement = () => {
                     </button>
                   </div>
                 </div>
+
+                <div className="flex items-center justify-between px-1">
+                  <span className="text-sm text-gray-600">
+                    Mostrando {paginatedClients.length} de {sortedFilteredClients.length} cliente(s) • Página {currentPage} de {totalPages}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                      disabled={currentPage === 1}
+                      className="px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Anterior
+                    </button>
+                    <button
+                      onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                      disabled={currentPage === totalPages}
+                      className="px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Próxima
+                    </button>
+                  </div>
+                </div>
             
                 <div className="md:hidden space-y-3">
-                  {sortedFilteredClients.map(client => (
+                  {paginatedClients.map(client => (
                     <div key={client.id} className="bg-white rounded-xl border border-gray-100 p-4">
                       <div className="flex items-start justify-between gap-3">
                         <label className="inline-flex items-center gap-2">
@@ -1113,7 +1160,7 @@ const ClientsManagement = () => {
                     </tr>
                     </thead>
                     <tbody className="divide-y">
-                        {sortedFilteredClients.map(client => (
+                      {paginatedClients.map(client => (
                             <tr key={client.id} className="hover:bg-gray-50">
                             <td className="px-6 py-4">
                               <input
@@ -1563,6 +1610,7 @@ const CalendarManagement = ({
     const [pendingTransitionTarget, setPendingTransitionTarget] = useState<'COMPLETED_FIN' | 'REOPENED' | null>(null);
     const [transitionPaymentMethod, setTransitionPaymentMethod] = useState('PIX');
     const [transitionReason, setTransitionReason] = useState('');
+    const [transitionObservation, setTransitionObservation] = useState('');
     const [transitionTotalValue, setTransitionTotalValue] = useState('');
     const [clientSearchTerm, setClientSearchTerm] = useState('');
     const [isClientSearchOpen, setIsClientSearchOpen] = useState(false);
@@ -1967,7 +2015,7 @@ const CalendarManagement = ({
 
     const executeStatusTransition = async (
       target: Appointment['status'],
-      options: { reason?: string; paymentMethod?: string; totalValue?: number } = {}
+      options: { reason?: string; paymentMethod?: string; totalValue?: number; observation?: string } = {}
     ) => {
       if (!selectedApt || selectedApt.status === 'BLOCKED') return;
 
@@ -1984,6 +2032,7 @@ const CalendarManagement = ({
       setIsTransitionModalOpen(false);
       setPendingTransitionTarget(null);
       setTransitionReason('');
+      setTransitionObservation('');
       setTransitionTotalValue('');
       setTransitionPaymentMethod('PIX');
     };
@@ -1994,6 +2043,7 @@ const CalendarManagement = ({
       if (target === 'COMPLETED_FIN') {
         setTransitionPaymentMethod(selectedApt?.paymentMethod || 'PIX');
         setTransitionTotalValue(String(selectedApt?.totalValue ?? 0));
+        setTransitionObservation('');
       }
       if (target === 'REOPENED') {
         setTransitionReason('');
@@ -2015,11 +2065,9 @@ const CalendarManagement = ({
         return;
       }
 
-      const options: { reason?: string; paymentMethod?: string; totalValue?: number } = {};
-
       if (action.target === 'COMPLETED_FIN') {
-        options.paymentMethod = String(selectedApt.paymentMethod || 'PRESENTIAL').trim();
-        options.totalValue = selectedApt.totalValue || 0;
+        openTransitionModal('COMPLETED_FIN');
+        return;
       }
 
       if (action.target === 'REOPENED') {
@@ -2027,7 +2075,7 @@ const CalendarManagement = ({
         return;
       }
 
-      await executeStatusTransition(action.target, options);
+      await executeStatusTransition(action.target);
     };
 
     const handleNoShowTransition = async () => {
@@ -2062,6 +2110,7 @@ const CalendarManagement = ({
         await executeStatusTransition('COMPLETED_FIN', {
           paymentMethod,
           totalValue: parsedTotalValue,
+          observation: transitionObservation.trim() || undefined,
         });
         return;
       }
@@ -2798,6 +2847,7 @@ const CalendarManagement = ({
                       onClick={() => {
                         setIsTransitionModalOpen(false);
                         setPendingTransitionTarget(null);
+                        setTransitionObservation('');
                         setAppointmentSubmitError(null);
                       }}
                       className="text-gray-400 hover:text-gray-600"
@@ -2834,6 +2884,16 @@ const CalendarManagement = ({
                             className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
                           />
                         </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">Observação</label>
+                          <textarea
+                            value={transitionObservation}
+                            onChange={(e) => setTransitionObservation(e.target.value)}
+                            rows={3}
+                            placeholder="Opcional"
+                            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                          />
+                        </div>
                       </>
                     ) : (
                       <div>
@@ -2858,6 +2918,7 @@ const CalendarManagement = ({
                         onClick={() => {
                           setIsTransitionModalOpen(false);
                           setPendingTransitionTarget(null);
+                          setTransitionObservation('');
                           setAppointmentSubmitError(null);
                         }}
                         className="flex-1 bg-gray-100 text-gray-700 py-2.5 rounded-lg font-medium hover:bg-gray-200 transition-colors"
@@ -4812,6 +4873,579 @@ const SettingsManagement = () => {
   );
 };
 
+const FinanceManagement = () => {
+  const [summary, setSummary] = useState<FinanceiroResumoApi | null>(null);
+  const [receivables, setReceivables] = useState<RecebivelApi[]>([]);
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'OPEN' | 'PARTIAL' | 'PAID' | 'REFUNDED' | 'CANCELLED'>('ALL');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [sortBy, setSortBy] = useState<'LAST_ATTENDANCE' | 'DESCRIPTION' | 'PROFESSIONAL' | 'BRUTO' | 'RECEBIDO' | 'ESTORNADO' | 'SALDO' | 'STATUS'>('LAST_ATTENDANCE');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+  const [isLoading, setIsLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const [actionModal, setActionModal] = useState<{
+    open: boolean;
+    type: 'PAYMENT' | 'REFUND';
+    receivable: RecebivelApi | null;
+  }>({
+    open: false,
+    type: 'PAYMENT',
+    receivable: null,
+  });
+  const [paymentValue, setPaymentValue] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState('PIX');
+  const [actionReason, setActionReason] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const PAGE_SIZE = 10;
+
+  const loadFinanceData = async () => {
+    const token = localStorage.getItem('auth_token');
+    if (!token) {
+      setIsLoading(false);
+      setSummary(null);
+      setReceivables([]);
+      setErrorMessage('Sessão expirada. Faça login novamente para acessar o Financeiro.');
+      return;
+    }
+
+    setIsLoading(true);
+    setErrorMessage(null);
+
+    const [summaryResponse, receivablesResponse] = await Promise.all([
+      getFinanceiroResumoApi(),
+      listRecebiveisApi({
+        status: statusFilter === 'ALL' ? undefined : statusFilter,
+        limit: 500,
+      }),
+    ]);
+
+    if (!summaryResponse.success) {
+      setErrorMessage(summaryResponse.error);
+      setIsLoading(false);
+      return;
+    }
+
+    if (!receivablesResponse.success) {
+      setErrorMessage(receivablesResponse.error);
+      setIsLoading(false);
+      return;
+    }
+
+    setSummary(summaryResponse.data);
+    setReceivables(receivablesResponse.data || []);
+    setCurrentPage(1);
+    setIsLoading(false);
+  };
+
+  useEffect(() => {
+    loadFinanceData();
+  }, [statusFilter]);
+
+  const openPaymentModal = (receivable: RecebivelApi) => {
+    setActionModal({ open: true, type: 'PAYMENT', receivable });
+    const saldo = Math.max(
+      Number(receivable.valor_bruto || 0) - Number(receivable.valor_recebido || 0) + Number(receivable.valor_estornado || 0),
+      0,
+    );
+    setPaymentValue(saldo > 0 ? saldo.toFixed(2) : '0.00');
+    setPaymentMethod('PIX');
+    setActionReason('');
+  };
+
+  const openRefundModal = (receivable: RecebivelApi) => {
+    setActionModal({ open: true, type: 'REFUND', receivable });
+    const maxRefund = Math.max(Number(receivable.valor_recebido || 0) - Number(receivable.valor_estornado || 0), 0);
+    setPaymentValue(maxRefund > 0 ? maxRefund.toFixed(2) : '0.00');
+    setPaymentMethod('ESTORNO');
+    setActionReason('');
+  };
+
+  const closeActionModal = () => {
+    setActionModal({ open: false, type: 'PAYMENT', receivable: null });
+    setPaymentValue('');
+    setPaymentMethod('PIX');
+    setActionReason('');
+    setIsSubmitting(false);
+  };
+
+  const handleSubmitAction = async () => {
+    if (!actionModal.receivable) return;
+
+    const numericValue = Number(paymentValue);
+    if (!Number.isFinite(numericValue) || numericValue <= 0) {
+      setErrorMessage('Informe um valor válido maior que zero.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    setErrorMessage(null);
+
+    if (actionModal.type === 'PAYMENT') {
+      const response = await registrarPagamentoRecebivelApi(actionModal.receivable.id, {
+        valor: numericValue,
+        metodo_pagamento: paymentMethod,
+        motivo: actionReason || undefined,
+      });
+
+      if (!response.success) {
+        setErrorMessage(response.error);
+        setIsSubmitting(false);
+        return;
+      }
+    } else {
+      if (!actionReason.trim()) {
+        setErrorMessage('Informe o motivo do estorno.');
+        setIsSubmitting(false);
+        return;
+      }
+
+      const response = await registrarEstornoRecebivelApi(actionModal.receivable.id, {
+        valor: numericValue,
+        motivo: actionReason.trim(),
+      });
+
+      if (!response.success) {
+        setErrorMessage(response.error);
+        setIsSubmitting(false);
+        return;
+      }
+    }
+
+    closeActionModal();
+    await loadFinanceData();
+  };
+
+  const totalSaldoLista = useMemo(
+    () =>
+      receivables.reduce((acc, row) => {
+        const saldo = Number(row.valor_bruto || 0) - Number(row.valor_recebido || 0) + Number(row.valor_estornado || 0);
+        return acc + Math.max(saldo, 0);
+      }, 0),
+    [receivables],
+  );
+
+  const getLastAttendanceTimestamp = (row: RecebivelApi) => {
+    const date = String(row.agendamento_data || '').slice(0, 10);
+    const time = String(row.agendamento_hora_inicio || '').slice(0, 5) || '00:00';
+    if (date) {
+      const value = Date.parse(`${date}T${time}:00`);
+      if (!Number.isNaN(value)) return value;
+    }
+    return Date.parse(row.created_at || '') || 0;
+  };
+
+  const getRowSaldo = (row: RecebivelApi) => {
+    return Math.max(
+      Number(row.valor_bruto || 0) - Number(row.valor_recebido || 0) + Number(row.valor_estornado || 0),
+      0,
+    );
+  };
+
+  const filteredSortedReceivables = useMemo(() => {
+    const query = searchTerm.trim().toLowerCase();
+    const filtered = !query
+      ? [...receivables]
+      : receivables.filter((row) => {
+          const statusText = String(row.status || '').toLowerCase();
+          const haystack = [
+            row.descricao || '',
+            row.cliente_nome || '',
+            row.servico_nome || '',
+            row.profissional_nome || '',
+            row.competencia || '',
+            row.agendamento_data || '',
+            statusText,
+          ]
+            .join(' ')
+            .toLowerCase();
+          return haystack.includes(query);
+        });
+
+    const multiplier = sortDirection === 'asc' ? 1 : -1;
+
+    filtered.sort((left, right) => {
+      if (sortBy === 'LAST_ATTENDANCE') {
+        return (getLastAttendanceTimestamp(left) - getLastAttendanceTimestamp(right)) * multiplier;
+      }
+      if (sortBy === 'DESCRIPTION') {
+        return String(left.descricao || '').localeCompare(String(right.descricao || '')) * multiplier;
+      }
+      if (sortBy === 'PROFESSIONAL') {
+        return String(left.profissional_nome || '').localeCompare(String(right.profissional_nome || '')) * multiplier;
+      }
+      if (sortBy === 'BRUTO') {
+        return (Number(left.valor_bruto || 0) - Number(right.valor_bruto || 0)) * multiplier;
+      }
+      if (sortBy === 'RECEBIDO') {
+        return (Number(left.valor_recebido || 0) - Number(right.valor_recebido || 0)) * multiplier;
+      }
+      if (sortBy === 'ESTORNADO') {
+        return (Number(left.valor_estornado || 0) - Number(right.valor_estornado || 0)) * multiplier;
+      }
+      if (sortBy === 'SALDO') {
+        return (getRowSaldo(left) - getRowSaldo(right)) * multiplier;
+      }
+      if (sortBy === 'STATUS') {
+        return String(left.status || '').localeCompare(String(right.status || '')) * multiplier;
+      }
+      return 0;
+    });
+
+    return filtered;
+  }, [receivables, searchTerm, sortBy, sortDirection]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredSortedReceivables.length / PAGE_SIZE));
+  const paginatedReceivables = useMemo(() => {
+    const start = (currentPage - 1) * PAGE_SIZE;
+    return filteredSortedReceivables.slice(start, start + PAGE_SIZE);
+  }, [filteredSortedReceivables, currentPage]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, statusFilter]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
+
+  const toggleSort = (column: 'LAST_ATTENDANCE' | 'DESCRIPTION' | 'PROFESSIONAL' | 'BRUTO' | 'RECEBIDO' | 'ESTORNADO' | 'SALDO' | 'STATUS') => {
+    if (sortBy === column) {
+      setSortDirection(prev => (prev === 'asc' ? 'desc' : 'asc'));
+      return;
+    }
+    setSortBy(column);
+    setSortDirection(column === 'LAST_ATTENDANCE' ? 'desc' : 'asc');
+  };
+
+  const sortIndicator = (column: 'LAST_ATTENDANCE' | 'DESCRIPTION' | 'PROFESSIONAL' | 'BRUTO' | 'RECEBIDO' | 'ESTORNADO' | 'SALDO' | 'STATUS') => {
+    if (sortBy !== column) return '↕';
+    return sortDirection === 'asc' ? '↑' : '↓';
+  };
+
+  const statusChip = (status: RecebivelApi['status']) => {
+    switch (status) {
+      case 'OPEN':
+        return 'bg-yellow-100 text-yellow-700';
+      case 'PARTIAL':
+        return 'bg-blue-100 text-blue-700';
+      case 'PAID':
+        return 'bg-green-100 text-green-700';
+      case 'REFUNDED':
+        return 'bg-red-100 text-red-700';
+      case 'CANCELLED':
+        return 'bg-gray-200 text-gray-700';
+      default:
+        return 'bg-gray-100 text-gray-700';
+    }
+  };
+
+  const statusLabel = (status: RecebivelApi['status']) => {
+    switch (status) {
+      case 'OPEN':
+        return 'Em aberto';
+      case 'PARTIAL':
+        return 'Parcial';
+      case 'PAID':
+        return 'Quitado';
+      case 'REFUNDED':
+        return 'Estornado';
+      case 'CANCELLED':
+        return 'Cancelado';
+      default:
+        return status;
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-bold text-gray-800">Financeiro</h2>
+          <p className="text-sm text-gray-500">Recebimentos, pagamentos parciais e estornos.</p>
+        </div>
+        <div className="flex flex-col md:flex-row items-stretch md:items-center gap-2">
+          <input
+            type="text"
+            value={searchTerm}
+            onChange={(event) => setSearchTerm(event.target.value)}
+            placeholder="Pesquisar por cliente, serviço, profissional..."
+            className="px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm min-w-[280px]"
+          />
+          <button
+            onClick={loadFinanceData}
+            className="px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm font-medium hover:bg-gray-50"
+          >
+            Atualizar
+          </button>
+          <select
+            value={statusFilter}
+            onChange={(event) => setStatusFilter(event.target.value as any)}
+            className="px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm"
+          >
+            <option value="ALL">Todos os status</option>
+            <option value="OPEN">Em aberto</option>
+            <option value="PARTIAL">Parcial</option>
+            <option value="PAID">Quitado</option>
+            <option value="REFUNDED">Estornado</option>
+            <option value="CANCELLED">Cancelado</option>
+          </select>
+        </div>
+      </div>
+
+      {summary && (
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="bg-white p-5 rounded-xl shadow-sm border-l-4 border-yellow-500">
+            <p className="text-xs text-gray-500">A receber</p>
+            <p className="text-2xl font-bold text-gray-800">R$ {safeMoney(summary.a_receber)}</p>
+          </div>
+          <div className="bg-white p-5 rounded-xl shadow-sm border-l-4 border-green-500">
+            <p className="text-xs text-gray-500">Recebido líquido</p>
+            <p className="text-2xl font-bold text-gray-800">R$ {safeMoney(summary.recebido_liquido)}</p>
+          </div>
+          <div className="bg-white p-5 rounded-xl shadow-sm border-l-4 border-blue-500">
+            <p className="text-xs text-gray-500">Quitado</p>
+            <p className="text-2xl font-bold text-gray-800">R$ {safeMoney(summary.quitado)}</p>
+          </div>
+          <div className="bg-white p-5 rounded-xl shadow-sm border-l-4 border-red-500">
+            <p className="text-xs text-gray-500">Estornado</p>
+            <p className="text-2xl font-bold text-gray-800">R$ {safeMoney(summary.estornado)}</p>
+          </div>
+        </div>
+      )}
+
+      <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+        <div className="px-6 py-4 border-b bg-gray-50/60 flex justify-between items-center">
+          <h3 className="font-bold text-gray-800">Recebíveis</h3>
+          <span className="text-sm text-gray-500">Saldo em lista: R$ {safeMoney(totalSaldoLista)} • {filteredSortedReceivables.length} registro(s)</span>
+        </div>
+
+        {errorMessage && (
+          <div className="mx-6 mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            {errorMessage}
+          </div>
+        )}
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm text-left">
+            <thead className="bg-gray-50 text-gray-600 font-medium">
+              <tr>
+                <th className="px-6 py-3">
+                  <button onClick={() => toggleSort('LAST_ATTENDANCE')} className="font-medium hover:text-gray-800">
+                    Último atendimento {sortIndicator('LAST_ATTENDANCE')}
+                  </button>
+                </th>
+                <th className="px-6 py-3">
+                  <button onClick={() => toggleSort('DESCRIPTION')} className="font-medium hover:text-gray-800">
+                    Descrição {sortIndicator('DESCRIPTION')}
+                  </button>
+                </th>
+                <th className="px-6 py-3">
+                  <button onClick={() => toggleSort('PROFESSIONAL')} className="font-medium hover:text-gray-800">
+                    Profissional {sortIndicator('PROFESSIONAL')}
+                  </button>
+                </th>
+                <th className="px-6 py-3">
+                  <button onClick={() => toggleSort('BRUTO')} className="font-medium hover:text-gray-800">
+                    Bruto {sortIndicator('BRUTO')}
+                  </button>
+                </th>
+                <th className="px-6 py-3">
+                  <button onClick={() => toggleSort('RECEBIDO')} className="font-medium hover:text-gray-800">
+                    Recebido {sortIndicator('RECEBIDO')}
+                  </button>
+                </th>
+                <th className="px-6 py-3">
+                  <button onClick={() => toggleSort('ESTORNADO')} className="font-medium hover:text-gray-800">
+                    Estornado {sortIndicator('ESTORNADO')}
+                  </button>
+                </th>
+                <th className="px-6 py-3">
+                  <button onClick={() => toggleSort('SALDO')} className="font-medium hover:text-gray-800">
+                    Saldo {sortIndicator('SALDO')}
+                  </button>
+                </th>
+                <th className="px-6 py-3">
+                  <button onClick={() => toggleSort('STATUS')} className="font-medium hover:text-gray-800">
+                    Status {sortIndicator('STATUS')}
+                  </button>
+                </th>
+                <th className="px-6 py-3 text-right">Ações</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {isLoading && (
+                <tr>
+                  <td colSpan={9} className="px-6 py-8 text-center text-gray-500">Carregando financeiro...</td>
+                </tr>
+              )}
+
+              {!isLoading && paginatedReceivables.map((row) => {
+                const saldo = getRowSaldo(row);
+                const canPay = ['OPEN', 'PARTIAL'].includes(row.status) && saldo > 0;
+                const canRefund = Number(row.valor_recebido || 0) - Number(row.valor_estornado || 0) > 0;
+
+                return (
+                  <tr key={row.id} className="hover:bg-gray-50">
+                    <td className="px-6 py-3 whitespace-nowrap">
+                      <div className="font-medium text-gray-800">{safeDateBr(row.agendamento_data || null)}</div>
+                      <div className="text-xs text-gray-500">{String(row.agendamento_hora_inicio || '').slice(0, 5) || '--:--'}</div>
+                    </td>
+                    <td className="px-6 py-3">
+                      <div className="font-medium text-gray-800">{row.descricao}</div>
+                      <div className="text-xs text-gray-500">
+                        {row.cliente_nome ? `${row.cliente_nome} • ` : ''}
+                        {row.servico_nome || 'Serviço'}
+                      </div>
+                    </td>
+                    <td className="px-6 py-3">{row.profissional_nome || 'Não informado'}</td>
+                    <td className="px-6 py-3">R$ {safeMoney(row.valor_bruto)}</td>
+                    <td className="px-6 py-3">R$ {safeMoney(row.valor_recebido)}</td>
+                    <td className="px-6 py-3">R$ {safeMoney(row.valor_estornado)}</td>
+                    <td className="px-6 py-3 font-semibold">R$ {safeMoney(saldo)}</td>
+                    <td className="px-6 py-3">
+                      <span className={`text-xs px-2 py-1 rounded-full ${statusChip(row.status)}`}>
+                        {statusLabel(row.status)}
+                      </span>
+                    </td>
+                    <td className="px-6 py-3">
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          onClick={() => openPaymentModal(row)}
+                          disabled={!canPay}
+                          className="px-3 py-1.5 bg-green-600 text-white rounded-lg text-xs font-medium hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          Receber
+                        </button>
+                        <button
+                          onClick={() => openRefundModal(row)}
+                          disabled={!canRefund}
+                          className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-xs font-medium hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          Estornar
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+
+              {!isLoading && paginatedReceivables.length === 0 && (
+                <tr>
+                  <td colSpan={9} className="px-6 py-8 text-center text-gray-500">Nenhum recebível encontrado.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {!isLoading && filteredSortedReceivables.length > 0 && (
+          <div className="px-6 py-4 border-t bg-gray-50/60 flex flex-col md:flex-row items-center justify-between gap-3">
+            <span className="text-sm text-gray-600">
+              Página {currentPage} de {totalPages}
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                disabled={currentPage === 1}
+                className="px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Anterior
+              </button>
+              <button
+                onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                disabled={currentPage === totalPages}
+                className="px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Próxima
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {actionModal.open && actionModal.receivable && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden">
+            <div className="p-6 border-b flex items-center justify-between bg-gray-50">
+              <h3 className="text-lg font-bold text-gray-800">
+                {actionModal.type === 'PAYMENT' ? 'Registrar Pagamento' : 'Registrar Estorno'}
+              </h3>
+              <button onClick={closeActionModal} className="p-2 hover:bg-gray-200 rounded-full transition-colors">
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="p-3 rounded-xl bg-gray-50 border border-gray-100">
+                <p className="text-sm font-medium text-gray-700">{actionModal.receivable.descricao}</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-1">Valor</label>
+                <input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  value={paymentValue}
+                  onChange={(event) => setPaymentValue(event.target.value)}
+                  className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
+                />
+              </div>
+
+              {actionModal.type === 'PAYMENT' && (
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-1">Forma de Pagamento</label>
+                  <select
+                    value={paymentMethod}
+                    onChange={(event) => setPaymentMethod(event.target.value)}
+                    className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
+                  >
+                    <option value="PIX">PIX</option>
+                    <option value="DINHEIRO">Dinheiro</option>
+                    <option value="CARTAO_DEBITO">Cartão Débito</option>
+                    <option value="CARTAO_CREDITO">Cartão Crédito</option>
+                    <option value="TRANSFERENCIA">Transferência</option>
+                  </select>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-1">
+                  {actionModal.type === 'PAYMENT' ? 'Observação (opcional)' : 'Motivo do Estorno'}
+                </label>
+                <textarea
+                  value={actionReason}
+                  onChange={(event) => setActionReason(event.target.value)}
+                  className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none h-24 resize-none"
+                />
+              </div>
+            </div>
+
+            <div className="p-6 bg-gray-50 border-t flex gap-3">
+              <button
+                onClick={closeActionModal}
+                className="flex-1 py-3 border border-gray-200 text-gray-700 font-bold rounded-xl hover:bg-gray-100"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleSubmitAction}
+                disabled={isSubmitting}
+                className={`flex-1 py-3 text-white font-bold rounded-xl ${actionModal.type === 'PAYMENT' ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'} disabled:opacity-60`}
+              >
+                {isSubmitting ? 'Salvando...' : actionModal.type === 'PAYMENT' ? 'Confirmar Pagamento' : 'Confirmar Estorno'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const CategoryModal = ({ isOpen, onClose, onSave, categoryToEdit }: { isOpen: boolean, onClose: () => void, onSave: (data: any) => void, categoryToEdit?: any }) => {
   const [formData, setFormData] = useState({
     name: '',
@@ -4883,7 +5517,7 @@ const CategoryModal = ({ isOpen, onClose, onSave, categoryToEdit }: { isOpen: bo
 export const AdminDashboard: React.FC = () => {
   const { user, logout, brandIdentity } = useAppContext();
   const isAdminUser = user?.role === 'ADMIN';
-  const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'SERVICES' | 'USERS' | 'AGENDA' | 'SETTINGS'>(isAdminUser ? 'DASHBOARD' : 'AGENDA');
+  const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'SERVICES' | 'USERS' | 'AGENDA' | 'FINANCE' | 'SETTINGS'>(isAdminUser ? 'DASHBOARD' : 'AGENDA');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [agendaNavigationRequest, setAgendaNavigationRequest] = useState<{
     date: string;
@@ -4899,7 +5533,7 @@ export const AdminDashboard: React.FC = () => {
     }
   }, [isAdminUser]);
 
-  const handleTabChange = (tab: 'DASHBOARD' | 'SERVICES' | 'USERS' | 'AGENDA' | 'SETTINGS') => {
+  const handleTabChange = (tab: 'DASHBOARD' | 'SERVICES' | 'USERS' | 'AGENDA' | 'FINANCE' | 'SETTINGS') => {
     if (!isAdminUser && tab !== 'AGENDA') {
       return;
     }
@@ -4969,6 +5603,12 @@ export const AdminDashboard: React.FC = () => {
               >
                 <DollarSign size={20} /> Serviços
               </button>
+              <button
+                onClick={() => handleTabChange('FINANCE')}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'FINANCE' ? 'bg-blue-50 text-blue-600 font-medium' : 'text-gray-600 hover:bg-gray-50'}`}
+              >
+                <Receipt size={20} /> Financeiro
+              </button>
               <button 
                 onClick={() => handleTabChange('USERS')}
                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'USERS' ? 'bg-blue-50 text-blue-600 font-medium' : 'text-gray-600 hover:bg-gray-50'}`}
@@ -5017,6 +5657,7 @@ export const AdminDashboard: React.FC = () => {
          <div className={`p-4 md:p-6 ${activeTab === 'AGENDA' ? 'flex-1 overflow-hidden' : ''}`}>
           {activeTab === 'DASHBOARD' && isAdminUser && <DashboardHome onViewAllRecent={handleViewAllRecent} />}
           {activeTab === 'SERVICES' && isAdminUser && <ServicesManagement />}
+          {activeTab === 'FINANCE' && isAdminUser && <FinanceManagement />}
           {activeTab === 'USERS' && isAdminUser && <ClientsManagement />}
             {activeTab === 'AGENDA' && <CalendarManagement navigationRequest={agendaNavigationRequest} />}
           {activeTab === 'SETTINGS' && isAdminUser && <SettingsManagement />}

@@ -51,7 +51,17 @@ def _clear_system_proxy_env():
 def _normalize_runtime_network(config):
     _append_no_proxy_hosts("localhost", "127.0.0.1", "::1", "wsl.localhost")
 
-    if not config.get("BYPASS_PROXY_FOR_SUPABASE"):
+    network_mode = str(config.get("SUPABASE_NETWORK_MODE") or "auto").strip().lower()
+    if network_mode not in {"auto", "proxy", "direct"}:
+        network_mode = "auto"
+
+    if network_mode == "proxy":
+        return
+
+    force_direct = network_mode == "direct"
+
+    should_bypass = force_direct or bool(config.get("BYPASS_PROXY_FOR_SUPABASE"))
+    if not should_bypass:
         return
 
     supabase_url = str(config.get("SUPABASE_URL") or "").strip()
@@ -63,7 +73,8 @@ def _normalize_runtime_network(config):
     if host:
         _append_no_proxy_hosts(host)
 
-    if config.get("DISABLE_SYSTEM_PROXY_FOR_SUPABASE"):
+    should_clear_proxy_env = force_direct or bool(config.get("DISABLE_SYSTEM_PROXY_FOR_SUPABASE"))
+    if should_clear_proxy_env:
         _clear_system_proxy_env()
 
 
