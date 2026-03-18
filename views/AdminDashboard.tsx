@@ -4,7 +4,6 @@ import { useNavigate } from 'react-router-dom';
 import { Appointment, BrandIdentity, Client, Service } from '../types';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 import { LayoutDashboard, Users, Calendar, Settings, LogOut, Plus, Edit, Trash2, DollarSign, X, Clock, Tag, Image as ImageIcon, Search, ChevronLeft, ChevronRight, Bell, Mail, MessageSquare, Shield, Globe, Menu, Scissors, Sparkles, Smile, Zap, Heart, Share2, RotateCcw, ChevronDown, Lock, Camera, Store, User as UserIcon, Palette, Check, CreditCard, Receipt, BarChart3, Phone, Headphones, ExternalLink, List, Upload } from 'lucide-react';
-import { MOCK_APPOINTMENTS } from '../constants';
 import { createProfissionalApi, deleteProfissionalApi, listProfissionaisApi, updateProfissionalApi } from '../services/profissionaisApi';
 import {
   listRecebiveisApi,
@@ -13,6 +12,7 @@ import {
   RecebivelApi,
   FinanceiroResumoApi,
 } from '../services/financeiroApi';
+import { DashboardInsightsApi, getDashboardInsightsApi } from '../services/dashboardApi';
 
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042'];
 
@@ -91,7 +91,11 @@ const BrandIcon = ({ name, className }: { name?: string, className?: string }) =
 
 const DashboardHome = ({ onViewAllRecent }: { onViewAllRecent: () => void }) => {
   const { appointments, services, professionals, clients, brandIdentity } = useAppContext();
-  const [recentSearchTerm, setRecentSearchTerm] = useState('');
+  const [dashboardInsights, setDashboardInsights] = useState<DashboardInsightsApi>({
+    top_clientes_frequentes: [],
+    top_clientes_faturamento: [],
+    clientes_risco_churn: [],
+  });
   
   // Quick Stats Calculation
   const totalRevenue = appointments.reduce((acc, curr) => acc + curr.totalValue, 0);
@@ -253,22 +257,120 @@ const DashboardHome = ({ onViewAllRecent }: { onViewAllRecent: () => void }) => 
       .slice(0, 5);
   }, [appointments, professionals]);
 
-  const recentAppointments = appointments.filter(apt => {
-    const service = services.find(s => s.id === apt.serviceId);
-    const professional = professionals.find(p => p.id === apt.professionalId);
-    const client = clients.find(c => c.id === apt.clientId);
+  const localInsights = useMemo<DashboardInsightsApi>(() => {
+    const byClientFrequency = new Map<string, { cliente_id: string; cliente_nome: string; total_agendamentos: number; ultima_visita?: string | null }>();
+    const byClientRevenue = new Map<string, { cliente_id: string; cliente_nome: string; total_faturado: number; total_agendamentos: number; ultima_visita?: string | null }>();
+    const byClientLastVisit = new Map<string, { cliente_id: string; cliente_nome: string; ultima_visita?: string | null; dias_sem_retorno: number }>();
+    const now = new Date();
 
-    const haystack = [
-      client?.name || '',
-      service?.title || '',
-      professional?.name || '',
-      apt.status || '',
-      apt.date || '',
-      apt.time || '',
-    ].join(' ').toLowerCase();
+    appointments.forEach((appointment) => {
+      if (!appointment.clientId) return;
+      if (normalizeAppointmentStatus(appointment.status) === 'BLOCKED') return;
 
-    return haystack.includes(recentSearchTerm.trim().toLowerCase());
-  });
+      const client = clients.find((item) => item.id === appointment.clientId);
+      const cliente_nome = client?.name || 'Cliente';
+      const currentDate = String(appointment.date || '').slice(0, 10);
+
+      const freq = byClientFrequency.get(appointment.clientId) || {
+        cliente_id: appointment.clientId,
+        cliente_nome,
+        total_agendamentos: 0,
+        ultima_visita: currentDate,
+      };
+      freq.total_agendamentos += 1;
+      if (!freq.ultima_visita || currentDate > String(freq.ultima_visita || '')) {
+        freq.ultima_visita = currentDate;
+      }
+      byClientFrequency.set(appointment.clientId, freq);
+
+      if (normalizeAppointmentStatus(appointment.status) !== 'CANCELLED') {
+        const rev = byClientRevenue.get(appointment.clientId) || {
+          cliente_id: appointment.clientId,
+          cliente_nome,
+          total_faturado: 0,
+          total_agendamentos: 0,
+          ultima_visita: currentDate,
+        };
+        rev.total_faturado += Number(appointment.totalValue || 0);
+        rev.total_agendamentos += 1;
+        if (!rev.ultima_visita || currentDate > String(rev.ultima_visita || '')) {
+          rev.ultima_visita = currentDate;
+        }
+        byClientRevenue.set(appointment.clientId, rev);
+
+        const churn = byClientLastVisit.get(appointment.clientId) || {
+          cliente_id: appointment.clientId,
+          cliente_nome,
+          ultima_visita: currentDate,
+          dias_sem_retorno: 0,
+        };
+        if (!churn.ultima_visita || currentDate > String(churn.ultima_visita || '')) {
+          churn.ultima_visita = currentDate;
+        }
+        byClientLastVisit.set(appointment.clientId, churn);
+      }
+    });
+
+    const top_clientes_frequentes = Array.from(byClientFrequency.values())
+      .sort((a, b) => b.total_agendamentos - a.total_agendamentos)
+      .slice(0, 5);
+
+    const top_clientes_faturamento = Array.from(byClientRevenue.values())
+      .sort((a, b) => b.total_faturado - a.total_faturado)
+      .slice(0, 5)
+      .map((item) => ({ ...item, total_faturado: Number(item.total_faturado.toFixed(2)) }));
+
+    const clientes_risco_churn = Array.from(byClientLastVisit.values())
+      .map((item) => {
+        const date = item.ultima_visita ? new Date(`${item.ultima_visita}T00:00:00`) : null;
+        const dias_sem_retorno = date && !Number.isNaN(date.getTime())
+          ? Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24))
+          : 0;
+        return { ...item, dias_sem_retorno };
+      })
+      .filter((item) => item.dias_sem_retorno >= 45)
+      .sort((a, b) => b.dias_sem_retorno - a.dias_sem_retorno)
+      .slice(0, 5);
+
+    return {
+      top_clientes_frequentes,
+      top_clientes_faturamento,
+      clientes_risco_churn,
+    };
+  }, [appointments, clients]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadInsights = async () => {
+      const response = await getDashboardInsightsApi();
+      if (!isMounted) return;
+      if (response.success) {
+        setDashboardInsights(response.data || {
+          top_clientes_frequentes: [],
+          top_clientes_faturamento: [],
+          clientes_risco_churn: [],
+        });
+      }
+    };
+
+    loadInsights();
+    return () => {
+      isMounted = false;
+    };
+  }, [appointments.length]);
+
+  const insights = {
+    top_clientes_frequentes: dashboardInsights.top_clientes_frequentes?.length
+      ? dashboardInsights.top_clientes_frequentes
+      : localInsights.top_clientes_frequentes,
+    top_clientes_faturamento: dashboardInsights.top_clientes_faturamento?.length
+      ? dashboardInsights.top_clientes_faturamento
+      : localInsights.top_clientes_faturamento,
+    clientes_risco_churn: dashboardInsights.clientes_risco_churn?.length
+      ? dashboardInsights.clientes_risco_churn
+      : localInsights.clientes_risco_churn,
+  };
 
   return (
     <div className="space-y-6">
@@ -410,63 +512,75 @@ const DashboardHome = ({ onViewAllRecent }: { onViewAllRecent: () => void }) => 
         </div>
       </div>
 
-      {/* Recent Activity Table */}
-      <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-        <div className="px-6 py-4 border-b flex justify-between items-center">
-            <h3 className="font-bold text-gray-800">Agendamentos Recentes</h3>
-            <button onClick={onViewAllRecent} className="text-sm text-blue-600 hover:underline">Ver Todos</button>
-        </div>
-        <div className="px-6 py-3 border-b bg-gray-50/60">
-          <div className="relative max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
-            <input
-              type="text"
-              placeholder="Pesquisar agendamentos recentes..."
-              value={recentSearchTerm}
-              onChange={(e) => setRecentSearchTerm(e.target.value)}
-              className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-white"
-            />
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+        <div className="bg-white rounded-xl shadow-sm p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-bold text-gray-800">Top 5 Clientes Frequentes</h3>
+            <button onClick={onViewAllRecent} className="text-xs text-blue-600 hover:underline">Ver agenda</button>
+          </div>
+          <div className="space-y-2">
+            {insights.top_clientes_frequentes.map((item, index) => (
+              <div key={item.cliente_id} className="flex items-center justify-between gap-3 rounded-lg border border-gray-100 px-3 py-2.5">
+                <div className="min-w-0 flex items-center gap-2">
+                  <span className="w-5 text-xs font-bold text-gray-400">#{index + 1}</span>
+                  <p className="text-sm font-medium text-gray-800 truncate">{item.cliente_nome}</p>
+                </div>
+                <span className="text-xs font-bold text-blue-700 bg-blue-50 border border-blue-100 rounded-full px-2 py-1 whitespace-nowrap">
+                  {item.total_agendamentos} visitas
+                </span>
+              </div>
+            ))}
+            {insights.top_clientes_frequentes.length === 0 && (
+              <div className="rounded-lg border border-dashed border-gray-200 px-3 py-8 text-sm text-gray-500 text-center">
+                Sem dados de frequência.
+              </div>
+            )}
           </div>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm text-left">
-            <thead className="bg-gray-50 text-gray-600 font-medium">
-              <tr>
-                <th className="px-6 py-3">Cliente</th>
-                <th className="px-6 py-3">Serviço</th>
-                <th className="px-6 py-3">Profissional</th>
-                <th className="px-6 py-3">Data/Hora</th>
-                <th className="px-6 py-3">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {recentAppointments.slice(0, 5).map(apt => {
-                    const service = services.find(s => s.id === apt.serviceId);
-                    const professional = professionals.find(p => p.id === apt.professionalId);
-                  const client = clients.find(c => c.id === apt.clientId);
-                    return (
-                        <tr key={apt.id} className="hover:bg-gray-50">
-                      <td className="px-6 py-3 font-medium">{client?.name || 'Cliente não encontrado'}</td>
-                            <td className="px-6 py-3">{service?.title || 'Serviço não encontrado'}</td>
-                            <td className="px-6 py-3">{professional?.name || 'Não atribuído'}</td>
-                            <td className="px-6 py-3">{safeDateBr(apt.date)} - {apt.time || '--:--'}</td>
-                            <td className="px-6 py-3">
-                                 <span className={`text-xs px-2 py-1 rounded-full ${getAppointmentStatusChipClass(apt.status)}`}>
-                                {getAppointmentStatusLabel(apt.status)}
-                                 </span>
-                            </td>
-                        </tr>
-                    );
-                })}
-                {recentAppointments.length === 0 && (
-                  <tr>
-                    <td colSpan={5} className="px-6 py-8 text-center text-gray-500">
-                      Nenhum agendamento encontrado para o filtro informado.
-                    </td>
-                  </tr>
-                )}
-            </tbody>
-          </table>
+
+        <div className="bg-white rounded-xl shadow-sm p-6">
+          <h3 className="font-bold text-gray-800 mb-4">Top 5 Clientes por Faturamento</h3>
+          <div className="space-y-2">
+            {insights.top_clientes_faturamento.map((item, index) => (
+              <div key={item.cliente_id} className="rounded-lg border border-gray-100 px-3 py-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0 flex items-center gap-2">
+                    <span className="w-5 text-xs font-bold text-gray-400">#{index + 1}</span>
+                    <p className="text-sm font-medium text-gray-800 truncate">{item.cliente_nome}</p>
+                  </div>
+                  <span className="text-xs font-bold text-green-700 bg-green-50 border border-green-100 rounded-full px-2 py-1 whitespace-nowrap">
+                    R$ {safeMoney(item.total_faturado)}
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-gray-500">{item.total_agendamentos} agendamentos</p>
+              </div>
+            ))}
+            {insights.top_clientes_faturamento.length === 0 && (
+              <div className="rounded-lg border border-dashed border-gray-200 px-3 py-8 text-sm text-gray-500 text-center">
+                Sem dados de faturamento.
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="bg-white rounded-xl shadow-sm p-6">
+          <h3 className="font-bold text-gray-800 mb-4">Clientes em Risco de Churn</h3>
+          <div className="space-y-2">
+            {insights.clientes_risco_churn.map((item) => (
+              <div key={item.cliente_id} className="rounded-lg border border-amber-100 bg-amber-50/40 px-3 py-2.5">
+                <p className="text-sm font-medium text-gray-800 truncate">{item.cliente_nome}</p>
+                <div className="mt-1 flex items-center justify-between text-xs">
+                  <span className="text-gray-500">Última visita: {safeDateBr(item.ultima_visita || null)}</span>
+                  <span className="font-bold text-amber-700">{item.dias_sem_retorno} dias</span>
+                </div>
+              </div>
+            ))}
+            {insights.clientes_risco_churn.length === 0 && (
+              <div className="rounded-lg border border-dashed border-gray-200 px-3 py-8 text-sm text-gray-500 text-center">
+                Nenhum cliente em risco no momento.
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>

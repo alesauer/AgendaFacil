@@ -11,3 +11,9 @@ dashboard_bp = Blueprint("dashboard", __name__, url_prefix="/dashboard")
 @auth_required
 def metricas():
     return success(AgendamentosRepository.dashboard_metrics(g.barbearia_id) or {})
+
+
+@dashboard_bp.get("/insights")
+@auth_required
+def insights():
+    return success(AgendamentosRepository.dashboard_insights(g.barbearia_id) or {})

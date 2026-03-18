@@ -742,3 +742,197 @@ class AgendamentosRepository(BaseRepository):
             "cancelados": 0,
             "confirmados": 0,
         }
+
+    @staticmethod
+    def dashboard_insights(barbearia_id: str):
+        AgendamentosRepository.require_tenant(barbearia_id)
+
+        base = {
+            "top_clientes_frequentes": [],
+            "top_clientes_faturamento": [],
+            "clientes_risco_churn": [],
+        }
+
+        if is_db_ready():
+            top_frequentes = query_all(
+                """
+                SELECT
+                    c.id::text AS cliente_id,
+                    c.nome AS cliente_nome,
+                    COUNT(*)::int AS total_agendamentos,
+                    MAX(a.data)::text AS ultima_visita
+                FROM agendamentos a
+                INNER JOIN clientes c
+                  ON c.id = a.cliente_id AND c.barbearia_id = a.barbearia_id
+                WHERE a.barbearia_id = %s
+                  AND a.status <> 'BLOCKED'
+                GROUP BY c.id, c.nome
+                ORDER BY total_agendamentos DESC, ultima_visita DESC
+                LIMIT 5
+                """,
+                (barbearia_id,),
+            )
+
+            top_faturamento = query_all(
+                """
+                SELECT
+                    c.id::text AS cliente_id,
+                    c.nome AS cliente_nome,
+                    ROUND(COALESCE(SUM(COALESCE(a.valor_final, 0)), 0)::numeric, 2) AS total_faturado,
+                    COUNT(*)::int AS total_agendamentos,
+                    MAX(a.data)::text AS ultima_visita
+                FROM agendamentos a
+                INNER JOIN clientes c
+                  ON c.id = a.cliente_id AND c.barbearia_id = a.barbearia_id
+                WHERE a.barbearia_id = %s
+                  AND a.status NOT IN ('BLOCKED', 'CANCELLED')
+                GROUP BY c.id, c.nome
+                ORDER BY total_faturado DESC, total_agendamentos DESC
+                LIMIT 5
+                """,
+                (barbearia_id,),
+            )
+
+            risco_churn = query_all(
+                """
+                SELECT
+                    c.id::text AS cliente_id,
+                    c.nome AS cliente_nome,
+                    MAX(a.data)::text AS ultima_visita,
+                    (CURRENT_DATE - MAX(a.data))::int AS dias_sem_retorno
+                FROM agendamentos a
+                INNER JOIN clientes c
+                  ON c.id = a.cliente_id AND c.barbearia_id = a.barbearia_id
+                WHERE a.barbearia_id = %s
+                  AND a.status NOT IN ('BLOCKED', 'CANCELLED')
+                GROUP BY c.id, c.nome
+                HAVING (CURRENT_DATE - MAX(a.data)) >= 45
+                ORDER BY dias_sem_retorno DESC, ultima_visita ASC
+                LIMIT 5
+                """,
+                (barbearia_id,),
+            )
+
+            base["top_clientes_frequentes"] = top_frequentes
+            base["top_clientes_faturamento"] = top_faturamento
+            base["clientes_risco_churn"] = risco_churn
+            return base
+
+        if is_supabase_ready():
+            supabase = get_supabase_client()
+            response = (
+                supabase.table("agendamentos")
+                .select("cliente_id,data,status,valor_final")
+                .eq("barbearia_id", barbearia_id)
+                .execute()
+            )
+            rows = response.data or []
+
+            clientes_response = (
+                supabase.table("clientes")
+                .select("id,nome")
+                .eq("barbearia_id", barbearia_id)
+                .execute()
+            )
+            clientes_rows = clientes_response.data or []
+            clientes_nome = {str(item.get("id")): item.get("nome") for item in clientes_rows}
+
+            frequencia: dict[str, dict] = {}
+            faturamento: dict[str, dict] = {}
+            churn: dict[str, dict] = {}
+            today = datetime.utcnow().date()
+
+            for item in rows:
+                cliente_id = str(item.get("cliente_id") or "")
+                if not cliente_id:
+                    continue
+
+                data_str = str(item.get("data") or "")[:10]
+                try:
+                    data_obj = datetime.strptime(data_str, "%Y-%m-%d").date()
+                except ValueError:
+                    continue
+
+                status = str(item.get("status") or "").upper()
+
+                freq_entry = frequencia.setdefault(
+                    cliente_id,
+                    {
+                        "cliente_id": cliente_id,
+                        "cliente_nome": clientes_nome.get(cliente_id) or "Cliente",
+                        "total_agendamentos": 0,
+                        "ultima_visita": data_str,
+                    },
+                )
+                if status != "BLOCKED":
+                    freq_entry["total_agendamentos"] += 1
+                if data_str > str(freq_entry.get("ultima_visita") or ""):
+                    freq_entry["ultima_visita"] = data_str
+
+                if status not in {"BLOCKED", "CANCELLED"}:
+                    fat_entry = faturamento.setdefault(
+                        cliente_id,
+                        {
+                            "cliente_id": cliente_id,
+                            "cliente_nome": clientes_nome.get(cliente_id) or "Cliente",
+                            "total_faturado": 0.0,
+                            "total_agendamentos": 0,
+                            "ultima_visita": data_str,
+                        },
+                    )
+                    fat_entry["total_faturado"] += float(item.get("valor_final") or 0)
+                    fat_entry["total_agendamentos"] += 1
+                    if data_str > str(fat_entry.get("ultima_visita") or ""):
+                        fat_entry["ultima_visita"] = data_str
+
+                    churn_entry = churn.setdefault(
+                        cliente_id,
+                        {
+                            "cliente_id": cliente_id,
+                            "cliente_nome": clientes_nome.get(cliente_id) or "Cliente",
+                            "ultima_visita": data_str,
+                            "dias_sem_retorno": 0,
+                        },
+                    )
+                    if data_str > str(churn_entry.get("ultima_visita") or ""):
+                        churn_entry["ultima_visita"] = data_str
+
+            top_frequentes = sorted(
+                [item for item in frequencia.values() if int(item.get("total_agendamentos") or 0) > 0],
+                key=lambda item: (int(item.get("total_agendamentos") or 0), str(item.get("ultima_visita") or "")),
+                reverse=True,
+            )[:5]
+
+            top_faturamento = sorted(
+                [item for item in faturamento.values() if int(item.get("total_agendamentos") or 0) > 0],
+                key=lambda item: (float(item.get("total_faturado") or 0), int(item.get("total_agendamentos") or 0)),
+                reverse=True,
+            )[:5]
+
+            risco_churn = []
+            for item in churn.values():
+                data_str = str(item.get("ultima_visita") or "")
+                try:
+                    ultima = datetime.strptime(data_str, "%Y-%m-%d").date()
+                except ValueError:
+                    continue
+                dias_sem_retorno = (today - ultima).days
+                if dias_sem_retorno >= 45:
+                    item["dias_sem_retorno"] = dias_sem_retorno
+                    risco_churn.append(item)
+
+            risco_churn = sorted(
+                risco_churn,
+                key=lambda item: int(item.get("dias_sem_retorno") or 0),
+                reverse=True,
+            )[:5]
+
+            for item in top_faturamento:
+                item["total_faturado"] = round(float(item.get("total_faturado") or 0), 2)
+
+            base["top_clientes_frequentes"] = top_frequentes
+            base["top_clientes_faturamento"] = top_faturamento
+            base["clientes_risco_churn"] = risco_churn
+            return base
+
+        return base

@@ -53,6 +53,7 @@ DELETE /agendamentos/:id
 ## Dashboard
 
 GET /dashboard/metricas
+GET /dashboard/insights
 
 ## Barbearia / Identidade
 
