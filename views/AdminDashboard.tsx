@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useAppContext } from '../App';
 import { useNavigate } from 'react-router-dom';
 import { BrandIdentity, Client, Service } from '../types';
@@ -564,7 +564,10 @@ const ServicesManagement = () => {
 
 const ClientsManagement = () => {
   const { clients, addClient, updateClient, deleteClient } = useAppContext();
+    type ClientSortKey = 'name' | 'phone' | 'haircutsCount' | 'totalSpent' | 'lastVisit';
     const [searchTerm, setSearchTerm] = useState('');
+    const [sortBy, setSortBy] = useState<ClientSortKey>('name');
+    const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
     const [isBulkDeleteModalOpen, setIsBulkDeleteModalOpen] = useState(false);
@@ -589,6 +592,58 @@ const ClientsManagement = () => {
       (c.name || '').toLowerCase().includes(searchTerm.toLowerCase()) || 
       (c.phone || '').includes(searchTerm)
     );
+
+    const sortedFilteredClients = useMemo(() => {
+      const normalizedDirection = sortDirection === 'asc' ? 1 : -1;
+      const list = [...filteredClients];
+
+      const getComparableValue = (client: Client) => {
+        switch (sortBy) {
+          case 'name':
+            return (client.name || '').toLowerCase();
+          case 'phone':
+            return (client.phone || '').toLowerCase();
+          case 'haircutsCount':
+            return Number(client.haircutsCount || 0);
+          case 'totalSpent':
+            return Number(client.totalSpent || 0);
+          case 'lastVisit':
+            return client.lastVisit ? Date.parse(client.lastVisit) : null;
+          default:
+            return '';
+        }
+      };
+
+      list.sort((left, right) => {
+        const leftValue = getComparableValue(left);
+        const rightValue = getComparableValue(right);
+
+        if (leftValue === null && rightValue === null) return 0;
+        if (leftValue === null) return 1;
+        if (rightValue === null) return -1;
+
+        if (leftValue < rightValue) return -1 * normalizedDirection;
+        if (leftValue > rightValue) return 1 * normalizedDirection;
+        return 0;
+      });
+
+      return list;
+    }, [filteredClients, sortBy, sortDirection]);
+
+    const handleSort = (key: ClientSortKey) => {
+      if (sortBy === key) {
+        setSortDirection(prev => (prev === 'asc' ? 'desc' : 'asc'));
+        return;
+      }
+
+      setSortBy(key);
+      setSortDirection('asc');
+    };
+
+    const getSortIndicator = (key: ClientSortKey) => {
+      if (sortBy !== key) return '↕';
+      return sortDirection === 'asc' ? '↑' : '↓';
+    };
 
     const selectedCount = selectedClientIds.length;
     const allFilteredSelected = filteredClients.length > 0 && filteredClients.every(client => selectedClientIds.includes(client.id));
@@ -769,7 +824,7 @@ const ClientsManagement = () => {
                 </div>
             
                 <div className="md:hidden space-y-3">
-                  {filteredClients.map(client => (
+                  {sortedFilteredClients.map(client => (
                     <div key={client.id} className="bg-white rounded-xl border border-gray-100 p-4">
                       <div className="flex items-start justify-between gap-3">
                         <label className="inline-flex items-center gap-2">
@@ -837,16 +892,56 @@ const ClientsManagement = () => {
                           className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                         />
                       </th>
-                        <th className="px-6 py-3">Cliente</th>
-                        <th className="px-6 py-3">Telefone</th>
-                        <th className="px-6 py-3">Cortes</th>
-                        <th className="px-6 py-3">Total Gasto</th>
-                        <th className="px-6 py-3">Última Visita</th>
+                        <th className="px-6 py-3">
+                          <button
+                            type="button"
+                            onClick={() => handleSort('name')}
+                            className="inline-flex items-center gap-1 hover:text-gray-900"
+                          >
+                            Cliente <span aria-hidden>{getSortIndicator('name')}</span>
+                          </button>
+                        </th>
+                        <th className="px-6 py-3">
+                          <button
+                            type="button"
+                            onClick={() => handleSort('phone')}
+                            className="inline-flex items-center gap-1 hover:text-gray-900"
+                          >
+                            Telefone <span aria-hidden>{getSortIndicator('phone')}</span>
+                          </button>
+                        </th>
+                        <th className="px-6 py-3">
+                          <button
+                            type="button"
+                            onClick={() => handleSort('haircutsCount')}
+                            className="inline-flex items-center gap-1 hover:text-gray-900"
+                          >
+                            Cortes <span aria-hidden>{getSortIndicator('haircutsCount')}</span>
+                          </button>
+                        </th>
+                        <th className="px-6 py-3">
+                          <button
+                            type="button"
+                            onClick={() => handleSort('totalSpent')}
+                            className="inline-flex items-center gap-1 hover:text-gray-900"
+                          >
+                            Total Gasto <span aria-hidden>{getSortIndicator('totalSpent')}</span>
+                          </button>
+                        </th>
+                        <th className="px-6 py-3">
+                          <button
+                            type="button"
+                            onClick={() => handleSort('lastVisit')}
+                            className="inline-flex items-center gap-1 hover:text-gray-900"
+                          >
+                            Última Visita <span aria-hidden>{getSortIndicator('lastVisit')}</span>
+                          </button>
+                        </th>
                         <th className="px-6 py-3 text-right">Ações</th>
                     </tr>
                     </thead>
                     <tbody className="divide-y">
-                        {filteredClients.map(client => (
+                        {sortedFilteredClients.map(client => (
                             <tr key={client.id} className="hover:bg-gray-50">
                             <td className="px-6 py-4">
                               <input
