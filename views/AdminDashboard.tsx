@@ -35,6 +35,7 @@ const getAppointmentStatusLabel = (status?: string) => {
     case 'COMPLETED_OP': return 'Concluído (Op.)';
     case 'COMPLETED_FIN': return 'Concluído (Fin.)';
     case 'REOPENED': return 'Reaberto';
+    case 'NO_SHOW': return 'No-show';
     case 'CANCELLED': return 'Cancelado';
     case 'BLOCKED': return 'Bloqueado';
     default: return status || 'N/A';
@@ -49,6 +50,7 @@ const getAppointmentStatusChipClass = (status?: string) => {
     case 'COMPLETED_OP': return 'bg-violet-100 text-violet-700';
     case 'COMPLETED_FIN': return 'bg-emerald-100 text-emerald-700';
     case 'REOPENED': return 'bg-orange-100 text-orange-700';
+    case 'NO_SHOW': return 'bg-slate-200 text-slate-700';
     case 'CANCELLED': return 'bg-red-100 text-red-700';
     case 'BLOCKED': return 'bg-gray-200 text-gray-700';
     default: return 'bg-gray-100 text-gray-700';
@@ -1755,6 +1757,7 @@ const CalendarManagement = ({
       case 'COMPLETED_OP': return 'bg-violet-100 border-violet-200 text-violet-800';
         case 'COMPLETED_FIN': return 'bg-emerald-100 border-emerald-200 text-emerald-800';
         case 'REOPENED': return 'bg-orange-100 border-orange-200 text-orange-800';
+      case 'NO_SHOW': return 'bg-slate-200 border-slate-300 text-slate-800';
             case 'BLOCKED': return 'bg-gray-200 border-gray-300 text-gray-600 grayscale';
             default: return 'bg-gray-100 border-gray-200 text-gray-800';
         }
@@ -1946,20 +1949,20 @@ const CalendarManagement = ({
 
     const getStatusAction = (status?: string): { label: string; target: Appointment['status']; adminOnly?: boolean } | null => {
       switch (normalizeAppointmentStatus(status)) {
+        case 'PENDING_PAYMENT':
         case 'CONFIRMED':
         case 'REOPENED':
-          return { label: 'Iniciar Atendimento', target: 'IN_PROGRESS' };
-        case 'PENDING_PAYMENT':
-          return { label: 'Confirmar Agendamento', target: 'CONFIRMED' };
-        case 'IN_PROGRESS':
-          return { label: 'Concluir Operacional', target: 'COMPLETED_OP' };
-        case 'COMPLETED_OP':
-          return { label: 'Concluir Financeiro', target: 'COMPLETED_FIN', adminOnly: true };
+          return { label: 'Confirmar Atendimento', target: 'COMPLETED_FIN', adminOnly: true };
         case 'COMPLETED_FIN':
           return { label: 'Reabrir Atendimento', target: 'REOPENED', adminOnly: true };
         default:
           return null;
       }
+    };
+
+    const canMarkNoShow = (status?: string) => {
+      const normalized = normalizeAppointmentStatus(status);
+      return normalized === 'PENDING_PAYMENT' || normalized === 'CONFIRMED' || normalized === 'REOPENED';
     };
 
     const executeStatusTransition = async (
@@ -2015,8 +2018,8 @@ const CalendarManagement = ({
       const options: { reason?: string; paymentMethod?: string; totalValue?: number } = {};
 
       if (action.target === 'COMPLETED_FIN') {
-        openTransitionModal('COMPLETED_FIN');
-        return;
+        options.paymentMethod = String(selectedApt.paymentMethod || 'PRESENTIAL').trim();
+        options.totalValue = selectedApt.totalValue || 0;
       }
 
       if (action.target === 'REOPENED') {
@@ -2025,6 +2028,19 @@ const CalendarManagement = ({
       }
 
       await executeStatusTransition(action.target, options);
+    };
+
+    const handleNoShowTransition = async () => {
+      if (!selectedApt || selectedApt.status === 'BLOCKED') return;
+      if (!canManageSelectedAppointment) {
+        setAppointmentSubmitError('Você só pode gerenciar seus próprios agendamentos.');
+        return;
+      }
+      if (!canMarkNoShow(selectedApt.status)) {
+        return;
+      }
+
+      await executeStatusTransition('NO_SHOW');
     };
 
     const handleConfirmTransitionModal = async () => {
@@ -2754,6 +2770,18 @@ const CalendarManagement = ({
                                     <Trash2 size={18} /> Excluir
                                 </button>
                             </div>
+
+                            {selectedApt.status !== 'BLOCKED' && canMarkNoShow(selectedApt.status) && (
+                              <div className="pt-1">
+                                <button
+                                  onClick={handleNoShowTransition}
+                                  disabled={!canManageSelectedAppointment || isTransitioningStatus}
+                                  className="w-full bg-slate-100 text-slate-700 py-2.5 rounded-lg font-medium hover:bg-slate-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                  Marcar como No-show
+                                </button>
+                              </div>
+                            )}
                         </div>
                     </div>
                 </div>

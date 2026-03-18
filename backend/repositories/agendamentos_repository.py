@@ -585,7 +585,7 @@ class AgendamentosRepository(BaseRepository):
                     forma_pagamento = CASE WHEN %s IS NULL THEN forma_pagamento ELSE %s END,
                     valor_final = CASE WHEN %s IS NULL THEN valor_final ELSE %s END,
                     pago_em = CASE WHEN %s = 'COMPLETED_FIN' THEN NOW() ELSE pago_em END,
-                    concluido_operacional_em = CASE WHEN %s = 'COMPLETED_OP' THEN NOW() ELSE concluido_operacional_em END,
+                    concluido_operacional_em = CASE WHEN %s IN ('COMPLETED_OP', 'COMPLETED_FIN') THEN NOW() ELSE concluido_operacional_em END,
                     concluido_financeiro_em = CASE WHEN %s = 'COMPLETED_FIN' THEN NOW() ELSE concluido_financeiro_em END
                 WHERE barbearia_id = %s AND id = %s
                 RETURNING id, barbearia_id, cliente_id, profissional_id, servico_id,
@@ -620,6 +620,7 @@ class AgendamentosRepository(BaseRepository):
             if new_status == "COMPLETED_OP":
                 payload["concluido_operacional_em"] = now_iso
             if new_status == "COMPLETED_FIN":
+                payload["concluido_operacional_em"] = payload.get("concluido_operacional_em") or now_iso
                 payload["concluido_financeiro_em"] = now_iso
                 payload["pago_em"] = now_iso
 

@@ -621,6 +621,7 @@ export const ClientPortal: React.FC = () => {
         case 'COMPLETED_OP': return 'bg-violet-100 text-violet-700';
         case 'COMPLETED_FIN': return 'bg-emerald-100 text-emerald-700';
         case 'REOPENED': return 'bg-orange-100 text-orange-700';
+        case 'NO_SHOW': return 'bg-slate-200 text-slate-700';
         case 'CANCELLED': return 'bg-red-100 text-red-700';
         default: return 'bg-gray-100 text-gray-700';
       }
@@ -634,6 +635,7 @@ export const ClientPortal: React.FC = () => {
         case 'COMPLETED_OP': return 'CONCLUÍDO (OPERACIONAL)';
         case 'COMPLETED_FIN': return 'CONCLUÍDO (FINANCEIRO)';
         case 'REOPENED': return 'REABERTO';
+        case 'NO_SHOW': return 'NÃO COMPARECEU';
         case 'CANCELLED': return 'CANCELADO';
         default: return status || 'N/A';
       }

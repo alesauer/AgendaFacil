@@ -39,7 +39,7 @@ export interface Professional {
   specialties: string[]; // Service IDs
 }
 
-export type AppointmentStatus = 'PENDING_PAYMENT' | 'CONFIRMED' | 'IN_PROGRESS' | 'COMPLETED_OP' | 'COMPLETED_FIN' | 'REOPENED' | 'COMPLETED' | 'CANCELLED' | 'BLOCKED';
+export type AppointmentStatus = 'PENDING_PAYMENT' | 'CONFIRMED' | 'IN_PROGRESS' | 'COMPLETED_OP' | 'COMPLETED_FIN' | 'REOPENED' | 'NO_SHOW' | 'COMPLETED' | 'CANCELLED' | 'BLOCKED';
 
 export interface Appointment {
   id: string;
