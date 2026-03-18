@@ -1,6 +1,5 @@
 import os
 
-
 class Config:
     APP_ENV = "development"
     SECRET_KEY = "change-this-secret"
@@ -10,8 +9,8 @@ class Config:
     SUPABASE_URL = ""
     SUPABASE_KEY = ""
     SUPABASE_ONLY = True
-    BYPASS_PROXY_FOR_SUPABASE = True
-    DISABLE_SYSTEM_PROXY_FOR_SUPABASE = True
+    BYPASS_PROXY_FOR_SUPABASE = False
+    DISABLE_SYSTEM_PROXY_FOR_SUPABASE = False
     SUPABASE_HTTP_TIMEOUT_SECONDS = 8
     SUPABASE_TENANT_RETRIES = 3
 
