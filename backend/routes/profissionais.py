@@ -23,6 +23,20 @@ def _parse_bool(value, default: bool = True) -> bool:
     return default
 
 
+def _parse_comissao_percentual(value) -> tuple[float, str | None]:
+    if value is None or value == "":
+        return 0.0, None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return 0.0, "comissao_percentual deve ser um número entre 0 e 100"
+
+    if parsed < 0 or parsed > 100:
+        return 0.0, "comissao_percentual deve estar entre 0 e 100"
+
+    return round(parsed, 2), None
+
+
 @profissionais_bp.get("")
 @auth_required
 def list_profissionais():
@@ -45,10 +59,21 @@ def create_profissional():
     cargo = (payload.get("cargo") or "").strip()
     telefone = (payload.get("telefone") or "").strip()
     foto_url = payload.get("foto_url")
+    comissao_percentual, comissao_error = _parse_comissao_percentual(
+        payload.get("comissao_percentual")
+    )
     if not nome:
         return error("nome é obrigatório", 400)
+    if comissao_error:
+        return error(comissao_error, 400)
     profissional = ProfissionaisRepository.create(
-        g.barbearia_id, nome, cargo, telefone, foto_url, profissional_id
+        g.barbearia_id,
+        nome,
+        cargo,
+        telefone,
+        foto_url,
+        comissao_percentual,
+        profissional_id,
     )
     return success(profissional, 201)
 
@@ -61,9 +86,14 @@ def update_profissional(profissional_id: str):
     cargo = (payload.get("cargo") or "").strip()
     telefone = (payload.get("telefone") or "").strip()
     foto_url = payload.get("foto_url")
+    comissao_percentual, comissao_error = _parse_comissao_percentual(
+        payload.get("comissao_percentual")
+    )
     ativo = _parse_bool(payload.get("ativo"), True)
     if not nome:
         return error("nome é obrigatório", 400)
+    if comissao_error:
+        return error(comissao_error, 400)
     profissional = ProfissionaisRepository.update(
         g.barbearia_id,
         profissional_id,
@@ -71,6 +101,7 @@ def update_profissional(profissional_id: str):
         cargo,
         telefone,
         foto_url,
+        comissao_percentual,
         ativo,
     )
     if not profissional:

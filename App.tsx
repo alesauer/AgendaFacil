@@ -153,6 +153,8 @@ const App: React.FC = () => {
         return {
           name: parsed.name || 'AgendeFácil Barbearia',
           logoUrl: parsed.logoUrl,
+          loginLogoUrl: parsed.loginLogoUrl,
+          loginBackgroundUrl: parsed.loginBackgroundUrl,
           iconName: parsed.iconName || 'scissors',
           primaryColor: parsed.primaryColor || DEFAULT_PRIMARY_COLOR,
           secondaryColor: parsed.secondaryColor || DEFAULT_SECONDARY_COLOR,
@@ -234,6 +236,7 @@ const App: React.FC = () => {
     name: profissional.nome,
     role: profissional.cargo || 'Profissional',
     avatar: normalizeAvatar(profissional.foto_url),
+    commissionPercentage: Number(profissional.comissao_percentual || 0),
     specialties: [],
   });
 
@@ -307,6 +310,8 @@ const App: React.FC = () => {
   const mapIdentidade = (identidade: IdentidadeApi): BrandIdentity => ({
     name: identidade.nome,
     logoUrl: identidade.logo_url || undefined,
+    loginLogoUrl: identidade.login_logo_url || undefined,
+    loginBackgroundUrl: identidade.login_background_url || undefined,
     iconName: identidade.icone_marca || 'scissors',
     primaryColor: identidade.cor_primaria || '#2563eb',
     secondaryColor: identidade.cor_secundaria || '#eff6ff',
@@ -365,7 +370,12 @@ const App: React.FC = () => {
     }
 
     if (identidadeResult.success) {
-      setBrandIdentity(mapIdentidade(identidadeResult.data));
+      const mapped = mapIdentidade(identidadeResult.data);
+      setBrandIdentity(prev => ({
+        ...mapped,
+        loginLogoUrl: prev.loginLogoUrl,
+        loginBackgroundUrl: prev.loginBackgroundUrl,
+      }));
     }
 
     const servicosMapeados = servicosResult.success
@@ -577,6 +587,8 @@ const App: React.FC = () => {
         const mapped: BrandIdentity = {
           name: result.data.nome,
           logoUrl: result.data.logo_url || undefined,
+          loginLogoUrl: result.data.login_logo_url || undefined,
+          loginBackgroundUrl: result.data.login_background_url || undefined,
           iconName: result.data.icone_marca || 'scissors',
           primaryColor: result.data.cor_primaria || DEFAULT_PRIMARY_COLOR,
           secondaryColor: result.data.cor_secundaria || DEFAULT_SECONDARY_COLOR,
@@ -1188,13 +1200,15 @@ const App: React.FC = () => {
       return { success: false, error: message };
     }
 
-    const hasProfissional = professionals.some(p => p.id === authResult.data.id);
+    const existingProfessional = professionals.find(p => p.id === authResult.data.id);
+    const hasProfissional = Boolean(existingProfessional);
     const profissionalPayload = {
       id: authResult.data.id,
       nome: newUser.name,
       cargo: newUser.role === 'ADMIN' ? 'Administrador' : 'Profissional',
       telefone: newUser.phone,
       foto_url: normalizeAvatar(newUser.avatar) || null,
+      comissao_percentual: Number(existingProfessional?.commissionPercentage || 0),
       ativo: true,
     };
 
@@ -1254,13 +1268,15 @@ const App: React.FC = () => {
       return { success: false, error: message };
     }
 
-    const hasProfissional = professionals.some(p => p.id === updatedUser.id);
+    const existingProfessional = professionals.find(p => p.id === updatedUser.id);
+    const hasProfissional = Boolean(existingProfessional);
     const profissionalPayload = {
       id: updatedUser.id,
       nome: updatedUser.name,
       cargo: updatedUser.role === 'ADMIN' ? 'Administrador' : 'Profissional',
       telefone: updatedUser.phone,
       foto_url: normalizeAvatar(updatedUser.avatar) || null,
+      comissao_percentual: Number(existingProfessional?.commissionPercentage || 0),
       ativo: updatedUser.active ?? true,
     };
 
@@ -1342,6 +1358,8 @@ const App: React.FC = () => {
     const result = await saveIdentidadeApi({
       nome: identity.name,
       logo_url: identity.logoUrl || null,
+      login_logo_url: identity.loginLogoUrl || null,
+      login_background_url: identity.loginBackgroundUrl || null,
       icone_marca: identity.iconName || 'scissors',
       cor_primaria: identity.primaryColor || '#2563eb',
       cor_secundaria: identity.secondaryColor || '#eff6ff',
@@ -1353,7 +1371,8 @@ const App: React.FC = () => {
       return { success: false, error: message };
     }
 
-    setBrandIdentity(mapIdentidade(result.data));
+    const mapped = mapIdentidade(result.data);
+    setBrandIdentity(mapped);
     return { success: true };
   };
 

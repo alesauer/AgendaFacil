@@ -7,6 +7,7 @@ export type ProfissionalApi = {
   cargo?: string | null;
   telefone?: string | null;
   foto_url?: string | null;
+  comissao_percentual?: number | null;
   ativo: boolean;
 };
 
@@ -16,6 +17,7 @@ export type ProfissionalPayload = {
   cargo?: string;
   telefone?: string;
   foto_url?: string | null;
+  comissao_percentual?: number;
   ativo?: boolean;
 };
 

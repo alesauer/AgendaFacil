@@ -7,6 +7,8 @@ export type IdentidadeApi = {
   telefone?: string | null;
   cidade?: string | null;
   logo_url?: string | null;
+  login_logo_url?: string | null;
+  login_background_url?: string | null;
   icone_marca?: string | null;
   cor_primaria?: string | null;
   cor_secundaria?: string | null;
@@ -15,6 +17,8 @@ export type IdentidadeApi = {
 export type IdentidadePayload = {
   nome: string;
   logo_url?: string | null;
+  login_logo_url?: string | null;
+  login_background_url?: string | null;
   icone_marca?: string | null;
   cor_primaria?: string | null;
   cor_secundaria?: string | null;
@@ -27,7 +31,7 @@ export async function getIdentidadeApi() {
 }
 
 export async function getIdentidadePublicaApi() {
-  return apiRequest<Pick<IdentidadeApi, 'nome' | 'logo_url' | 'icone_marca' | 'cor_primaria' | 'cor_secundaria'>>('/barbearia/identidade-publica', {
+  return apiRequest<Pick<IdentidadeApi, 'nome' | 'logo_url' | 'login_logo_url' | 'login_background_url' | 'icone_marca' | 'cor_primaria' | 'cor_secundaria'>>('/barbearia/identidade-publica', {
     method: 'GET',
   });
 }

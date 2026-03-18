@@ -10,20 +10,21 @@ barbearia_bp = Blueprint("barbearia", __name__, url_prefix="/barbearia")
 
 HEX_COLOR_REGEX = re.compile(r"^#([A-Fa-f0-9]{6})$")
 ALLOWED_ICONES = {"scissors", "store", "user", "sparkles", "heart", "zap"}
-MAX_LOGO_URL_LENGTH = 300000
+MAX_IMAGE_URL_LENGTH = 300000
+MAX_LOGIN_BACKGROUND_URL_LENGTH = 3200000
 
 
-def _normalize_logo_url(value: str | None):
+def _normalize_image_url(value: str | None, field_name: str, max_length: int = MAX_IMAGE_URL_LENGTH):
     if not value:
         return None
     raw = str(value).strip()
     if not raw:
         return None
-    if len(raw) > MAX_LOGO_URL_LENGTH:
-        raise ValueError("logo_url excede o tamanho máximo permitido")
+    if len(raw) > max_length:
+        raise ValueError(f"{field_name} excede o tamanho máximo permitido")
     if raw.startswith("data:image/") or raw.startswith("http://") or raw.startswith("https://"):
         return raw
-    raise ValueError("logo_url inválida. Use data URL de imagem ou URL http/https")
+    raise ValueError(f"{field_name} inválida. Use data URL de imagem ou URL http/https")
 
 
 def _normalize_color(value: str | None, field_name: str):
@@ -58,6 +59,8 @@ def get_identidade_publica():
         {
             "nome": item.get("nome"),
             "logo_url": item.get("logo_url"),
+            "login_logo_url": item.get("login_logo_url"),
+            "login_background_url": item.get("login_background_url"),
             "icone_marca": item.get("icone_marca"),
             "cor_primaria": item.get("cor_primaria"),
             "cor_secundaria": item.get("cor_secundaria"),
@@ -85,7 +88,13 @@ def update_identidade():
         return error("icone_marca inválido", 400)
 
     try:
-        logo_url = _normalize_logo_url(payload.get("logo_url"))
+        logo_url = _normalize_image_url(payload.get("logo_url"), "logo_url")
+        login_logo_url = _normalize_image_url(payload.get("login_logo_url"), "login_logo_url")
+        login_background_url = _normalize_image_url(
+            payload.get("login_background_url"),
+            "login_background_url",
+            MAX_LOGIN_BACKGROUND_URL_LENGTH,
+        )
         cor_primaria = _normalize_color(payload.get("cor_primaria"), "cor_primaria")
         cor_secundaria = _normalize_color(payload.get("cor_secundaria"), "cor_secundaria")
     except ValueError as exc:
@@ -95,6 +104,8 @@ def update_identidade():
         g.barbearia_id,
         nome,
         logo_url,
+        login_logo_url,
+        login_background_url,
         icone_marca,
         cor_primaria,
         cor_secundaria,

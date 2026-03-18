@@ -55,99 +55,78 @@ class FinanceiroRepository(BaseRepository):
         )
 
     @staticmethod
-    def list_receivables(barbearia_id: str, status: str | None = None, limit: int = 200):
+    def list_receivables(
+        barbearia_id: str,
+        profissional_id: str | None = None,
+        data_inicio: str | None = None,
+        data_fim: str | None = None,
+        limit: int = 200,
+    ):
         FinanceiroRepository.require_tenant(barbearia_id)
         limit = max(1, min(int(limit or 200), 500))
 
         if is_db_ready():
-                        try:
-                                if status:
-                                        return query_all(
-                                                """
-                                                SELECT
-                                                        fr.id,
-                                                        fr.barbearia_id,
-                                                        fr.agendamento_id,
-                                                        fr.origem,
-                                                        fr.descricao,
-                                                        fr.status,
-                                                        fr.valor_bruto,
-                                                        fr.valor_recebido,
-                                                        fr.valor_estornado,
-                                                        fr.vencimento,
-                                                        fr.competencia,
-                                                        fr.observacao,
-                                                        fr.created_at,
-                                                        fr.updated_at,
-                                                        c.nome AS cliente_nome,
-                                                        s.nome AS servico_nome,
-                                                        p.nome AS profissional_nome,
-                                                        a.data AS agendamento_data,
-                                                        a.hora_inicio AS agendamento_hora_inicio
-                                                FROM financial_receivables fr
-                                                LEFT JOIN agendamentos a
-                                                    ON a.id = fr.agendamento_id AND a.barbearia_id = fr.barbearia_id
-                                                LEFT JOIN clientes c
-                                                    ON c.id = a.cliente_id AND c.barbearia_id = fr.barbearia_id
-                                                LEFT JOIN servicos s
-                                                    ON s.id = a.servico_id AND s.barbearia_id = fr.barbearia_id
-                                                LEFT JOIN profissionais p
-                                                    ON p.id = a.profissional_id AND p.barbearia_id = fr.barbearia_id
-                                                WHERE fr.barbearia_id = %s
-                                                    AND fr.status = %s
-                                                ORDER BY a.data DESC NULLS LAST, a.hora_inicio DESC NULLS LAST, fr.created_at DESC
-                                                LIMIT %s
-                                                """,
-                                                (barbearia_id, status, limit),
-                                        )
-
-                                return query_all(
-                                        """
-                                        SELECT
-                                                fr.id,
-                                                fr.barbearia_id,
-                                                fr.agendamento_id,
-                                                fr.origem,
-                                                fr.descricao,
-                                                fr.status,
-                                                fr.valor_bruto,
-                                                fr.valor_recebido,
-                                                fr.valor_estornado,
-                                                fr.vencimento,
-                                                fr.competencia,
-                                                fr.observacao,
-                                                fr.created_at,
-                                                fr.updated_at,
-                                                c.nome AS cliente_nome,
-                                                s.nome AS servico_nome,
-                                                p.nome AS profissional_nome,
-                                                a.data AS agendamento_data,
-                                                a.hora_inicio AS agendamento_hora_inicio
-                                        FROM financial_receivables fr
-                                        LEFT JOIN agendamentos a
-                                            ON a.id = fr.agendamento_id AND a.barbearia_id = fr.barbearia_id
-                                        LEFT JOIN clientes c
-                                            ON c.id = a.cliente_id AND c.barbearia_id = fr.barbearia_id
-                                        LEFT JOIN servicos s
-                                            ON s.id = a.servico_id AND s.barbearia_id = fr.barbearia_id
-                                        LEFT JOIN profissionais p
-                                            ON p.id = a.profissional_id AND p.barbearia_id = fr.barbearia_id
-                                        WHERE fr.barbearia_id = %s
-                                        ORDER BY a.data DESC NULLS LAST, a.hora_inicio DESC NULLS LAST, fr.created_at DESC
-                                        LIMIT %s
-                                        """,
-                                        (barbearia_id, limit),
-                                )
-                        except Exception as exc:
-                                if not FinanceiroRepository._is_missing_relation_error(exc):
-                                        raise
+            try:
+                return query_all(
+                    """
+                    SELECT
+                        fr.id,
+                        fr.barbearia_id,
+                        fr.agendamento_id,
+                        fr.origem,
+                        fr.descricao,
+                        fr.status,
+                        fr.valor_bruto,
+                        fr.valor_recebido,
+                        fr.valor_estornado,
+                        fr.vencimento,
+                        fr.competencia,
+                        fr.observacao,
+                        fr.created_at,
+                        fr.updated_at,
+                        c.nome AS cliente_nome,
+                        s.nome AS servico_nome,
+                        p.nome AS profissional_nome,
+                        COALESCE(p.comissao_percentual, 0) AS comissao_percentual,
+                        ROUND((GREATEST(COALESCE(fr.valor_recebido, 0) - COALESCE(fr.valor_estornado, 0), 0) * COALESCE(p.comissao_percentual, 0) / 100.0)::numeric, 2) AS comissao_estimada,
+                        a.data AS agendamento_data,
+                        a.hora_inicio AS agendamento_hora_inicio
+                    FROM financial_receivables fr
+                    LEFT JOIN agendamentos a
+                        ON a.id = fr.agendamento_id AND a.barbearia_id = fr.barbearia_id
+                    LEFT JOIN clientes c
+                        ON c.id = a.cliente_id AND c.barbearia_id = fr.barbearia_id
+                    LEFT JOIN servicos s
+                        ON s.id = a.servico_id AND s.barbearia_id = fr.barbearia_id
+                    LEFT JOIN profissionais p
+                        ON p.id = a.profissional_id AND p.barbearia_id = fr.barbearia_id
+                    WHERE fr.barbearia_id = %s
+                      AND (%s IS NULL OR a.profissional_id = %s)
+                      AND (%s IS NULL OR a.data >= %s::date)
+                      AND (%s IS NULL OR a.data <= %s::date)
+                    ORDER BY a.data DESC NULLS LAST, a.hora_inicio DESC NULLS LAST, fr.created_at DESC
+                    LIMIT %s
+                    """,
+                    (
+                        barbearia_id,
+                        profissional_id,
+                        profissional_id,
+                        data_inicio,
+                        data_inicio,
+                        data_fim,
+                        data_fim,
+                        limit,
+                    ),
+                )
+            except Exception as exc:
+                if not FinanceiroRepository._is_missing_relation_error(exc):
+                    raise
 
         if is_supabase_ready():
-            supabase = get_supabase_client()
             def build_receivables_query():
-                dynamic_supabase = get_supabase_client()
-                query = (
-                    dynamic_supabase.table("financial_receivables")
+                return (
+                    get_supabase_client()
+                    .table("financial_receivables")
                     .select(
                         "id,barbearia_id,agendamento_id,origem,descricao,status,valor_bruto,valor_recebido,valor_estornado,vencimento,competencia,observacao,created_at,updated_at"
                     )
@@ -155,9 +134,6 @@ class FinanceiroRepository(BaseRepository):
                     .order("created_at", desc=True)
                     .limit(limit)
                 )
-                if status:
-                    query = query.eq("status", status)
-                return query
 
             response = FinanceiroRepository._execute_with_retry(build_receivables_query)
             rows = response.data or []
@@ -165,15 +141,35 @@ class FinanceiroRepository(BaseRepository):
             if not agendamento_ids:
                 return rows
 
-            appointments_response = FinanceiroRepository._execute_with_retry(
-                lambda: get_supabase_client()
-                .table("agendamentos")
-                .select("id,data,hora_inicio,cliente_id,servico_id,profissional_id")
-                .eq("barbearia_id", barbearia_id)
-                .in_("id", agendamento_ids)
-            )
+            def build_appointments_query():
+                query = (
+                    get_supabase_client()
+                    .table("agendamentos")
+                    .select("id,data,hora_inicio,cliente_id,servico_id,profissional_id")
+                    .eq("barbearia_id", barbearia_id)
+                    .in_("id", agendamento_ids)
+                )
+                if profissional_id:
+                    query = query.eq("profissional_id", profissional_id)
+                if data_inicio:
+                    query = query.gte("data", data_inicio)
+                if data_fim:
+                    query = query.lte("data", data_fim)
+                return query
+
+            appointments_response = FinanceiroRepository._execute_with_retry(build_appointments_query)
             appointments = appointments_response.data or []
             appointments_by_id = {str(item.get("id")): item for item in appointments}
+
+            has_appointment_filters = bool(profissional_id or data_inicio or data_fim)
+            if has_appointment_filters:
+                rows = [
+                    row
+                    for row in rows
+                    if str(row.get("agendamento_id") or "") in appointments_by_id
+                ]
+                if not rows:
+                    return []
 
             cliente_ids = [str(item.get("cliente_id")) for item in appointments if item.get("cliente_id")]
             servico_ids = [str(item.get("servico_id")) for item in appointments if item.get("servico_id")]
@@ -206,23 +202,52 @@ class FinanceiroRepository(BaseRepository):
                 profissionais_response = FinanceiroRepository._execute_with_retry(
                     lambda: get_supabase_client()
                     .table("profissionais")
-                    .select("id,nome")
+                    .select("id,nome,comissao_percentual")
                     .eq("barbearia_id", barbearia_id)
                     .in_("id", list(set(profissional_ids)))
                 )
-                profissionais_by_id = {str(item.get("id")): item.get("nome") for item in (profissionais_response.data or [])}
+                profissionais_by_id = {
+                    str(item.get("id")): {
+                        "nome": item.get("nome"),
+                        "comissao_percentual": float(item.get("comissao_percentual") or 0),
+                    }
+                    for item in (profissionais_response.data or [])
+                }
 
             for row in rows:
                 agendamento_id = str(row.get("agendamento_id") or "")
                 appointment = appointments_by_id.get(agendamento_id)
                 if not appointment:
+                    row["comissao_percentual"] = float(row.get("comissao_percentual") or 0)
+                    row["comissao_estimada"] = round(
+                        max(
+                            float(row.get("valor_recebido") or 0)
+                            - float(row.get("valor_estornado") or 0),
+                            0,
+                        )
+                        * float(row.get("comissao_percentual") or 0)
+                        / 100,
+                        2,
+                    )
                     continue
 
                 row["agendamento_data"] = appointment.get("data")
                 row["agendamento_hora_inicio"] = appointment.get("hora_inicio")
                 row["cliente_nome"] = clientes_by_id.get(str(appointment.get("cliente_id") or ""))
                 row["servico_nome"] = servicos_by_id.get(str(appointment.get("servico_id") or ""))
-                row["profissional_nome"] = profissionais_by_id.get(str(appointment.get("profissional_id") or ""))
+                profissional = profissionais_by_id.get(str(appointment.get("profissional_id") or "")) or {}
+                row["profissional_nome"] = profissional.get("nome")
+                row["comissao_percentual"] = float(profissional.get("comissao_percentual") or 0)
+                row["comissao_estimada"] = round(
+                    max(
+                        float(row.get("valor_recebido") or 0)
+                        - float(row.get("valor_estornado") or 0),
+                        0,
+                    )
+                    * float(row.get("comissao_percentual") or 0)
+                    / 100,
+                    2,
+                )
 
             return rows
 
@@ -720,9 +745,14 @@ class FinanceiroRepository(BaseRepository):
                       COALESCE(SUM(CASE WHEN status IN ('OPEN', 'PARTIAL') THEN (valor_bruto - valor_recebido + valor_estornado) ELSE 0 END), 0) AS a_receber,
                       COALESCE(SUM(CASE WHEN status IN ('PAID', 'PARTIAL', 'REFUNDED') THEN valor_recebido END), 0) AS recebido_bruto,
                       COALESCE(SUM(valor_estornado), 0) AS estornado,
-                      COALESCE(SUM(CASE WHEN status = 'PAID' THEN valor_bruto ELSE 0 END), 0) AS quitado
-                    FROM financial_receivables
-                    WHERE barbearia_id = %s
+                                            COALESCE(SUM(CASE WHEN status = 'PAID' THEN valor_bruto ELSE 0 END), 0) AS quitado,
+                                            COALESCE(SUM(ROUND((GREATEST(COALESCE(fr.valor_recebido, 0) - COALESCE(fr.valor_estornado, 0), 0) * COALESCE(p.comissao_percentual, 0) / 100.0)::numeric, 2)), 0) AS comissao_estimada
+                                        FROM financial_receivables fr
+                                        LEFT JOIN agendamentos a
+                                            ON a.id = fr.agendamento_id AND a.barbearia_id = fr.barbearia_id
+                                        LEFT JOIN profissionais p
+                                            ON p.id = a.profissional_id AND p.barbearia_id = fr.barbearia_id
+                    WHERE fr.barbearia_id = %s
                     """,
                     (barbearia_id,),
                 )
@@ -734,6 +764,7 @@ class FinanceiroRepository(BaseRepository):
                         "estornado": 0,
                         "recebido_liquido": 0,
                         "quitado": 0,
+                        "comissao_estimada": 0,
                     }
 
                 recebido_bruto = float(row.get("recebido_bruto") or 0)
@@ -745,18 +776,20 @@ class FinanceiroRepository(BaseRepository):
                     "estornado": estornado,
                     "recebido_liquido": recebido_bruto - estornado,
                     "quitado": float(row.get("quitado") or 0),
+                    "comissao_estimada": float(row.get("comissao_estimada") or 0),
                 }
             except Exception as exc:
                 if not FinanceiroRepository._is_missing_relation_error(exc):
                     raise
 
         if is_supabase_ready():
-            rows = FinanceiroRepository.list_receivables(barbearia_id, None, 500)
+            rows = FinanceiroRepository.list_receivables(barbearia_id, None, None, None, 500)
             total_recebiveis = len(rows)
             a_receber = 0.0
             recebido_bruto = 0.0
             estornado = 0.0
             quitado = 0.0
+            comissao_estimada = 0.0
 
             for row in rows:
                 valor_bruto = float(row.get("valor_bruto") or 0)
@@ -771,6 +804,7 @@ class FinanceiroRepository(BaseRepository):
                 if status == "PAID":
                     quitado += valor_bruto
                 estornado += valor_estornado
+                comissao_estimada += float(row.get("comissao_estimada") or 0)
 
             return {
                 "total_recebiveis": total_recebiveis,
@@ -779,6 +813,7 @@ class FinanceiroRepository(BaseRepository):
                 "estornado": estornado,
                 "recebido_liquido": recebido_bruto - estornado,
                 "quitado": quitado,
+                "comissao_estimada": comissao_estimada,
             }
 
         return {
@@ -788,4 +823,5 @@ class FinanceiroRepository(BaseRepository):
             "estornado": 0,
             "recebido_liquido": 0,
             "quitado": 0,
+            "comissao_estimada": 0,
         }

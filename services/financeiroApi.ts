@@ -7,6 +7,7 @@ export type FinanceiroResumoApi = {
   estornado: number;
   recebido_liquido: number;
   quitado: number;
+  comissao_estimada: number;
 };
 
 export type RecebivelApi = {
@@ -27,6 +28,8 @@ export type RecebivelApi = {
   cliente_nome?: string | null;
   servico_nome?: string | null;
   profissional_nome?: string | null;
+  comissao_percentual?: number | null;
+  comissao_estimada?: number | null;
   agendamento_data?: string | null;
   agendamento_hora_inicio?: string | null;
 };
@@ -65,9 +68,11 @@ export async function getFinanceiroResumoApi() {
   });
 }
 
-export async function listRecebiveisApi(params?: { status?: string; limit?: number }) {
+export async function listRecebiveisApi(params?: { profissional_id?: string; data_inicio?: string; data_fim?: string; limit?: number }) {
   const query = new URLSearchParams();
-  if (params?.status) query.set('status', params.status);
+  if (params?.profissional_id) query.set('profissional_id', params.profissional_id);
+  if (params?.data_inicio) query.set('data_inicio', params.data_inicio);
+  if (params?.data_fim) query.set('data_fim', params.data_fim);
   if (typeof params?.limit === 'number') query.set('limit', String(params.limit));
 
   const suffix = query.toString() ? `?${query.toString()}` : '';

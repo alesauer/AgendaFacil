@@ -36,6 +36,7 @@ export interface Professional {
   role: string;
   avatar?: string;
   iconName?: string;
+  commissionPercentage?: number;
   specialties: string[]; // Service IDs
 }
 
@@ -100,6 +101,8 @@ export interface BusinessHour {
 export interface BrandIdentity {
   name: string;
   logoUrl?: string;
+  loginLogoUrl?: string;
+  loginBackgroundUrl?: string;
   iconName?: string;
   primaryColor?: string;
   secondaryColor?: string;

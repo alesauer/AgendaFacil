@@ -8,6 +8,8 @@ slug
 telefone  
 cidade  
 logo_url  
+login_logo_url  
+login_background_url  
 icone_marca  
 cor_primaria  
 cor_secundaria  
@@ -31,6 +33,7 @@ nome
 cargo  
 telefone  
 foto_url  
+comissao_percentual  
 ativo  
 
 ## clientes

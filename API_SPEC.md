@@ -13,6 +13,15 @@ POST /profissionais
 PUT /profissionais/:id  
 DELETE /profissionais/:id  
 
+### Campos de profissionais
+
+- nome
+- cargo
+- telefone
+- foto_url
+- comissao_percentual
+- ativo
+
 ## Serviços
 
 GET /servicos  
@@ -44,3 +53,19 @@ DELETE /agendamentos/:id
 ## Dashboard
 
 GET /dashboard/metricas
+
+## Barbearia / Identidade
+
+GET /barbearia/identidade  
+PUT /barbearia/identidade  
+GET /barbearia/identidade-publica
+
+### Campos de identidade
+
+- nome
+- logo_url
+- login_logo_url
+- login_background_url
+- icone_marca
+- cor_primaria
+- cor_secundaria

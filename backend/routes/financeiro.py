@@ -39,6 +39,7 @@ def get_financeiro_resumo():
             "estornado": 0,
             "recebido_liquido": 0,
             "quitado": 0,
+            "comissao_estimada": 0,
         }
     return success(resumo)
 
@@ -50,20 +51,39 @@ def list_recebiveis():
     if denied:
         return denied
 
-    status = (request.args.get("status") or "").strip().upper() or None
+    profissional_id = (request.args.get("profissional_id") or "").strip() or None
+    data_inicio = (request.args.get("data_inicio") or "").strip() or None
+    data_fim = (request.args.get("data_fim") or "").strip() or None
     raw_limit = request.args.get("limit") or "200"
+
+    if data_inicio:
+        try:
+            datetime.strptime(data_inicio, "%Y-%m-%d")
+        except ValueError:
+            return error("data_inicio inválida. Use YYYY-MM-DD", 400)
+
+    if data_fim:
+        try:
+            datetime.strptime(data_fim, "%Y-%m-%d")
+        except ValueError:
+            return error("data_fim inválida. Use YYYY-MM-DD", 400)
+
+    if data_inicio and data_fim and data_inicio > data_fim:
+        return error("intervalo de datas inválido", 400)
 
     try:
         limit = int(raw_limit)
     except (TypeError, ValueError):
         return error("limit inválido", 400)
 
-    allowed_status = {"OPEN", "PARTIAL", "PAID", "REFUNDED", "CANCELLED"}
-    if status and status not in allowed_status:
-        return error("status inválido", 400)
-
     try:
-        rows = FinanceiroRepository.list_receivables(g.barbearia_id, status, limit)
+        rows = FinanceiroRepository.list_receivables(
+            g.barbearia_id,
+            profissional_id,
+            data_inicio,
+            data_fim,
+            limit,
+        )
     except Exception as exc:
         logger.warning("Falha ao listar recebíveis para barbearia_id=%s: %s", g.barbearia_id, exc)
         rows = []

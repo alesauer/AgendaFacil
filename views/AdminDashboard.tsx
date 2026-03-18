@@ -1,13 +1,12 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useAppContext } from '../App';
 import { useNavigate } from 'react-router-dom';
 import { Appointment, BrandIdentity, Client, Service } from '../types';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 import { LayoutDashboard, Users, Calendar, Settings, LogOut, Plus, Edit, Trash2, DollarSign, X, Clock, Tag, Image as ImageIcon, Search, ChevronLeft, ChevronRight, Bell, Mail, MessageSquare, Shield, Globe, Menu, Scissors, Sparkles, Smile, Zap, Heart, Share2, RotateCcw, ChevronDown, Lock, Camera, Store, User as UserIcon, Palette, Check, CreditCard, Receipt, BarChart3, Phone, Headphones, ExternalLink, List, Upload } from 'lucide-react';
 import { MOCK_APPOINTMENTS } from '../constants';
-import { createProfissionalApi, deleteProfissionalApi, updateProfissionalApi } from '../services/profissionaisApi';
+import { createProfissionalApi, deleteProfissionalApi, listProfissionaisApi, updateProfissionalApi } from '../services/profissionaisApi';
 import {
-  getFinanceiroResumoApi,
   listRecebiveisApi,
   registrarEstornoRecebivelApi,
   registrarPagamentoRecebivelApi,
@@ -91,31 +90,168 @@ const BrandIcon = ({ name, className }: { name?: string, className?: string }) =
 };
 
 const DashboardHome = ({ onViewAllRecent }: { onViewAllRecent: () => void }) => {
-  const { appointments, services, professionals, clients } = useAppContext();
+  const { appointments, services, professionals, clients, brandIdentity } = useAppContext();
   const [recentSearchTerm, setRecentSearchTerm] = useState('');
   
   // Quick Stats Calculation
   const totalRevenue = appointments.reduce((acc, curr) => acc + curr.totalValue, 0);
   const totalBookings = appointments.length;
   const pending = appointments.filter(a => a.status === 'PENDING_PAYMENT').length;
-  
-  // Mock Data for Charts
-  const dailyData = [
-    { name: 'Seg', uv: 4000 },
-    { name: 'Ter', uv: 3000 },
-    { name: 'Qua', uv: 2000 },
-    { name: 'Qui', uv: 2780 },
-    { name: 'Sex', uv: 1890 },
-    { name: 'Sab', uv: 2390 },
-    { name: 'Dom', uv: 3490 },
-  ];
 
-  const serviceData = [
-    { name: 'Cabelo', value: 400 },
-    { name: 'Barba', value: 300 },
-    { name: 'Combo', value: 300 },
-    { name: 'Estética', value: 200 },
-  ];
+  const chartColors = ['#2563eb', '#14b8a6', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#84cc16', '#f97316'];
+
+  const professionalSeries = useMemo(() => {
+    const dateKeys = new Set<string>();
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    for (let offset = 6; offset >= 0; offset -= 1) {
+      const current = new Date(today);
+      current.setDate(today.getDate() - offset);
+      const year = current.getFullYear();
+      const month = String(current.getMonth() + 1).padStart(2, '0');
+      const day = String(current.getDate()).padStart(2, '0');
+      dateKeys.add(`${year}-${month}-${day}`);
+    }
+
+    const totalsByProfessional = new Map<string, number>();
+    appointments.forEach((appointment) => {
+      if (!appointment.professionalId) return;
+      if (normalizeAppointmentStatus(appointment.status) === 'BLOCKED') return;
+
+      const key = String(appointment.date || '').slice(0, 10);
+      if (!dateKeys.has(key)) return;
+
+      totalsByProfessional.set(
+        appointment.professionalId,
+        (totalsByProfessional.get(appointment.professionalId) || 0) + 1,
+      );
+    });
+
+    return Array.from(totalsByProfessional.entries())
+      .map(([professionalId, total], index) => {
+        const professional = professionals.find((item) => item.id === professionalId);
+        if (!professional) return null;
+        return {
+          id: professional.id,
+          name: professional.name,
+          key: `professional_${professional.id}`,
+          total,
+          color: chartColors[index % chartColors.length],
+        };
+      })
+      .filter((item): item is { id: string; name: string; key: string; total: number; color: string } => Boolean(item))
+      .sort((left, right) => right.total - left.total);
+  }, [appointments, professionals]);
+  
+  const dailyData = useMemo(() => {
+    const dateKeys: string[] = [];
+    const data: Array<Record<string, string | number>> = [];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    for (let offset = 6; offset >= 0; offset -= 1) {
+      const current = new Date(today);
+      current.setDate(today.getDate() - offset);
+
+      const year = current.getFullYear();
+      const month = String(current.getMonth() + 1).padStart(2, '0');
+      const day = String(current.getDate()).padStart(2, '0');
+      const key = `${year}-${month}-${day}`;
+
+      dateKeys.push(key);
+      const row: Record<string, string | number> = {
+        name: `${day}/${month}`,
+        uv: 0,
+        fullDate: key,
+      };
+
+      professionalSeries.forEach((series) => {
+        row[series.key] = 0;
+      });
+
+      data.push(row);
+    }
+
+    const indexByDate = new Map(dateKeys.map((key, index) => [key, index]));
+    const seriesKeyByProfessionalId = new Map(professionalSeries.map((series) => [series.id, series.key]));
+
+    appointments.forEach((appointment) => {
+      if (normalizeAppointmentStatus(appointment.status) === 'BLOCKED') return;
+      const key = String(appointment.date || '').slice(0, 10);
+      if (!indexByDate.has(key)) return;
+
+      const index = indexByDate.get(key);
+      if (typeof index !== 'number') return;
+
+      const currentTotal = Number(data[index].uv || 0);
+      data[index].uv = currentTotal + 1;
+
+      const seriesKey = seriesKeyByProfessionalId.get(appointment.professionalId);
+      if (!seriesKey) return;
+      data[index][seriesKey] = Number(data[index][seriesKey] || 0) + 1;
+    });
+
+    return data;
+  }, [appointments, professionalSeries]);
+
+  const serviceData = useMemo(() => {
+    const appointmentsByService = new Map<string, number>();
+
+    appointments.forEach((appointment) => {
+      if (!appointment.serviceId) return;
+      if (normalizeAppointmentStatus(appointment.status) === 'BLOCKED') return;
+
+      appointmentsByService.set(
+        appointment.serviceId,
+        (appointmentsByService.get(appointment.serviceId) || 0) + 1,
+      );
+    });
+
+    return Array.from(appointmentsByService.entries())
+      .map(([serviceId, total]) => {
+        const service = services.find((item) => item.id === serviceId);
+        if (!service) return null;
+        return {
+          id: service.id,
+          name: service.title,
+          value: total,
+        };
+      })
+      .filter((item): item is { id: string; name: string; value: number } => Boolean(item))
+      .sort((left, right) => right.value - left.value)
+      .slice(0, 5);
+  }, [appointments, services]);
+
+  const topProfessionals = useMemo(() => {
+    const appointmentsByProfessional = new Map<string, number>();
+
+    appointments.forEach((appointment) => {
+      if (!appointment.professionalId) return;
+      if (normalizeAppointmentStatus(appointment.status) === 'BLOCKED') return;
+
+      appointmentsByProfessional.set(
+        appointment.professionalId,
+        (appointmentsByProfessional.get(appointment.professionalId) || 0) + 1,
+      );
+    });
+
+    return Array.from(appointmentsByProfessional.entries())
+      .map(([professionalId, total]) => {
+        const professional = professionals.find((item) => item.id === professionalId);
+        if (!professional) return null;
+        return {
+          id: professional.id,
+          name: professional.name,
+          role: professional.role,
+          avatar: professional.avatar,
+          total,
+        };
+      })
+      .filter((item): item is { id: string; name: string; role: string; avatar?: string; total: number } => Boolean(item))
+      .sort((left, right) => right.total - left.total)
+      .slice(0, 5);
+  }, [appointments, professionals]);
 
   const recentAppointments = appointments.filter(apt => {
     const service = services.find(s => s.id === apt.serviceId);
@@ -157,17 +293,34 @@ const DashboardHome = ({ onViewAllRecent }: { onViewAllRecent: () => void }) => 
       </div>
 
       {/* Charts Section */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="bg-white p-6 rounded-xl shadow-sm">
-          <h3 className="font-bold text-gray-800 mb-4">Agendamentos por Dia</h3>
+          <h3 className="font-bold text-gray-800 mb-4">Agendamentos (Últimos 7 dias)</h3>
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={dailyData}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} />
                 <XAxis dataKey="name" />
                 <YAxis />
-                <Tooltip />
-                <Bar dataKey="uv" fill="#3B82F6" radius={[4, 4, 0, 0]} />
+                <Tooltip
+                  formatter={(value, name) => [`${value} agendamentos`, String(name)]}
+                  labelFormatter={(label) => `Data: ${label}`}
+                />
+                <Legend wrapperStyle={{ fontSize: 12 }} />
+                {professionalSeries.length > 0 ? (
+                  professionalSeries.map((series, index) => (
+                    <Bar
+                      key={series.id}
+                      dataKey={series.key}
+                      name={series.name}
+                      stackId="appointments"
+                      fill={series.color}
+                      radius={index === professionalSeries.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0]}
+                    />
+                  ))
+                ) : (
+                  <Bar dataKey="uv" fill={brandIdentity.primaryColor || '#3B82F6'} radius={[4, 4, 0, 0]} />
+                )}
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -175,26 +328,84 @@ const DashboardHome = ({ onViewAllRecent }: { onViewAllRecent: () => void }) => 
 
         <div className="bg-white p-6 rounded-xl shadow-sm">
           <h3 className="font-bold text-gray-800 mb-4">Serviços Mais Procurados</h3>
-           <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={serviceData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={60}
-                  outerRadius={80}
-                  fill="#8884d8"
-                  paddingAngle={5}
-                  dataKey="value"
-                >
-                  {serviceData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip />
-              </PieChart>
-            </ResponsiveContainer>
+           <div className="space-y-4">
+            <div className="h-44">
+            {serviceData.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={serviceData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={60}
+                    outerRadius={80}
+                    fill="#8884d8"
+                    paddingAngle={5}
+                    dataKey="value"
+                  >
+                    {serviceData.map((entry, index) => (
+                      <Cell key={`cell-${entry.id}-${index}`} fill={COLORS[index % COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip formatter={(value) => [`${value} agendamentos`, 'Quantidade']} />
+                </PieChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="h-full flex items-center justify-center rounded-lg border border-dashed border-gray-200 text-sm text-gray-500">
+                Sem dados de serviços.
+              </div>
+            )}
+            </div>
+
+            {serviceData.length > 0 && (
+              <div className="space-y-2">
+                {serviceData.map((item, index) => (
+                  <div key={`service-rank-${item.id}`} className="flex items-center justify-between text-sm border border-gray-100 rounded-lg px-3 py-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: COLORS[index % COLORS.length] }} />
+                      <span className="text-xs font-bold text-gray-400 w-5">#{index + 1}</span>
+                      <span className="text-gray-700 font-medium truncate">{item.name}</span>
+                    </div>
+                    <span className="text-xs font-bold text-blue-700 bg-blue-50 border border-blue-100 rounded-full px-2 py-1 whitespace-nowrap">
+                      {item.value} ag.
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="bg-white p-6 rounded-xl shadow-sm">
+          <h3 className="font-bold text-gray-800 mb-4">Top 5 Profissionais</h3>
+          <div className="space-y-3">
+            {topProfessionals.map((professional, index) => (
+              <div key={professional.id} className="flex items-center justify-between gap-3 rounded-lg border border-gray-100 px-3 py-2.5">
+                <div className="flex items-center gap-3 min-w-0">
+                  <span className="w-6 text-xs font-bold text-gray-400 text-center">#{index + 1}</span>
+                  {safeAvatarSrc(professional.avatar) ? (
+                    <img src={safeAvatarSrc(professional.avatar)} alt={professional.name} className="w-9 h-9 rounded-full object-cover" referrerPolicy="no-referrer" />
+                  ) : (
+                    <div className="w-9 h-9 rounded-full bg-blue-50 text-blue-600 font-bold flex items-center justify-center text-sm">
+                      {safeInitial(professional.name)}
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-gray-800 truncate">{professional.name}</p>
+                    <p className="text-xs text-gray-500 truncate">{professional.role || 'Profissional'}</p>
+                  </div>
+                </div>
+                <span className="text-xs font-bold text-blue-700 bg-blue-50 border border-blue-100 rounded-full px-2 py-1 whitespace-nowrap">
+                  {professional.total} ag.
+                </span>
+              </div>
+            ))}
+
+            {topProfessionals.length === 0 && (
+              <div className="h-64 flex items-center justify-center rounded-lg border border-dashed border-gray-200 text-sm text-gray-500">
+                Sem agendamentos para ranking.
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -3180,6 +3391,7 @@ const ProfessionalModal = ({ isOpen, onClose, onSave, professionalToEdit }: {
     name: professionalToEdit?.name || '',
     phone: professionalToEdit?.linkedPhone || professionalToEdit?.phone || '',
     cargo: professionalToEdit?.role || 'Profissional',
+    commissionPercentage: professionalToEdit?.commissionPercentage !== undefined ? String(professionalToEdit.commissionPercentage) : '',
     avatar: professionalToEdit?.avatar || '',
     hasAccess: Boolean(linkedUser),
     email: professionalToEdit?.linkedEmail || '',
@@ -3196,6 +3408,7 @@ const ProfessionalModal = ({ isOpen, onClose, onSave, professionalToEdit }: {
       name: professionalToEdit?.name || '',
       phone: professionalToEdit?.linkedPhone || professionalToEdit?.phone || '',
       cargo: professionalToEdit?.role || 'Profissional',
+      commissionPercentage: professionalToEdit?.commissionPercentage !== undefined ? String(professionalToEdit.commissionPercentage) : '',
       avatar: professionalToEdit?.avatar || '',
       hasAccess: Boolean(existingLinkedUser),
       email: professionalToEdit?.linkedEmail || '',
@@ -3247,9 +3460,16 @@ const ProfessionalModal = ({ isOpen, onClose, onSave, professionalToEdit }: {
       return;
     }
 
+    const comissao = Number(String(formData.commissionPercentage || '').replace(',', '.'));
+    if (Number.isNaN(comissao) || comissao < 0 || comissao > 100) {
+      setSaveError('Comissão inválida. Informe um percentual entre 0 e 100.');
+      return;
+    }
+
     setIsSaving(true);
     const result = await onSave({
       ...formData,
+      commissionPercentage: Number(comissao.toFixed(2)),
       email: formData.email.trim().toLowerCase(),
       password: formData.password || undefined,
     });
@@ -3266,16 +3486,16 @@ const ProfessionalModal = ({ isOpen, onClose, onSave, professionalToEdit }: {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">
-      <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden animate-fade-in shadow-2xl">
-        <div className="p-6 border-b flex justify-between items-center bg-gray-50">
+    <div className="fixed inset-0 bg-black/50 flex items-start sm:items-center justify-center z-[60] p-3 sm:p-4 overflow-y-auto">
+      <div className="bg-white rounded-2xl w-full max-w-md max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-2rem)] overflow-hidden animate-fade-in shadow-2xl flex flex-col my-auto">
+        <div className="p-4 sm:p-6 border-b flex justify-between items-center bg-gray-50 shrink-0">
           <h3 className="text-xl font-bold text-gray-800">{professionalToEdit ? 'Editar Profissional' : 'Novo Profissional'}</h3>
           <button onClick={onClose} className="p-2 hover:bg-gray-200 rounded-full transition-colors">
             <X size={20} className="text-gray-500" />
           </button>
         </div>
 
-        <div className="p-6 space-y-4">
+        <div className="p-4 sm:p-6 space-y-4 overflow-y-auto">
           <div className="flex flex-col items-center gap-4 mb-4">
             <div className="relative group">
               <div className="w-24 h-24 rounded-full bg-gray-100 border-2 border-dashed border-gray-300 flex items-center justify-center overflow-hidden">
@@ -3323,6 +3543,20 @@ const ProfessionalModal = ({ isOpen, onClose, onSave, professionalToEdit }: {
               onChange={e => setFormData(prev => ({ ...prev, cargo: e.target.value }))}
               className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
               placeholder="Ex: Barbeiro"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-bold text-gray-700 mb-1">Comissão (%)</label>
+            <input
+              type="number"
+              min={0}
+              max={100}
+              step="0.01"
+              value={formData.commissionPercentage}
+              onChange={e => setFormData(prev => ({ ...prev, commissionPercentage: e.target.value }))}
+              className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+              placeholder="Ex: 40"
             />
           </div>
 
@@ -3391,7 +3625,7 @@ const ProfessionalModal = ({ isOpen, onClose, onSave, professionalToEdit }: {
           )}
         </div>
 
-        <div className="p-6 bg-gray-50 border-t flex gap-3">
+        <div className="p-4 sm:p-6 bg-gray-50 border-t flex gap-3 shrink-0">
           <button
             onClick={onClose}
             className="flex-1 py-3 border border-gray-200 rounded-xl font-bold text-gray-600 hover:bg-white transition-all"
@@ -3439,7 +3673,7 @@ const WhatsAppIntegration = () => {
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
         <div className="p-6 flex items-start justify-between border-b border-gray-50">
           <div className="flex items-center gap-4">
-            <div className="w-12 h-12 bg-green-50 rounded-xl flex items-center justify-center text-green-600">
+            <div className="w-12 h-12 bg-blue-50 rounded-xl flex items-center justify-center text-blue-600">
               <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
                 <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
               </svg>
@@ -3448,8 +3682,8 @@ const WhatsAppIntegration = () => {
               <h3 className="font-bold text-gray-800">WhatsApp</h3>
               <div className="mt-1">
                 {status === 'CONNECTED' ? (
-                  <span className="inline-flex items-center gap-1.5 py-0.5 px-2 rounded-full text-[10px] font-bold bg-green-100 text-green-700 uppercase tracking-wider border border-green-200">
-                    <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
+                  <span className="inline-flex items-center gap-1.5 py-0.5 px-2 rounded-full text-[10px] font-bold bg-blue-100 text-blue-700 uppercase tracking-wider border border-blue-200">
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>
                     Connected
                   </span>
                 ) : (
@@ -3479,7 +3713,7 @@ const WhatsAppIntegration = () => {
               </p>
               <button 
                 onClick={generateQR}
-                className="w-full bg-green-600 text-white py-3 rounded-xl font-bold hover:bg-green-700 shadow-lg shadow-green-100 transition-all flex items-center justify-center gap-2"
+                className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 shadow-lg shadow-blue-100 transition-all flex items-center justify-center gap-2"
               >
                 Generate QR Code
               </button>
@@ -3488,7 +3722,7 @@ const WhatsAppIntegration = () => {
 
           {status === 'LOADING' && (
             <div className="py-12 flex flex-col items-center gap-4">
-              <div className="w-12 h-12 border-4 border-green-100 border-t-green-600 rounded-full animate-spin"></div>
+              <div className="w-12 h-12 border-4 border-blue-100 border-t-blue-600 rounded-full animate-spin"></div>
               <p className="text-gray-500 font-medium">Generating secure QR Code...</p>
             </div>
           )}
@@ -3510,7 +3744,7 @@ const WhatsAppIntegration = () => {
               </div>
               <button 
                 onClick={generateQR}
-                className="text-green-600 font-bold text-sm hover:underline"
+                className="text-blue-600 font-bold text-sm hover:underline"
               >
                 Regenerate QR Code
               </button>
@@ -3519,14 +3753,14 @@ const WhatsAppIntegration = () => {
 
           {status === 'CONNECTED' && (
             <div className="space-y-6">
-              <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center text-green-600 mx-auto">
+              <div className="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 mx-auto">
                 <Smile size={40} />
               </div>
               <div className="space-y-1">
                 <p className="text-2xl font-bold text-gray-900">+55 11 99999-9999</p>
                 <p className="text-gray-500">Account connected and active</p>
               </div>
-              <div className="flex items-center gap-2 justify-center bg-green-50 text-green-700 px-4 py-2 rounded-full text-sm font-medium">
+              <div className="flex items-center gap-2 justify-center bg-blue-50 text-blue-700 px-4 py-2 rounded-full text-sm font-medium">
                 <Zap size={16} />
                 Ready to send notifications
               </div>
@@ -3563,7 +3797,7 @@ const EmailIntegration = () => {
   };
 
   return (
-    <div className="max-w-2xl mt-8">
+    <div className="max-w-2xl">
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
         <div className="p-6 flex items-start justify-between border-b border-gray-50">
           <div className="flex items-center gap-4">
@@ -3668,7 +3902,10 @@ const EmailIntegration = () => {
 const SettingsManagement = () => {
   const navigate = useNavigate();
   const { users, professionals, addUser, updateUser, deleteUser, categories, addCategory, updateCategory, deleteCategory, businessHours, saveBusinessHours, brandIdentity, saveBrandIdentity } = useAppContext();
-  const [activeSubTab, setActiveSubTab] = useState<'PROFESSIONALS' | 'ALERTS' | 'PROFILES' | 'HOURS' | 'INTEGRATIONS' | 'OTHER' | 'BILLING' | 'CONTACT' | 'CATEGORIES'>('PROFESSIONALS');
+  const [activeSubTab, setActiveSubTab] = useState<'PROFESSIONALS' | 'ALERTS' | 'PROFILES' | 'HOURS' | 'INTEGRATIONS' | 'OTHER' | 'ONBOARDING' | 'BILLING' | 'CONTACT' | 'CATEGORIES'>('PROFESSIONALS');
+  const [activeIntegrationTab, setActiveIntegrationTab] = useState<'WHATSAPP' | 'EMAIL'>('WHATSAPP');
+  const [activeBillingTab, setActiveBillingTab] = useState<'PLAN' | 'UTILIZATION' | 'PAYMENT' | 'INVOICING'>('PLAN');
+  const [activeIdentityTab, setActiveIdentityTab] = useState<'LOGO' | 'COLORS' | 'OTHER_PREFERENCES'>('LOGO');
 
   const [isProfessionalModalOpen, setIsProfessionalModalOpen] = useState(false);
   const [selectedProfessional, setSelectedProfessional] = useState<any>(null);
@@ -3692,6 +3929,9 @@ const SettingsManagement = () => {
   const [identityError, setIdentityError] = useState<string | null>(null);
   const [identitySuccess, setIdentitySuccess] = useState<string | null>(null);
   const [isSavingIdentity, setIsSavingIdentity] = useState(false);
+  const logoInputRef = useRef<HTMLInputElement | null>(null);
+  const loginLogoInputRef = useRef<HTMLInputElement | null>(null);
+  const loginBackgroundInputRef = useRef<HTMLInputElement | null>(null);
 
   const identityPalettes = [
     { name: 'Modern Blue', primary: '#2563eb', secondary: '#eff6ff', label: 'Confiança' },
@@ -3761,6 +4001,8 @@ const SettingsManagement = () => {
     const result = await saveBrandIdentity({
       name,
       logoUrl: identityForm.logoUrl?.trim() || undefined,
+      loginLogoUrl: identityForm.loginLogoUrl?.trim() || undefined,
+      loginBackgroundUrl: identityForm.loginBackgroundUrl?.trim() || undefined,
       iconName: identityForm.iconName || 'scissors',
       primaryColor: identityForm.primaryColor || '#2563eb',
       secondaryColor: identityForm.secondaryColor || '#eff6ff',
@@ -3776,10 +4018,72 @@ const SettingsManagement = () => {
     setIsSavingIdentity(false);
   };
 
+  const handleIdentityImageUpload =
+    (field: 'logoUrl' | 'loginLogoUrl' | 'loginBackgroundUrl') =>
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      event.target.value = '';
+      if (!file) return;
+
+      const maxFileSize = field === 'loginBackgroundUrl' ? 2 * 1024 * 1024 : 1024 * 1024;
+      const maxDataUrlLength = field === 'loginBackgroundUrl' ? 3200000 : 300000;
+
+      if (!file.type.startsWith('image/')) {
+        setIdentityError('Arquivo inválido. Selecione uma imagem.');
+        setIdentitySuccess(null);
+        return;
+      }
+
+      if (file.size > maxFileSize) {
+        setIdentityError(field === 'loginBackgroundUrl'
+          ? 'A imagem de fundo é muito grande. Use um arquivo de até 2MB.'
+          : 'A imagem é muito grande. Use um arquivo de até 1MB.');
+        setIdentitySuccess(null);
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = typeof reader.result === 'string' ? reader.result : '';
+        if (!result.startsWith('data:image/')) {
+          setIdentityError('Arquivo inválido. Selecione uma imagem.');
+          setIdentitySuccess(null);
+          return;
+        }
+
+        if (result.length > maxDataUrlLength) {
+          setIdentityError(field === 'loginBackgroundUrl'
+            ? 'A imagem de fundo ficou grande para salvar. Use uma imagem menor.'
+            : 'A imagem ficou grande para salvar. Use uma imagem menor.');
+          setIdentitySuccess(null);
+          return;
+        }
+
+        setIdentityForm(prev => ({ ...prev, [field]: result }));
+        setIdentityError(null);
+        setIdentitySuccess(null);
+      };
+      reader.onerror = () => {
+        setIdentityError('Não foi possível ler o arquivo selecionado.');
+        setIdentitySuccess(null);
+      };
+      reader.readAsDataURL(file);
+    };
+
+  const safeIdentityAssetSrc = (value?: string | null, maxLength = 300000) => {
+    if (!value || typeof value !== 'string') return undefined;
+    if (value.length > maxLength) return undefined;
+    if (value.startsWith('data:image/') || value.startsWith('http://') || value.startsWith('https://')) {
+      return value;
+    }
+    return undefined;
+  };
+
   const handleSaveProfessional = async (data: any): Promise<{ success: boolean; error?: string }> => {
     const nome = (data.name || '').trim();
     const telefone = (data.phone || '').trim();
     const cargo = (data.cargo || '').trim() || 'Profissional';
+    const comissaoPercentual = Number(data.commissionPercentage || 0);
     const fotoUrl = safeAvatarSrc(data.avatar) || null;
 
     if (!nome) {
@@ -3794,6 +4098,7 @@ const SettingsManagement = () => {
         cargo,
         telefone,
         foto_url: fotoUrl,
+        comissao_percentual: Number(comissaoPercentual.toFixed(2)),
         ativo: true,
       });
 
@@ -3806,6 +4111,7 @@ const SettingsManagement = () => {
         cargo,
         telefone,
         foto_url: fotoUrl,
+        comissao_percentual: Number(comissaoPercentual.toFixed(2)),
         ativo: true,
       });
 
@@ -3945,8 +4251,9 @@ const SettingsManagement = () => {
     { id: 'HOURS', label: 'Horários', icon: <Clock size={18} />, desc: 'Funcionamento' },
     { id: 'INTEGRATIONS', label: 'Integrações', icon: <Zap size={18} />, desc: 'APIs externas' },
     { id: 'BILLING', label: 'Faturamento', icon: <CreditCard size={18} />, desc: 'Assinatura e faturas' },
-    { id: 'CONTACT', label: 'Fale Conosco', icon: <Headphones size={18} />, desc: 'Suporte e ajuda' },
     { id: 'OTHER', label: 'Identidade', icon: <Settings size={18} />, desc: 'Marca e cores' },
+    { id: 'ONBOARDING', label: 'Onboarding', icon: <List size={18} />, desc: 'Configuração inicial' },
+    { id: 'CONTACT', label: 'Fale Conosco', icon: <Headphones size={18} />, desc: 'Suporte e ajuda' },
   ];
 
   const adminUsersCount = users.filter(u => u.role === 'ADMIN').length;
@@ -4053,7 +4360,7 @@ const SettingsManagement = () => {
                       <div>
                         <p className="font-medium text-gray-900">{professional.name}</p>
                         <p className="text-xs text-gray-500">
-                          {professional.role || 'Profissional'}
+                          {professional.role || 'Profissional'} • Comissão: {Number(professional.commissionPercentage || 0).toFixed(2)}%
                           {(professional.linkedEmail || professional.linkedPhone)
                             ? ` • ${professional.linkedEmail || professional.linkedPhone}`
                             : ' • Sem acesso ao sistema'}
@@ -4257,7 +4564,7 @@ const SettingsManagement = () => {
               <div className="space-y-4">
                 <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
                   <div className="flex items-center gap-3">
-                    <div className="p-2 bg-green-100 text-green-600 rounded-lg"><MessageSquare size={20} /></div>
+                    <div className="p-2 bg-blue-100 text-blue-600 rounded-lg"><MessageSquare size={20} /></div>
                     <div>
                       <p className="font-medium text-gray-900">WhatsApp (API Oficial)</p>
                       <p className="text-xs text-gray-500">Lembretes automáticos 2h antes do agendamento</p>
@@ -4410,161 +4717,238 @@ const SettingsManagement = () => {
 
           {activeSubTab === 'BILLING' && (
             <div className="space-y-8">
-              {/* Subscription Plan */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="md:col-span-2 p-6 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-2xl text-white shadow-lg shadow-blue-100 relative overflow-hidden">
-                  <div className="relative z-10">
-                    <div className="flex justify-between items-start mb-8">
-                      <div>
-                        <p className="text-blue-100 text-xs font-bold uppercase tracking-wider mb-1">Plano Atual</p>
-                        <h4 className="text-2xl font-bold">Profissional Plus</h4>
-                      </div>
-                      <span className="px-3 py-1 bg-white/20 backdrop-blur-md rounded-full text-[10px] font-bold uppercase">Ativo</span>
-                    </div>
-                    
-                    <div className="flex items-end gap-2 mb-6">
-                      <span className="text-4xl font-bold">R$ 89,90</span>
-                      <span className="text-blue-200 text-sm mb-1">/ mês</span>
-                    </div>
+              <div className="space-y-4">
+                <h3 className="font-bold text-gray-800">Faturamento</h3>
 
-                    <div className="flex flex-wrap gap-4 pt-4 border-t border-white/10">
-                      <div className="flex items-center gap-2">
-                        <Check size={14} className="text-blue-300" />
-                        <span className="text-xs text-blue-50">Agendamentos ilimitados</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Check size={14} className="text-blue-300" />
-                        <span className="text-xs text-blue-50">Até 5 profissionais</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Check size={14} className="text-blue-300" />
-                        <span className="text-xs text-blue-50">WhatsApp API inclusa</span>
-                      </div>
-                    </div>
-                  </div>
-                  {/* Decorative circles */}
-                  <div className="absolute -right-10 -bottom-10 w-40 h-40 bg-white/10 rounded-full blur-3xl" />
-                  <div className="absolute -left-10 -top-10 w-40 h-40 bg-blue-400/20 rounded-full blur-3xl" />
-                </div>
-
-                <div className="p-6 bg-gray-50 rounded-2xl border border-gray-100 flex flex-col justify-between">
-                  <div>
-                    <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Próximo Vencimento</p>
-                    <div className="flex items-center gap-3 mb-2">
-                      <Calendar size={20} className="text-blue-600" />
-                      <span className="text-lg font-bold text-gray-800">15 Abr, 2024</span>
-                    </div>
-                    <p className="text-xs text-gray-500 leading-relaxed">Sua assinatura será renovada automaticamente usando seu método de pagamento padrão.</p>
-                  </div>
-                  <button className="w-full mt-6 py-2.5 bg-white border border-gray-200 text-gray-700 rounded-xl text-sm font-bold hover:bg-gray-50 transition-all">
-                    Alterar Plano
+                <nav className="flex overflow-x-auto pb-2 gap-2 no-scrollbar -mx-2 px-2">
+                  <button
+                    onClick={() => setActiveBillingTab('PLAN')}
+                    className={`px-4 py-2 rounded-full text-xs sm:text-sm font-bold whitespace-nowrap transition-all ${
+                      activeBillingTab === 'PLAN'
+                        ? 'bg-blue-600 text-white shadow-md shadow-blue-100'
+                        : 'bg-white border border-gray-200 text-gray-600'
+                    }`}
+                  >
+                    Plano
                   </button>
-                </div>
+                  <button
+                    onClick={() => setActiveBillingTab('UTILIZATION')}
+                    className={`px-4 py-2 rounded-full text-xs sm:text-sm font-bold whitespace-nowrap transition-all ${
+                      activeBillingTab === 'UTILIZATION'
+                        ? 'bg-blue-600 text-white shadow-md shadow-blue-100'
+                        : 'bg-white border border-gray-200 text-gray-600'
+                    }`}
+                  >
+                    Utilização
+                  </button>
+                  <button
+                    onClick={() => setActiveBillingTab('PAYMENT')}
+                    className={`px-4 py-2 rounded-full text-xs sm:text-sm font-bold whitespace-nowrap transition-all ${
+                      activeBillingTab === 'PAYMENT'
+                        ? 'bg-blue-600 text-white shadow-md shadow-blue-100'
+                        : 'bg-white border border-gray-200 text-gray-600'
+                    }`}
+                  >
+                    Pagamento
+                  </button>
+                  <button
+                    onClick={() => setActiveBillingTab('INVOICING')}
+                    className={`px-4 py-2 rounded-full text-xs sm:text-sm font-bold whitespace-nowrap transition-all ${
+                      activeBillingTab === 'INVOICING'
+                        ? 'bg-blue-600 text-white shadow-md shadow-blue-100'
+                        : 'bg-white border border-gray-200 text-gray-600'
+                    }`}
+                  >
+                    Faturamento
+                  </button>
+                </nav>
               </div>
 
-              {/* Usage Stats */}
-              <div className="space-y-4">
-                <div className="flex items-center gap-2">
-                  <BarChart3 size={18} className="text-gray-500" />
-                  <h4 className="font-bold text-gray-700">Uso do Sistema (Mês Atual)</h4>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="p-4 bg-white border border-gray-100 rounded-xl space-y-3">
-                    <div className="flex justify-between text-xs font-bold">
-                      <span className="text-gray-600">Agendamentos</span>
-                      <span className="text-blue-600">452 / ∞</span>
-                    </div>
-                    <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                      <div className="h-full bg-blue-500 rounded-full" style={{ width: '45%' }} />
-                    </div>
-                  </div>
-                  <div className="p-4 bg-white border border-gray-100 rounded-xl space-y-3">
-                    <div className="flex justify-between text-xs font-bold">
-                      <span className="text-gray-600">Profissionais Ativos</span>
-                      <span className="text-blue-600">3 / 5</span>
-                    </div>
-                    <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                      <div className="h-full bg-blue-500 rounded-full" style={{ width: '60%' }} />
-                    </div>
-                  </div>
-                </div>
-              </div>
+              {activeBillingTab === 'PLAN' && (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <div className="md:col-span-2 p-6 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-2xl text-white shadow-lg shadow-blue-100 relative overflow-hidden">
+                    <div className="relative z-10">
+                      <div className="flex justify-between items-start mb-8">
+                        <div>
+                          <p className="text-blue-100 text-xs font-bold uppercase tracking-wider mb-1">Plano Atual</p>
+                          <h4 className="text-2xl font-bold">Profissional Plus</h4>
+                        </div>
+                        <span className="px-3 py-1 bg-white/20 backdrop-blur-md rounded-full text-[10px] font-bold uppercase">Ativo</span>
+                      </div>
 
-              {/* Payment Methods */}
-              <div className="space-y-4">
-                <div className="flex justify-between items-center">
-                  <div className="flex items-center gap-2">
-                    <CreditCard size={18} className="text-gray-500" />
-                    <h4 className="font-bold text-gray-700">Métodos de Pagamento</h4>
-                  </div>
-                  <button className="text-blue-600 text-xs font-bold hover:underline flex items-center gap-1">
-                    <Plus size={14} /> Adicionar Novo
-                  </button>
-                </div>
-                <div className="p-4 border border-blue-100 bg-blue-50/30 rounded-xl flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <div className="w-12 h-8 bg-white border border-gray-200 rounded flex items-center justify-center shadow-sm">
-                      <span className="text-[10px] font-black italic text-blue-800">VISA</span>
+                      <div className="flex items-end gap-2 mb-6">
+                        <span className="text-4xl font-bold">R$ 89,90</span>
+                        <span className="text-blue-200 text-sm mb-1">/ mês</span>
+                      </div>
+
+                      <div className="flex flex-wrap gap-4 pt-4 border-t border-white/10">
+                        <div className="flex items-center gap-2">
+                          <Check size={14} className="text-blue-300" />
+                          <span className="text-xs text-blue-50">Agendamentos ilimitados</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Check size={14} className="text-blue-300" />
+                          <span className="text-xs text-blue-50">Até 5 profissionais</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Check size={14} className="text-blue-300" />
+                          <span className="text-xs text-blue-50">WhatsApp API inclusa</span>
+                        </div>
+                      </div>
                     </div>
+                    <div className="absolute -right-10 -bottom-10 w-40 h-40 bg-white/10 rounded-full blur-3xl" />
+                    <div className="absolute -left-10 -top-10 w-40 h-40 bg-blue-400/20 rounded-full blur-3xl" />
+                  </div>
+
+                  <div className="p-6 bg-gray-50 rounded-2xl border border-gray-100 flex flex-col justify-between">
                     <div>
-                      <p className="text-sm font-bold text-gray-800">Visa terminando em 4242</p>
-                      <p className="text-xs text-gray-500">Expira em 12/2026 • Principal</p>
+                      <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Próximo Vencimento</p>
+                      <div className="flex items-center gap-3 mb-2">
+                        <Calendar size={20} className="text-blue-600" />
+                        <span className="text-lg font-bold text-gray-800">15 Abr, 2024</span>
+                      </div>
+                      <p className="text-xs text-gray-500 leading-relaxed">Sua assinatura será renovada automaticamente usando seu método de pagamento padrão.</p>
+                    </div>
+                    <button className="w-full mt-6 py-2.5 bg-white border border-gray-200 text-gray-700 rounded-xl text-sm font-bold hover:bg-gray-50 transition-all">
+                      Alterar Plano
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {activeBillingTab === 'UTILIZATION' && (
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2">
+                    <BarChart3 size={18} className="text-gray-500" />
+                    <h4 className="font-bold text-gray-700">Uso do Sistema (Mês Atual)</h4>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="p-4 bg-white border border-gray-100 rounded-xl space-y-3">
+                      <div className="flex justify-between text-xs font-bold">
+                        <span className="text-gray-600">Agendamentos</span>
+                        <span className="text-blue-600">452 / ∞</span>
+                      </div>
+                      <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                        <div className="h-full bg-blue-500 rounded-full" style={{ width: '45%' }} />
+                      </div>
+                    </div>
+                    <div className="p-4 bg-white border border-gray-100 rounded-xl space-y-3">
+                      <div className="flex justify-between text-xs font-bold">
+                        <span className="text-gray-600">Profissionais Ativos</span>
+                        <span className="text-blue-600">3 / 5</span>
+                      </div>
+                      <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                        <div className="h-full bg-blue-500 rounded-full" style={{ width: '60%' }} />
+                      </div>
                     </div>
                   </div>
-                  <button className="text-gray-400 hover:text-gray-600">
-                    <Edit size={16} />
-                  </button>
                 </div>
-              </div>
+              )}
 
-              {/* Billing History */}
-              <div className="space-y-4">
-                <div className="flex items-center gap-2">
-                  <Receipt size={18} className="text-gray-500" />
-                  <h4 className="font-bold text-gray-700">Histórico de Faturamento</h4>
+              {activeBillingTab === 'PAYMENT' && (
+                <div className="space-y-4">
+                  <div className="flex justify-between items-center">
+                    <div className="flex items-center gap-2">
+                      <CreditCard size={18} className="text-gray-500" />
+                      <h4 className="font-bold text-gray-700">Métodos de Pagamento</h4>
+                    </div>
+                    <button className="text-blue-600 text-xs font-bold hover:underline flex items-center gap-1">
+                      <Plus size={14} /> Adicionar Novo
+                    </button>
+                  </div>
+                  <div className="p-4 border border-blue-100 bg-blue-50/30 rounded-xl flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-8 bg-white border border-gray-200 rounded flex items-center justify-center shadow-sm">
+                        <span className="text-[10px] font-black italic text-blue-800">VISA</span>
+                      </div>
+                      <div>
+                        <p className="text-sm font-bold text-gray-800">Visa terminando em 4242</p>
+                        <p className="text-xs text-gray-500">Expira em 12/2026 • Principal</p>
+                      </div>
+                    </div>
+                    <button className="text-gray-400 hover:text-gray-600">
+                      <Edit size={16} />
+                    </button>
+                  </div>
                 </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-sm">
-                    <thead>
-                      <tr className="text-gray-400 text-[10px] font-bold uppercase tracking-wider border-b border-gray-100">
-                        <th className="pb-3 font-bold">Data</th>
-                        <th className="pb-3 font-bold">Valor</th>
-                        <th className="pb-3 font-bold">Status</th>
-                        <th className="pb-3 font-bold text-right">Ação</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-50">
-                      {[
-                        { date: '15 Mar, 2024', amount: 'R$ 89,90', status: 'Pago' },
-                        { date: '15 Fev, 2024', amount: 'R$ 89,90', status: 'Pago' },
-                        { date: '15 Jan, 2024', amount: 'R$ 89,90', status: 'Pago' }
-                      ].map((invoice, i) => (
-                        <tr key={i} className="group">
-                          <td className="py-4 font-medium text-gray-700">{invoice.date}</td>
-                          <td className="py-4 font-bold text-gray-900">{invoice.amount}</td>
-                          <td className="py-4">
-                            <span className="px-2 py-0.5 bg-green-100 text-green-700 rounded-full text-[10px] font-bold">
-                              {invoice.status}
-                            </span>
-                          </td>
-                          <td className="py-4 text-right">
-                            <button className="text-gray-400 hover:text-blue-600 transition-colors">
-                              <Receipt size={16} />
-                            </button>
-                          </td>
+              )}
+
+              {activeBillingTab === 'INVOICING' && (
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2">
+                    <Receipt size={18} className="text-gray-500" />
+                    <h4 className="font-bold text-gray-700">Histórico de Faturamento</h4>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm">
+                      <thead>
+                        <tr className="text-gray-400 text-[10px] font-bold uppercase tracking-wider border-b border-gray-100">
+                          <th className="pb-3 font-bold">Data</th>
+                          <th className="pb-3 font-bold">Valor</th>
+                          <th className="pb-3 font-bold">Status</th>
+                          <th className="pb-3 font-bold text-right">Ação</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody className="divide-y divide-gray-50">
+                        {[
+                          { date: '15 Mar, 2024', amount: 'R$ 89,90', status: 'Pago' },
+                          { date: '15 Fev, 2024', amount: 'R$ 89,90', status: 'Pago' },
+                          { date: '15 Jan, 2024', amount: 'R$ 89,90', status: 'Pago' }
+                        ].map((invoice, i) => (
+                          <tr key={i} className="group">
+                            <td className="py-4 font-medium text-gray-700">{invoice.date}</td>
+                            <td className="py-4 font-bold text-gray-900">{invoice.amount}</td>
+                            <td className="py-4">
+                              <span className="px-2 py-0.5 bg-green-100 text-green-700 rounded-full text-[10px] font-bold">
+                                {invoice.status}
+                              </span>
+                            </td>
+                            <td className="py-4 text-right">
+                              <button className="text-gray-400 hover:text-blue-600 transition-colors">
+                                <Receipt size={16} />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           )}
 
           {activeSubTab === 'INTEGRATIONS' && (
             <div className="space-y-8">
-              <WhatsAppIntegration />
-              <EmailIntegration />
+              <div className="space-y-4">
+                <h3 className="font-bold text-gray-800">Integrações</h3>
+
+                <nav className="flex overflow-x-auto pb-2 gap-2 no-scrollbar -mx-2 px-2">
+                  <button
+                    onClick={() => setActiveIntegrationTab('WHATSAPP')}
+                    className={`px-4 py-2 rounded-full text-xs sm:text-sm font-bold whitespace-nowrap transition-all ${
+                      activeIntegrationTab === 'WHATSAPP'
+                        ? 'bg-blue-600 text-white shadow-md shadow-blue-100'
+                        : 'bg-white border border-gray-200 text-gray-600'
+                    }`}
+                  >
+                    WhatsApp
+                  </button>
+                  <button
+                    onClick={() => setActiveIntegrationTab('EMAIL')}
+                    className={`px-4 py-2 rounded-full text-xs sm:text-sm font-bold whitespace-nowrap transition-all ${
+                      activeIntegrationTab === 'EMAIL'
+                        ? 'bg-blue-600 text-white shadow-md shadow-blue-100'
+                        : 'bg-white border border-gray-200 text-gray-600'
+                    }`}
+                  >
+                    Email
+                  </button>
+                </nav>
+              </div>
+
+              {activeIntegrationTab === 'WHATSAPP' && <WhatsAppIntegration />}
+              {activeIntegrationTab === 'EMAIL' && <EmailIntegration />}
             </div>
           )}
 
@@ -4584,14 +4968,14 @@ const SettingsManagement = () => {
                   href="https://wa.me/5511999999999" 
                   target="_blank" 
                   rel="noopener noreferrer"
-                  className="p-6 bg-white border border-gray-100 rounded-2xl shadow-sm hover:shadow-md hover:border-green-200 transition-all group text-center"
+                  className="p-6 bg-white border border-gray-100 rounded-2xl shadow-sm hover:shadow-md hover:border-blue-200 transition-all group text-center"
                 >
-                  <div className="w-12 h-12 bg-green-50 text-green-600 rounded-xl flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform">
+                  <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform">
                     <MessageSquare size={24} />
                   </div>
                   <h4 className="font-bold text-gray-800 mb-1">WhatsApp</h4>
                   <p className="text-xs text-gray-500 mb-4">Resposta em até 15 min</p>
-                  <div className="flex items-center justify-center gap-2 text-green-600 font-bold text-sm">
+                  <div className="flex items-center justify-center gap-2 text-blue-600 font-bold text-sm">
                     Iniciar conversa <ExternalLink size={14} />
                   </div>
                 </a>
@@ -4614,14 +4998,14 @@ const SettingsManagement = () => {
                 {/* Phone Contact */}
                 <a 
                   href="tel:+551140028922" 
-                  className="p-6 bg-white border border-gray-100 rounded-2xl shadow-sm hover:shadow-md hover:border-purple-200 transition-all group text-center"
+                  className="p-6 bg-white border border-gray-100 rounded-2xl shadow-sm hover:shadow-md hover:border-blue-200 transition-all group text-center"
                 >
-                  <div className="w-12 h-12 bg-purple-50 text-purple-600 rounded-xl flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform">
+                  <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform">
                     <Phone size={24} />
                   </div>
                   <h4 className="font-bold text-gray-800 mb-1">Telefone</h4>
                   <p className="text-xs text-gray-500 mb-4">Atendimento imediato</p>
-                  <div className="flex items-center justify-center gap-2 text-purple-600 font-bold text-sm">
+                  <div className="flex items-center justify-center gap-2 text-blue-600 font-bold text-sm">
                     Ligar agora <ExternalLink size={14} />
                   </div>
                 </a>
@@ -4649,220 +5033,401 @@ const SettingsManagement = () => {
             <div className="space-y-8">
               <div className="space-y-6">
                 <h3 className="font-bold text-gray-800">Identidade Visual</h3>
-                
-                <div className="space-y-4">
-                  <label className="block text-sm font-medium text-gray-700">Logo ou Ícone da Barbearia</label>
-                  
-                  <div className="flex flex-wrap gap-6 items-start">
-                    <div className="w-24 h-24 rounded-2xl bg-gray-100 border-2 border-dashed border-gray-200 flex items-center justify-center text-gray-400 overflow-hidden relative group">
-                      {identityForm.logoUrl ? (
-                        <img src={identityForm.logoUrl} alt="Logo da barbearia" className="w-full h-full object-cover" />
-                      ) : (
-                        <BrandIcon name={identityForm.iconName} className="w-10 h-10" />
-                      )}
-                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-[10px] font-bold uppercase">
-                        Preview
-                      </div>
-                    </div>
 
-                    <div className="flex-1 space-y-4 min-w-[280px]">
-                      <div className="space-y-2">
-                        <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider">URL da logo (opcional)</label>
-                        <div className="flex items-center gap-2">
-                          <span className="p-2 bg-gray-100 rounded-lg text-gray-500"><Camera size={14} /></span>
-                          <input
-                            type="text"
-                            value={identityForm.logoUrl || ''}
-                            onChange={(e) => {
-                              setIdentityForm(prev => ({ ...prev, logoUrl: e.target.value }));
-                              setIdentityError(null);
-                              setIdentitySuccess(null);
-                            }}
-                            placeholder="https://... ou data:image/..."
-                            className="w-full p-2.5 bg-white border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                          />
+                <nav className="flex overflow-x-auto pb-2 gap-2 no-scrollbar -mx-2 px-2">
+                  <button
+                    onClick={() => setActiveIdentityTab('LOGO')}
+                    className={`px-4 py-2 rounded-full text-xs sm:text-sm font-bold whitespace-nowrap transition-all ${
+                      activeIdentityTab === 'LOGO'
+                        ? 'bg-blue-600 text-white shadow-md shadow-blue-100'
+                        : 'bg-white border border-gray-200 text-gray-600'
+                    }`}
+                  >
+                    Logo
+                  </button>
+                  <button
+                    onClick={() => setActiveIdentityTab('COLORS')}
+                    className={`px-4 py-2 rounded-full text-xs sm:text-sm font-bold whitespace-nowrap transition-all ${
+                      activeIdentityTab === 'COLORS'
+                        ? 'bg-blue-600 text-white shadow-md shadow-blue-100'
+                        : 'bg-white border border-gray-200 text-gray-600'
+                    }`}
+                  >
+                    Cores
+                  </button>
+                  <button
+                    onClick={() => setActiveIdentityTab('OTHER_PREFERENCES')}
+                    className={`px-4 py-2 rounded-full text-xs sm:text-sm font-bold whitespace-nowrap transition-all ${
+                      activeIdentityTab === 'OTHER_PREFERENCES'
+                        ? 'bg-blue-600 text-white shadow-md shadow-blue-100'
+                        : 'bg-white border border-gray-200 text-gray-600'
+                    }`}
+                  >
+                    Outras Preferências
+                  </button>
+                </nav>
+
+                {activeIdentityTab === 'LOGO' && (
+                  <>
+                    <div className="space-y-4">
+                      <label className="block text-sm font-medium text-gray-700">Logo da Barbearia</label>
+
+                      <div className="flex flex-wrap gap-6 items-start">
+                        <div className="w-24 h-24 rounded-2xl bg-gray-100 border-2 border-dashed border-gray-200 flex items-center justify-center text-gray-400 overflow-hidden relative group">
+                          {safeIdentityAssetSrc(identityForm.logoUrl, 300000) ? (
+                            <img src={safeIdentityAssetSrc(identityForm.logoUrl, 300000)} alt="Logo da barbearia" className="w-full h-full object-cover" />
+                          ) : (
+                            <BrandIcon name={identityForm.iconName} className="w-10 h-10" />
+                          )}
+                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-[10px] font-bold uppercase">
+                            Preview
+                          </div>
                         </div>
-                      </div>
 
-                      <div>
-                        <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Ou escolha um ícone tradicional</p>
-                        <div className="flex flex-wrap gap-2">
-                          {[
-                            { id: 'scissors', icon: Scissors },
-                            { id: 'store', icon: Store },
-                            { id: 'user', icon: UserIcon },
-                            { id: 'sparkles', icon: Sparkles },
-                            { id: 'heart', icon: Heart },
-                            { id: 'zap', icon: Zap }
-                          ].map((item) => (
-                            <button 
-                              key={item.id}
+                        <div className="flex-1 space-y-4 min-w-[280px]">
+                          <input
+                            ref={logoInputRef}
+                            type="file"
+                            accept="image/*"
+                            onChange={handleIdentityImageUpload('logoUrl')}
+                            className="hidden"
+                          />
+                          <div className="flex flex-col gap-2">
+                            <button
+                              type="button"
+                              onClick={() => logoInputRef.current?.click()}
+                              className="inline-flex items-center gap-2 px-3 py-2 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 w-fit"
+                            >
+                              <Upload size={14} /> Upload da logo
+                            </button>
+                            <button
                               type="button"
                               onClick={() => {
-                                setIdentityForm(prev => ({ ...prev, iconName: item.id }));
+                                setIdentityForm(prev => ({ ...prev, logoUrl: undefined }));
                                 setIdentityError(null);
                                 setIdentitySuccess(null);
                               }}
-                              className={`w-10 h-10 rounded-lg flex items-center justify-center transition-all border ${identityForm.iconName === item.id ? 'bg-blue-50 border-blue-200 text-blue-600' : 'bg-white border-gray-200 text-gray-400 hover:border-gray-300 hover:text-gray-600'}`}
+                              className="inline-flex items-center gap-2 px-3 py-2 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 w-fit disabled:opacity-50"
+                              disabled={!identityForm.logoUrl}
                             >
-                              <item.icon size={20} />
+                              Remover
                             </button>
-                          ))}
+                            <p className="text-xs text-gray-500">Use uma imagem de até 1MB.</p>
+                          </div>
+
+                          <div>
+                            <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Ou escolha um ícone tradicional</p>
+                            <div className="flex flex-wrap gap-2">
+                              {[
+                                { id: 'scissors', icon: Scissors },
+                                { id: 'store', icon: Store },
+                                { id: 'user', icon: UserIcon },
+                                { id: 'sparkles', icon: Sparkles },
+                                { id: 'heart', icon: Heart },
+                                { id: 'zap', icon: Zap }
+                              ].map((item) => (
+                                <button
+                                  key={item.id}
+                                  type="button"
+                                  onClick={() => {
+                                    setIdentityForm(prev => ({ ...prev, iconName: item.id, logoUrl: undefined }));
+                                    setIdentityError(null);
+                                    setIdentitySuccess(null);
+                                  }}
+                                  className={`w-10 h-10 rounded-lg flex items-center justify-center transition-all border ${identityForm.iconName === item.id && !identityForm.logoUrl ? 'bg-blue-50 border-blue-200 text-blue-600' : 'bg-white border-gray-200 text-gray-400 hover:border-gray-300 hover:text-gray-600'}`}
+                                >
+                                  <item.icon size={20} />
+                                </button>
+                              ))}
+                            </div>
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </div>
-                </div>
 
-                <div className="space-y-6 pt-6 border-t border-gray-100">
-                  <div className="flex items-center gap-2">
-                    <Palette size={18} className="text-gray-500" />
-                    <h4 className="font-bold text-gray-700">Cores da Marca</h4>
-                  </div>
+                    {identityError && (
+                      <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                        {identityError}
+                      </div>
+                    )}
 
-                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
-                    <div className="space-y-4">
-                      <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Paletas Sugeridas</p>
-                      <div className="grid grid-cols-2 gap-3">
-                        {identityPalettes.map((palette) => (
-                          <button 
-                            key={palette.name}
+                    {identitySuccess && (
+                      <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
+                        {identitySuccess}
+                      </div>
+                    )}
+
+                    <div className="pt-4">
+                      <button
+                        onClick={handleSaveIdentity}
+                        disabled={isSavingIdentity}
+                        className="bg-blue-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed"
+                      >
+                        {isSavingIdentity ? 'Salvando...' : 'Salvar Alterações'}
+                      </button>
+                    </div>
+                  </>
+                )}
+
+                {activeIdentityTab === 'COLORS' && (
+                  <>
+                    <div className="space-y-6 pt-2">
+                      <div className="flex items-center gap-2">
+                        <Palette size={18} className="text-gray-500" />
+                        <h4 className="font-bold text-gray-700">Cores da Marca</h4>
+                      </div>
+
+                      <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
+                        <div className="space-y-4">
+                          <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Paletas Sugeridas</p>
+                          <div className="grid grid-cols-2 gap-3">
+                            {identityPalettes.map((palette) => (
+                              <button
+                                key={palette.name}
+                                type="button"
+                                onClick={() => {
+                                  setIdentityForm(prev => ({
+                                    ...prev,
+                                    primaryColor: palette.primary,
+                                    secondaryColor: palette.secondary,
+                                  }));
+                                  setIdentityError(null);
+                                  setIdentitySuccess(null);
+                                }}
+                                className={`p-3 rounded-xl border text-left transition-all group hover:shadow-md ${identityForm.primaryColor === palette.primary && identityForm.secondaryColor === palette.secondary ? 'border-blue-200 bg-blue-50/30 ring-1 ring-blue-100' : 'border-gray-100 bg-white hover:border-gray-200'}`}
+                              >
+                                <div className="flex items-center justify-between mb-2">
+                                  <div className="flex gap-1">
+                                    <div className="w-4 h-4 rounded-full" style={{ backgroundColor: palette.primary }} />
+                                    <div className="w-4 h-4 rounded-full" style={{ backgroundColor: palette.secondary }} />
+                                  </div>
+                                  {identityForm.primaryColor === palette.primary && identityForm.secondaryColor === palette.secondary && <Check size={12} className="text-blue-600" />}
+                                </div>
+                                <p className="text-[11px] font-bold text-gray-700">{palette.name}</p>
+                                <p className="text-[10px] text-gray-400">{palette.label}</p>
+                              </button>
+                            ))}
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Cor Primária</label>
+                              <input
+                                type="text"
+                                value={identityForm.primaryColor || ''}
+                                onChange={(e) => {
+                                  setIdentityForm(prev => ({ ...prev, primaryColor: e.target.value }));
+                                  setIdentityError(null);
+                                  setIdentitySuccess(null);
+                                }}
+                                placeholder="#2563eb"
+                                className="w-full p-2 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 outline-none"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Cor Secundária</label>
+                              <input
+                                type="text"
+                                value={identityForm.secondaryColor || ''}
+                                onChange={(e) => {
+                                  setIdentityForm(prev => ({ ...prev, secondaryColor: e.target.value }));
+                                  setIdentityError(null);
+                                  setIdentitySuccess(null);
+                                }}
+                                placeholder="#eff6ff"
+                                className="w-full p-2 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 outline-none"
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="space-y-4">
+                          <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Preview da Interface</p>
+                          <div className="rounded-2xl p-6 border border-gray-100 space-y-4" style={{ backgroundColor: identityForm.secondaryColor || '#f9fafb' }}>
+                            <div className="flex gap-2">
+                              <button className="px-4 py-2 text-white rounded-lg text-xs font-bold" style={{ backgroundColor: identityForm.primaryColor || '#2563eb' }}>
+                                Agendar Agora
+                              </button>
+                              <button className="px-4 py-2 bg-white rounded-lg text-xs font-bold" style={{ border: `1px solid ${identityForm.primaryColor || '#2563eb'}`, color: identityForm.primaryColor || '#2563eb' }}>
+                                Cancelar
+                              </button>
+                            </div>
+                            <div className="flex gap-2">
+                              <span className="px-2 py-1 rounded-full text-[10px] font-bold" style={{ backgroundColor: identityForm.secondaryColor || '#eff6ff', color: identityForm.primaryColor || '#2563eb' }}>
+                                Confirmado
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {identityError && (
+                      <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                        {identityError}
+                      </div>
+                    )}
+
+                    {identitySuccess && (
+                      <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
+                        {identitySuccess}
+                      </div>
+                    )}
+
+                    <div className="pt-4">
+                      <button
+                        onClick={handleSaveIdentity}
+                        disabled={isSavingIdentity}
+                        className="bg-blue-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed"
+                      >
+                        {isSavingIdentity ? 'Salvando...' : 'Salvar Alterações'}
+                      </button>
+                    </div>
+                  </>
+                )}
+                {activeIdentityTab === 'OTHER_PREFERENCES' && (
+                  <div className="space-y-4 pt-2">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Nome da Empresa</label>
+                      <input
+                        type="text"
+                        value={identityForm.name || ''}
+                        onChange={(e) => {
+                          setIdentityForm(prev => ({ ...prev, name: e.target.value }));
+                          setIdentityError(null);
+                          setIdentitySuccess(null);
+                        }}
+                        className="w-full p-2 border rounded-lg"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Logo da Tela de Login (opcional)</label>
+                      <input
+                        ref={loginLogoInputRef}
+                        type="file"
+                        accept="image/*"
+                        onChange={handleIdentityImageUpload('loginLogoUrl')}
+                        className="hidden"
+                      />
+                      <div className="flex items-center gap-4">
+                        <div className="w-20 h-20 rounded-xl border-2 border-dashed border-gray-300 bg-gray-50 flex items-center justify-center overflow-hidden">
+                          {safeIdentityAssetSrc(identityForm.loginLogoUrl, 300000) ? (
+                            <img src={safeIdentityAssetSrc(identityForm.loginLogoUrl, 300000)} alt="Logo login" className="w-full h-full object-contain" />
+                          ) : (
+                            <Camera size={22} className="text-gray-400" />
+                          )}
+                        </div>
+                        <div className="flex-1 flex flex-col gap-2">
+                          <button
+                            type="button"
+                            onClick={() => loginLogoInputRef.current?.click()}
+                            className="inline-flex items-center gap-2 px-3 py-2 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 w-fit"
+                          >
+                            <Upload size={14} /> Upload da logo
+                          </button>
+                          <button
                             type="button"
                             onClick={() => {
-                              setIdentityForm(prev => ({
-                                ...prev,
-                                primaryColor: palette.primary,
-                                secondaryColor: palette.secondary,
-                              }));
+                              setIdentityForm(prev => ({ ...prev, loginLogoUrl: undefined }));
                               setIdentityError(null);
                               setIdentitySuccess(null);
                             }}
-                            className={`p-3 rounded-xl border text-left transition-all group hover:shadow-md ${identityForm.primaryColor === palette.primary && identityForm.secondaryColor === palette.secondary ? 'border-blue-200 bg-blue-50/30 ring-1 ring-blue-100' : 'border-gray-100 bg-white hover:border-gray-200'}`}
+                            className="inline-flex items-center gap-2 px-3 py-2 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 w-fit disabled:opacity-50"
+                            disabled={!identityForm.loginLogoUrl}
                           >
-                            <div className="flex items-center justify-between mb-2">
-                              <div className="flex gap-1">
-                                <div className="w-4 h-4 rounded-full" style={{ backgroundColor: palette.primary }} />
-                                <div className="w-4 h-4 rounded-full" style={{ backgroundColor: palette.secondary }} />
-                              </div>
-                              {identityForm.primaryColor === palette.primary && identityForm.secondaryColor === palette.secondary && <Check size={12} className="text-blue-600" />}
-                            </div>
-                            <p className="text-[11px] font-bold text-gray-700">{palette.name}</p>
-                            <p className="text-[10px] text-gray-400">{palette.label}</p>
+                            Remover
                           </button>
-                        ))}
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Cor Primária</label>
-                          <input
-                            type="text"
-                            value={identityForm.primaryColor || ''}
-                            onChange={(e) => {
-                              setIdentityForm(prev => ({ ...prev, primaryColor: e.target.value }));
-                              setIdentityError(null);
-                              setIdentitySuccess(null);
-                            }}
-                            placeholder="#2563eb"
-                            className="w-full p-2 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 outline-none"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Cor Secundária</label>
-                          <input
-                            type="text"
-                            value={identityForm.secondaryColor || ''}
-                            onChange={(e) => {
-                              setIdentityForm(prev => ({ ...prev, secondaryColor: e.target.value }));
-                              setIdentityError(null);
-                              setIdentitySuccess(null);
-                            }}
-                            placeholder="#eff6ff"
-                            className="w-full p-2 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 outline-none"
-                          />
                         </div>
                       </div>
                     </div>
 
-                    <div className="space-y-4">
-                      <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Preview da Interface</p>
-                      <div className="rounded-2xl p-6 border border-gray-100 space-y-4" style={{ backgroundColor: identityForm.secondaryColor || '#f9fafb' }}>
-                        <div className="flex gap-2">
-                          <button className="px-4 py-2 text-white rounded-lg text-xs font-bold" style={{ backgroundColor: identityForm.primaryColor || '#2563eb' }}>
-                            Agendar Agora
-                          </button>
-                          <button className="px-4 py-2 bg-white rounded-lg text-xs font-bold" style={{ border: `1px solid ${identityForm.primaryColor || '#2563eb'}`, color: identityForm.primaryColor || '#2563eb' }}>
-                            Cancelar
-                          </button>
-                        </div>
-                        <div className="flex gap-2">
-                          <span className="px-2 py-1 rounded-full text-[10px] font-bold" style={{ backgroundColor: identityForm.secondaryColor || '#eff6ff', color: identityForm.primaryColor || '#2563eb' }}>
-                            Confirmado
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="pt-8 border-t border-gray-100">
-                  <div className="bg-blue-50 p-6 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-4">
                     <div>
-                      <h4 className="font-bold text-blue-900">Configuração Inicial</h4>
-                      <p className="text-sm text-blue-700">Deseja refazer o passo a passo de configuração da sua barbearia?</p>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Imagem de Fundo da Tela de Login (opcional)</label>
+                      <input
+                        ref={loginBackgroundInputRef}
+                        type="file"
+                        accept="image/*"
+                        onChange={handleIdentityImageUpload('loginBackgroundUrl')}
+                        className="hidden"
+                      />
+                      <div className="flex flex-col gap-2">
+                        <button
+                          type="button"
+                          onClick={() => loginBackgroundInputRef.current?.click()}
+                          className="inline-flex items-center gap-2 px-3 py-2 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 w-fit"
+                        >
+                          <Upload size={14} /> Upload do fundo
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIdentityForm(prev => ({ ...prev, loginBackgroundUrl: undefined }));
+                            setIdentityError(null);
+                            setIdentitySuccess(null);
+                          }}
+                          className="inline-flex items-center gap-2 px-3 py-2 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 w-fit disabled:opacity-50"
+                          disabled={!identityForm.loginBackgroundUrl}
+                        >
+                          Remover
+                        </button>
+                      </div>
+                      <div
+                        className="mt-3 h-24 rounded-lg border border-gray-200 bg-cover bg-center flex items-center justify-center bg-gray-50"
+                        style={safeIdentityAssetSrc(identityForm.loginBackgroundUrl, 3200000)
+                          ? { backgroundImage: `url('${safeIdentityAssetSrc(identityForm.loginBackgroundUrl, 3200000)}')` }
+                          : undefined}
+                      >
+                        {!safeIdentityAssetSrc(identityForm.loginBackgroundUrl, 3200000) && <Camera size={22} className="text-gray-400" />}
+                      </div>
                     </div>
-                    <button 
-                      onClick={() => {
-                        localStorage.setItem('manual_onboarding_request', 'true');
-                        localStorage.setItem('onboarding_completed', 'false');
-                        navigate('/onboarding');
-                      }}
-                      className="px-6 py-3 bg-blue-600 text-white rounded-xl font-bold text-sm hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 whitespace-nowrap"
-                    >
-                      Iniciar Onboarding
-                    </button>
+
+                    {identityError && (
+                      <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                        {identityError}
+                      </div>
+                    )}
+
+                    {identitySuccess && (
+                      <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
+                        {identitySuccess}
+                      </div>
+                    )}
+
+                    <div className="pt-4">
+                      <button
+                        onClick={handleSaveIdentity}
+                        disabled={isSavingIdentity}
+                        className="bg-blue-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed"
+                      >
+                        {isSavingIdentity ? 'Salvando...' : 'Salvar Alterações'}
+                      </button>
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
+            </div>
+          )}
 
-              <div className="space-y-6 pt-6 border-t border-gray-100">
-                <h3 className="font-bold text-gray-800">Outras Preferências</h3>
-                <div className="space-y-4">
+          {activeSubTab === 'ONBOARDING' && (
+            <div className="space-y-8">
+              <div className="space-y-6">
+                <h3 className="font-bold text-gray-800">Onboarding</h3>
+                <div className="bg-blue-50 p-6 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-4">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Nome da Empresa</label>
-                    <input
-                      type="text"
-                      value={identityForm.name || ''}
-                      onChange={(e) => {
-                        setIdentityForm(prev => ({ ...prev, name: e.target.value }));
-                        setIdentityError(null);
-                        setIdentitySuccess(null);
-                      }}
-                      className="w-full p-2 border rounded-lg"
-                    />
+                    <h4 className="font-bold text-blue-900">Configuração Inicial</h4>
+                    <p className="text-sm text-blue-700">Deseja refazer o passo a passo de configuração da sua barbearia?</p>
                   </div>
-
-                  {identityError && (
-                    <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                      {identityError}
-                    </div>
-                  )}
-
-                  {identitySuccess && (
-                    <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
-                      {identitySuccess}
-                    </div>
-                  )}
-
-                  <div className="pt-4">
-                    <button
-                      onClick={handleSaveIdentity}
-                      disabled={isSavingIdentity}
-                      className="bg-blue-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed"
-                    >
-                      {isSavingIdentity ? 'Salvando...' : 'Salvar Alterações'}
-                    </button>
-                  </div>
+                  <button 
+                    onClick={() => {
+                      localStorage.setItem('manual_onboarding_request', 'true');
+                      localStorage.setItem('onboarding_completed', 'false');
+                      navigate('/onboarding');
+                    }}
+                    className="px-6 py-3 bg-blue-600 text-white rounded-xl font-bold text-sm hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 whitespace-nowrap"
+                  >
+                    Iniciar Onboarding
+                  </button>
                 </div>
               </div>
             </div>
@@ -4874,12 +5439,14 @@ const SettingsManagement = () => {
 };
 
 const FinanceManagement = () => {
-  const [summary, setSummary] = useState<FinanceiroResumoApi | null>(null);
   const [receivables, setReceivables] = useState<RecebivelApi[]>([]);
-  const [statusFilter, setStatusFilter] = useState<'ALL' | 'OPEN' | 'PARTIAL' | 'PAID' | 'REFUNDED' | 'CANCELLED'>('ALL');
+  const [professionalFilter, setProfessionalFilter] = useState<string>('ALL');
+  const [professionalOptions, setProfessionalOptions] = useState<Array<{ id: string; nome: string }>>([]);
+  const [startDateFilter, setStartDateFilter] = useState<string>('');
+  const [endDateFilter, setEndDateFilter] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
-  const [sortBy, setSortBy] = useState<'LAST_ATTENDANCE' | 'DESCRIPTION' | 'PROFESSIONAL' | 'BRUTO' | 'RECEBIDO' | 'ESTORNADO' | 'SALDO' | 'STATUS'>('LAST_ATTENDANCE');
+  const [sortBy, setSortBy] = useState<'LAST_ATTENDANCE' | 'DESCRIPTION' | 'PROFESSIONAL' | 'BRUTO' | 'RECEBIDO' | 'ESTORNADO' | 'SALDO' | 'COMMISSION' | 'STATUS'>('LAST_ATTENDANCE');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -4903,7 +5470,6 @@ const FinanceManagement = () => {
     const token = localStorage.getItem('auth_token');
     if (!token) {
       setIsLoading(false);
-      setSummary(null);
       setReceivables([]);
       setErrorMessage('Sessão expirada. Faça login novamente para acessar o Financeiro.');
       return;
@@ -4912,27 +5478,31 @@ const FinanceManagement = () => {
     setIsLoading(true);
     setErrorMessage(null);
 
-    const [summaryResponse, receivablesResponse] = await Promise.all([
-      getFinanceiroResumoApi(),
+    const [receivablesResponse, professionalsResponse] = await Promise.all([
       listRecebiveisApi({
-        status: statusFilter === 'ALL' ? undefined : statusFilter,
+        profissional_id: professionalFilter === 'ALL' ? undefined : professionalFilter,
+        data_inicio: startDateFilter || undefined,
+        data_fim: endDateFilter || undefined,
         limit: 500,
       }),
+      listProfissionaisApi(),
     ]);
 
-    if (!summaryResponse.success) {
-      setErrorMessage(summaryResponse.error);
-      setIsLoading(false);
-      return;
-    }
-
     if (!receivablesResponse.success) {
-      setErrorMessage(receivablesResponse.error);
+      setErrorMessage('error' in receivablesResponse ? receivablesResponse.error : 'Falha ao carregar recebíveis.');
       setIsLoading(false);
       return;
     }
 
-    setSummary(summaryResponse.data);
+    if (professionalsResponse.success) {
+      setProfessionalOptions(
+        (professionalsResponse.data || []).map((item) => ({
+          id: String(item.id || ''),
+          nome: String(item.nome || 'Profissional'),
+        })),
+      );
+    }
+
     setReceivables(receivablesResponse.data || []);
     setCurrentPage(1);
     setIsLoading(false);
@@ -4940,7 +5510,13 @@ const FinanceManagement = () => {
 
   useEffect(() => {
     loadFinanceData();
-  }, [statusFilter]);
+  }, [professionalFilter, startDateFilter, endDateFilter]);
+
+  const clearFilters = () => {
+    setProfessionalFilter('ALL');
+    setStartDateFilter('');
+    setEndDateFilter('');
+  };
 
   const openPaymentModal = (receivable: RecebivelApi) => {
     setActionModal({ open: true, type: 'PAYMENT', receivable });
@@ -4989,7 +5565,7 @@ const FinanceManagement = () => {
       });
 
       if (!response.success) {
-        setErrorMessage(response.error);
+        setErrorMessage('error' in response ? response.error : 'Falha ao registrar pagamento.');
         setIsSubmitting(false);
         return;
       }
@@ -5006,7 +5582,7 @@ const FinanceManagement = () => {
       });
 
       if (!response.success) {
-        setErrorMessage(response.error);
+        setErrorMessage('error' in response ? response.error : 'Falha ao registrar estorno.');
         setIsSubmitting(false);
         return;
       }
@@ -5041,6 +5617,54 @@ const FinanceManagement = () => {
       0,
     );
   };
+
+  const getRowCommissionEstimate = (row: RecebivelApi) => {
+    if (typeof row.comissao_estimada === 'number') {
+      return Number(row.comissao_estimada || 0);
+    }
+
+    const percentual = Number(row.comissao_percentual || 0);
+    const recebidoLiquido = Math.max(Number(row.valor_recebido || 0) - Number(row.valor_estornado || 0), 0);
+    return Number(((recebidoLiquido * percentual) / 100).toFixed(2));
+  };
+
+  const summary = useMemo<FinanceiroResumoApi>(() => {
+    const total_recebiveis = receivables.length;
+    let a_receber = 0;
+    let recebido_bruto = 0;
+    let estornado = 0;
+    let quitado = 0;
+    let comissao_estimada = 0;
+
+    receivables.forEach((row) => {
+      const valorBruto = Number(row.valor_bruto || 0);
+      const valorRecebido = Number(row.valor_recebido || 0);
+      const valorEstornado = Number(row.valor_estornado || 0);
+      const status = String(row.status || '');
+
+      if (status === 'OPEN' || status === 'PARTIAL') {
+        a_receber += Math.max(valorBruto - valorRecebido + valorEstornado, 0);
+      }
+      if (status === 'PAID' || status === 'PARTIAL' || status === 'REFUNDED') {
+        recebido_bruto += valorRecebido;
+      }
+      if (status === 'PAID') {
+        quitado += valorBruto;
+      }
+      estornado += valorEstornado;
+      comissao_estimada += getRowCommissionEstimate(row);
+    });
+
+    return {
+      total_recebiveis,
+      a_receber,
+      recebido_bruto,
+      estornado,
+      recebido_liquido: recebido_bruto - estornado,
+      quitado,
+      comissao_estimada,
+    };
+  }, [receivables]);
 
   const filteredSortedReceivables = useMemo(() => {
     const query = searchTerm.trim().toLowerCase();
@@ -5086,6 +5710,9 @@ const FinanceManagement = () => {
       if (sortBy === 'SALDO') {
         return (getRowSaldo(left) - getRowSaldo(right)) * multiplier;
       }
+      if (sortBy === 'COMMISSION') {
+        return (getRowCommissionEstimate(left) - getRowCommissionEstimate(right)) * multiplier;
+      }
       if (sortBy === 'STATUS') {
         return String(left.status || '').localeCompare(String(right.status || '')) * multiplier;
       }
@@ -5103,7 +5730,7 @@ const FinanceManagement = () => {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, statusFilter]);
+  }, [searchTerm, professionalFilter, startDateFilter, endDateFilter]);
 
   useEffect(() => {
     if (currentPage > totalPages) {
@@ -5111,7 +5738,7 @@ const FinanceManagement = () => {
     }
   }, [currentPage, totalPages]);
 
-  const toggleSort = (column: 'LAST_ATTENDANCE' | 'DESCRIPTION' | 'PROFESSIONAL' | 'BRUTO' | 'RECEBIDO' | 'ESTORNADO' | 'SALDO' | 'STATUS') => {
+  const toggleSort = (column: 'LAST_ATTENDANCE' | 'DESCRIPTION' | 'PROFESSIONAL' | 'BRUTO' | 'RECEBIDO' | 'ESTORNADO' | 'SALDO' | 'COMMISSION' | 'STATUS') => {
     if (sortBy === column) {
       setSortDirection(prev => (prev === 'asc' ? 'desc' : 'asc'));
       return;
@@ -5120,7 +5747,7 @@ const FinanceManagement = () => {
     setSortDirection(column === 'LAST_ATTENDANCE' ? 'desc' : 'asc');
   };
 
-  const sortIndicator = (column: 'LAST_ATTENDANCE' | 'DESCRIPTION' | 'PROFESSIONAL' | 'BRUTO' | 'RECEBIDO' | 'ESTORNADO' | 'SALDO' | 'STATUS') => {
+  const sortIndicator = (column: 'LAST_ATTENDANCE' | 'DESCRIPTION' | 'PROFESSIONAL' | 'BRUTO' | 'RECEBIDO' | 'ESTORNADO' | 'SALDO' | 'COMMISSION' | 'STATUS') => {
     if (sortBy !== column) return '↕';
     return sortDirection === 'asc' ? '↑' : '↓';
   };
@@ -5161,42 +5788,63 @@ const FinanceManagement = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+      <div className="flex flex-col gap-4">
         <div>
           <h2 className="text-2xl font-bold text-gray-800">Financeiro</h2>
           <p className="text-sm text-gray-500">Recebimentos, pagamentos parciais e estornos.</p>
         </div>
-        <div className="flex flex-col md:flex-row items-stretch md:items-center gap-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2">
           <input
             type="text"
             value={searchTerm}
             onChange={(event) => setSearchTerm(event.target.value)}
             placeholder="Pesquisar por cliente, serviço, profissional..."
-            className="px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm min-w-[280px]"
+            className="px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm sm:col-span-2 lg:col-span-2"
           />
+          <select
+            value={professionalFilter}
+            onChange={(event) => setProfessionalFilter(event.target.value)}
+            className="px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm"
+          >
+            <option value="ALL">Todos os profissionais</option>
+            {professionalOptions.map((item) => (
+              <option key={item.id} value={item.id}>{item.nome}</option>
+            ))}
+          </select>
+          <input
+            type="date"
+            value={startDateFilter}
+            max={endDateFilter || undefined}
+            onChange={(event) => setStartDateFilter(event.target.value)}
+            className="px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm"
+            aria-label="Data inicial"
+          />
+          <input
+            type="date"
+            value={endDateFilter}
+            min={startDateFilter || undefined}
+            onChange={(event) => setEndDateFilter(event.target.value)}
+            className="px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm"
+            aria-label="Data final"
+          />
+        </div>
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
           <button
             onClick={loadFinanceData}
             className="px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm font-medium hover:bg-gray-50"
           >
             Atualizar
           </button>
-          <select
-            value={statusFilter}
-            onChange={(event) => setStatusFilter(event.target.value as any)}
-            className="px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm"
+          <button
+            onClick={clearFilters}
+            className="px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm font-medium hover:bg-gray-50"
           >
-            <option value="ALL">Todos os status</option>
-            <option value="OPEN">Em aberto</option>
-            <option value="PARTIAL">Parcial</option>
-            <option value="PAID">Quitado</option>
-            <option value="REFUNDED">Estornado</option>
-            <option value="CANCELLED">Cancelado</option>
-          </select>
+            Limpar filtros
+          </button>
         </div>
       </div>
 
-      {summary && (
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
           <div className="bg-white p-5 rounded-xl shadow-sm border-l-4 border-yellow-500">
             <p className="text-xs text-gray-500">A receber</p>
             <p className="text-2xl font-bold text-gray-800">R$ {safeMoney(summary.a_receber)}</p>
@@ -5209,12 +5857,15 @@ const FinanceManagement = () => {
             <p className="text-xs text-gray-500">Quitado</p>
             <p className="text-2xl font-bold text-gray-800">R$ {safeMoney(summary.quitado)}</p>
           </div>
+          <div className="bg-white p-5 rounded-xl shadow-sm border-l-4 border-indigo-500">
+            <p className="text-xs text-gray-500">Comissão estimada</p>
+            <p className="text-2xl font-bold text-gray-800">R$ {safeMoney(summary.comissao_estimada)}</p>
+          </div>
           <div className="bg-white p-5 rounded-xl shadow-sm border-l-4 border-red-500">
             <p className="text-xs text-gray-500">Estornado</p>
             <p className="text-2xl font-bold text-gray-800">R$ {safeMoney(summary.estornado)}</p>
           </div>
-        </div>
-      )}
+      </div>
 
       <div className="bg-white rounded-xl shadow-sm overflow-hidden">
         <div className="px-6 py-4 border-b bg-gray-50/60 flex justify-between items-center">
@@ -5268,6 +5919,11 @@ const FinanceManagement = () => {
                   </button>
                 </th>
                 <th className="px-6 py-3">
+                  <button onClick={() => toggleSort('COMMISSION')} className="font-medium hover:text-gray-800">
+                    Comissão estimada {sortIndicator('COMMISSION')}
+                  </button>
+                </th>
+                <th className="px-6 py-3">
                   <button onClick={() => toggleSort('STATUS')} className="font-medium hover:text-gray-800">
                     Status {sortIndicator('STATUS')}
                   </button>
@@ -5278,7 +5934,7 @@ const FinanceManagement = () => {
             <tbody className="divide-y">
               {isLoading && (
                 <tr>
-                  <td colSpan={9} className="px-6 py-8 text-center text-gray-500">Carregando financeiro...</td>
+                  <td colSpan={10} className="px-6 py-8 text-center text-gray-500">Carregando financeiro...</td>
                 </tr>
               )}
 
@@ -5305,6 +5961,10 @@ const FinanceManagement = () => {
                     <td className="px-6 py-3">R$ {safeMoney(row.valor_recebido)}</td>
                     <td className="px-6 py-3">R$ {safeMoney(row.valor_estornado)}</td>
                     <td className="px-6 py-3 font-semibold">R$ {safeMoney(saldo)}</td>
+                    <td className="px-6 py-3">
+                      <div className="font-semibold">R$ {safeMoney(getRowCommissionEstimate(row))}</div>
+                      <div className="text-xs text-gray-500">{Number(row.comissao_percentual || 0).toFixed(2)}%</div>
+                    </td>
                     <td className="px-6 py-3">
                       <span className={`text-xs px-2 py-1 rounded-full ${statusChip(row.status)}`}>
                         {statusLabel(row.status)}
@@ -5334,7 +5994,7 @@ const FinanceManagement = () => {
 
               {!isLoading && paginatedReceivables.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="px-6 py-8 text-center text-gray-500">Nenhum recebível encontrado.</td>
+                  <td colSpan={10} className="px-6 py-8 text-center text-gray-500">Nenhum recebível encontrado.</td>
                 </tr>
               )}
             </tbody>

@@ -14,6 +14,18 @@ export const Login: React.FC = () => {
   const [isRecovering, setIsRecovering] = useState(false);
   const [recoverySuccess, setRecoverySuccess] = useState(false);
 
+  const safeImageUrl = (value?: string | null, maxLength = 300000) => {
+    if (!value || typeof value !== 'string') return undefined;
+    if (value.length > maxLength) return undefined;
+    if (value.startsWith('data:image/') || value.startsWith('http://') || value.startsWith('https://')) {
+      return value;
+    }
+    return undefined;
+  };
+
+  const loginLogoUrl = safeImageUrl(brandIdentity.loginLogoUrl || brandIdentity.logoUrl, 300000);
+  const loginBackgroundUrl = safeImageUrl(brandIdentity.loginBackgroundUrl, 3200000);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
@@ -53,7 +65,14 @@ export const Login: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100 p-4">
+    <div
+      className="min-h-screen flex items-center justify-center bg-gray-100 p-4"
+      style={loginBackgroundUrl ? {
+        backgroundImage: `linear-gradient(rgba(17, 24, 39, 0.55), rgba(17, 24, 39, 0.55)), url('${loginBackgroundUrl}')`,
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+      } : undefined}
+    >
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden">
         
         {/* Header Toggle */}
@@ -82,6 +101,14 @@ export const Login: React.FC = () => {
 
         <div className="p-8">
           <div className="text-center mb-8">
+            {loginLogoUrl && (
+              <img
+                src={loginLogoUrl}
+                alt="Logo da empresa"
+                className="h-14 object-contain mx-auto mb-4"
+                referrerPolicy="no-referrer"
+              />
+            )}
             <h1 className="text-2xl font-bold text-gray-800">Bem-vindo ao {brandIdentity.name || 'AgendeFácil'}</h1>
             <p className="text-gray-500 mt-2">
               {isClient ? 'Acesse seu histórico e agende serviços.' : 'Gerencie sua unidade e equipe.'}

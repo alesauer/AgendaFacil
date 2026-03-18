@@ -40,7 +40,7 @@ class ProfissionaisRepository(BaseRepository):
         if is_db_ready():
             return query_all(
                 """
-                SELECT id, barbearia_id, nome, cargo, telefone, foto_url, ativo
+                SELECT id, barbearia_id, nome, cargo, telefone, foto_url, comissao_percentual, ativo
                 FROM profissionais
                 WHERE barbearia_id = %s
                 ORDER BY nome
@@ -52,7 +52,7 @@ class ProfissionaisRepository(BaseRepository):
             supabase = get_supabase_client()
             response = (
                 supabase.table("profissionais")
-                .select("id,barbearia_id,nome,cargo,telefone,foto_url,ativo")
+                .select("id,barbearia_id,nome,cargo,telefone,foto_url,comissao_percentual,ativo")
                 .eq("barbearia_id", barbearia_id)
                 .order("nome")
                 .execute()
@@ -68,17 +68,26 @@ class ProfissionaisRepository(BaseRepository):
         cargo: str,
         telefone: str,
         foto_url: str | None,
+        comissao_percentual: float,
         profissional_id: str | None = None,
     ):
         ProfissionaisRepository.require_tenant(barbearia_id)
         if is_db_ready():
             return query_one(
                 """
-                INSERT INTO profissionais (id, barbearia_id, nome, cargo, telefone, foto_url, ativo)
-                VALUES (COALESCE(%s::uuid, gen_random_uuid()), %s, %s, %s, %s, %s, true)
-                RETURNING id, barbearia_id, nome, cargo, telefone, foto_url, ativo
+                INSERT INTO profissionais (id, barbearia_id, nome, cargo, telefone, foto_url, comissao_percentual, ativo)
+                VALUES (COALESCE(%s::uuid, gen_random_uuid()), %s, %s, %s, %s, %s, %s, true)
+                RETURNING id, barbearia_id, nome, cargo, telefone, foto_url, comissao_percentual, ativo
                 """,
-                (profissional_id, barbearia_id, nome, cargo, telefone, foto_url),
+                (
+                    profissional_id,
+                    barbearia_id,
+                    nome,
+                    cargo,
+                    telefone,
+                    foto_url,
+                    comissao_percentual,
+                ),
             )
 
         if is_supabase_ready():
@@ -93,6 +102,7 @@ class ProfissionaisRepository(BaseRepository):
                         "cargo": cargo,
                         "telefone": telefone,
                         "foto_url": foto_url,
+                        "comissao_percentual": comissao_percentual,
                         "ativo": True,
                     }
                 )
@@ -111,6 +121,7 @@ class ProfissionaisRepository(BaseRepository):
         cargo: str,
         telefone: str,
         foto_url: str | None,
+        comissao_percentual: float,
         ativo: bool,
     ):
         ProfissionaisRepository.require_tenant(barbearia_id)
@@ -118,11 +129,20 @@ class ProfissionaisRepository(BaseRepository):
             return query_one(
                 """
                 UPDATE profissionais
-                SET nome = %s, cargo = %s, telefone = %s, foto_url = %s, ativo = %s
+                SET nome = %s, cargo = %s, telefone = %s, foto_url = %s, comissao_percentual = %s, ativo = %s
                 WHERE barbearia_id = %s AND id = %s
-                RETURNING id, barbearia_id, nome, cargo, telefone, foto_url, ativo
+                RETURNING id, barbearia_id, nome, cargo, telefone, foto_url, comissao_percentual, ativo
                 """,
-                (nome, cargo, telefone, foto_url, ativo, barbearia_id, profissional_id),
+                (
+                    nome,
+                    cargo,
+                    telefone,
+                    foto_url,
+                    comissao_percentual,
+                    ativo,
+                    barbearia_id,
+                    profissional_id,
+                ),
             )
 
         if is_supabase_ready():
@@ -135,6 +155,7 @@ class ProfissionaisRepository(BaseRepository):
                         "cargo": cargo,
                         "telefone": telefone,
                         "foto_url": foto_url,
+                        "comissao_percentual": comissao_percentual,
                         "ativo": ativo,
                     }
                 )

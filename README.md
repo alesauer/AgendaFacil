@@ -55,6 +55,13 @@ No SQL Editor do Supabase, execute nesta ordem:
 - `backend/migrations/003_module3_seed_agendamentos_demo.sql`
 - `backend/migrations/004_module4_horarios_funcionamento.sql`
 - `backend/migrations/005_module5_identidade_visual.sql`
+- `backend/migrations/006_module6_usuarios_email.sql`
+- `backend/migrations/007_module7_agenda_financeiro.sql`
+- `backend/migrations/008_module8_clientes_email.sql`
+- `backend/migrations/009_module9_no_show_status.sql`
+- `backend/migrations/010_module10_financeiro_core.sql`
+- `backend/migrations/011_module11_login_brand_assets.sql`
+- `backend/migrations/012_module12_profissionais_comissao.sql`
 
 ### 2) Subir backend Flask
 
