@@ -17,6 +17,13 @@ import { Onboarding } from './views/Onboarding';
 
 // --- Contexts ---
 
+type ClientImportInput = {
+  name: string;
+  phone: string;
+  email?: string;
+  birthday?: string;
+};
+
 interface AppContextType {
   user: User | null;
   login: (phone: string, role: 'CLIENT' | 'ADMIN' | 'EMPLOYEE', password?: string) => Promise<void>;
@@ -39,6 +46,7 @@ interface AppContextType {
   professionals: Professional[];
   clients: Client[];
   addClient: (client: Client) => void;
+  importClients: (clientsToImport: ClientImportInput[]) => Promise<{ successCount: number; failed: Array<{ index: number; name: string; phone: string; error: string }> }>;
   updateClient: (client: Client) => void;
   deleteClient: (id: string) => Promise<{ success: boolean; error?: string }>;
   users: User[];
@@ -994,6 +1002,65 @@ const App: React.FC = () => {
     })();
   };
 
+  const importClients = async (
+    clientsToImport: ClientImportInput[]
+  ): Promise<{ successCount: number; failed: Array<{ index: number; name: string; phone: string; error: string }> }> => {
+    if (clientsToImport.length === 0) {
+      return { successCount: 0, failed: [] };
+    }
+
+    if (!isAdminApiSession()) {
+      const now = Date.now();
+      const mappedClients: Client[] = clientsToImport.map((item, index) => ({
+        id: `${now}-${index}`,
+        name: item.name,
+        phone: item.phone,
+        birthday: item.birthday || undefined,
+        totalSpent: 0,
+        haircutsCount: 0,
+        lastVisit: undefined,
+      }));
+      setClients(prev => [...prev, ...mappedClients]);
+      return { successCount: mappedClients.length, failed: [] };
+    }
+
+    const failed: Array<{ index: number; name: string; phone: string; error: string }> = [];
+    const createdClients: Client[] = [];
+
+    for (let index = 0; index < clientsToImport.length; index += 1) {
+      const current = clientsToImport[index];
+      const result = await createClienteApi({
+        nome: current.name,
+        telefone: current.phone,
+        email: current.email || null,
+        data_nascimento: current.birthday || null,
+      });
+
+      if (!result.success) {
+        failed.push({
+          index: index + 1,
+          name: current.name,
+          phone: current.phone,
+          error: ('error' in result && result.error) ? result.error : 'Falha ao importar cliente.',
+        });
+        continue;
+      }
+
+      createdClients.push({
+        ...mapClient(result.data),
+        totalSpent: 0,
+        haircutsCount: 0,
+        lastVisit: undefined,
+      });
+    }
+
+    if (createdClients.length > 0) {
+      setClients(prev => [...prev, ...createdClients]);
+    }
+
+    return { successCount: createdClients.length, failed };
+  };
+
   const updateClient = (updatedClient: Client) => {
     if (!isAdminApiSession()) {
       setClients(prev => prev.map(c => c.id === updatedClient.id ? updatedClient : c));
@@ -1263,7 +1330,7 @@ const App: React.FC = () => {
       appointments, addAppointment, updateAppointment, transitionAppointmentStatus, deleteAppointment,
       services, updateService, addService, deleteService,
       categories, addCategory, updateCategory, deleteCategory,
-      professionals, clients, addClient, updateClient, deleteClient,
+      professionals, clients, addClient, importClients, updateClient, deleteClient,
       users, addUser, updateUser, deleteUser,
       businessHours, saveBusinessHours,
       brandIdentity, saveBrandIdentity

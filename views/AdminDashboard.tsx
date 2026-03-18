@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAppContext } from '../App';
 import { useNavigate } from 'react-router-dom';
-import { BrandIdentity, Client, Service } from '../types';
+import { Appointment, BrandIdentity, Client, Service } from '../types';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { LayoutDashboard, Users, Calendar, Settings, LogOut, Plus, Edit, Trash2, DollarSign, X, Clock, Tag, Image as ImageIcon, Search, ChevronLeft, ChevronRight, Bell, Mail, MessageSquare, Shield, Globe, Menu, Scissors, Sparkles, Smile, Zap, Heart, Share2, RotateCcw, ChevronDown, Lock, Camera, Store, User as UserIcon, Palette, Check, CreditCard, Receipt, BarChart3, Phone, Headphones, ExternalLink, List } from 'lucide-react';
+import { LayoutDashboard, Users, Calendar, Settings, LogOut, Plus, Edit, Trash2, DollarSign, X, Clock, Tag, Image as ImageIcon, Search, ChevronLeft, ChevronRight, Bell, Mail, MessageSquare, Shield, Globe, Menu, Scissors, Sparkles, Smile, Zap, Heart, Share2, RotateCcw, ChevronDown, Lock, Camera, Store, User as UserIcon, Palette, Check, CreditCard, Receipt, BarChart3, Phone, Headphones, ExternalLink, List, Upload } from 'lucide-react';
 import { MOCK_APPOINTMENTS } from '../constants';
 import { createProfissionalApi, deleteProfissionalApi, updateProfissionalApi } from '../services/profissionaisApi';
 
@@ -563,12 +563,28 @@ const ServicesManagement = () => {
 };
 
 const ClientsManagement = () => {
-  const { clients, addClient, updateClient, deleteClient } = useAppContext();
+  const { clients, addClient, importClients, updateClient, deleteClient } = useAppContext();
+    type ImportResult = {
+      successCount: number;
+      failed: Array<{ index: number; name: string; phone: string; error: string }>;
+    };
+    type ImportClientDraft = {
+      name: string;
+      phone: string;
+      email?: string;
+      birthday?: string;
+    };
     type ClientSortKey = 'name' | 'phone' | 'haircutsCount' | 'totalSpent' | 'lastVisit';
     const [searchTerm, setSearchTerm] = useState('');
     const [sortBy, setSortBy] = useState<ClientSortKey>('name');
     const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+    const [importRows, setImportRows] = useState<ImportClientDraft[]>([]);
+    const [importFileName, setImportFileName] = useState('');
+    const [importError, setImportError] = useState<string | null>(null);
+    const [isImporting, setIsImporting] = useState(false);
+    const [importResult, setImportResult] = useState<ImportResult | null>(null);
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
     const [isBulkDeleteModalOpen, setIsBulkDeleteModalOpen] = useState(false);
     const [isDeletingClient, setIsDeletingClient] = useState(false);
@@ -715,6 +731,150 @@ const ClientsManagement = () => {
         setIsModalOpen(false);
     };
 
+    const importTemplate = `nome,telefone,email,data_nascimento\nJoão Silva,(11)98888-7777,joao@email.com,1990-05-15\nMaria Oliveira,(11)97777-6666,maria@email.com,1985-10-20\n`;
+
+    const parseCsvLine = (line: string): string[] => {
+      const values: string[] = [];
+      let current = '';
+      let inQuotes = false;
+
+      for (let index = 0; index < line.length; index += 1) {
+        const char = line[index];
+        const next = line[index + 1];
+
+        if (char === '"') {
+          if (inQuotes && next === '"') {
+            current += '"';
+            index += 1;
+            continue;
+          }
+          inQuotes = !inQuotes;
+          continue;
+        }
+
+        if (char === ',' && !inQuotes) {
+          values.push(current.trim());
+          current = '';
+          continue;
+        }
+
+        current += char;
+      }
+
+      values.push(current.trim());
+      return values;
+    };
+
+    const normalizeHeader = (value: string) => value.trim().toLowerCase();
+
+    const handleImportFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      setImportResult(null);
+      setImportError(null);
+      setImportRows([]);
+
+      if (!file) {
+        setImportFileName('');
+        return;
+      }
+
+      setImportFileName(file.name);
+      const content = await file.text();
+      const lines = content
+        .replace(/^\uFEFF/, '')
+        .split(/\r?\n/)
+        .filter(line => line.trim().length > 0);
+
+      if (lines.length < 2) {
+        setImportError('Arquivo CSV sem dados suficientes. Inclua cabeçalho e pelo menos 1 linha.');
+        return;
+      }
+
+      const headers = parseCsvLine(lines[0]).map(normalizeHeader);
+      const nameIndex = headers.indexOf('nome');
+      const phoneIndex = headers.indexOf('telefone');
+      const emailIndex = headers.indexOf('email');
+      const birthdayIndex = headers.indexOf('data_nascimento');
+
+      if (nameIndex === -1 || phoneIndex === -1) {
+        setImportError('Cabeçalho inválido. Use ao menos: nome, telefone.');
+        return;
+      }
+
+      const parsedRows: ImportClientDraft[] = [];
+      const parseErrors: string[] = [];
+      const seenPhones = new Set<string>();
+
+      for (let lineNumber = 2; lineNumber <= lines.length; lineNumber += 1) {
+        const row = parseCsvLine(lines[lineNumber - 1]);
+        const name = (row[nameIndex] || '').trim();
+        const phone = (row[phoneIndex] || '').trim();
+        const email = emailIndex >= 0 ? (row[emailIndex] || '').trim() : '';
+        const birthday = birthdayIndex >= 0 ? (row[birthdayIndex] || '').trim() : '';
+
+        if (!name && !phone && !email && !birthday) {
+          continue;
+        }
+
+        if (!name || !phone) {
+          parseErrors.push(`Linha ${lineNumber}: nome e telefone são obrigatórios.`);
+          continue;
+        }
+
+        if (birthday && !/^\d{4}-\d{2}-\d{2}$/.test(birthday)) {
+          parseErrors.push(`Linha ${lineNumber}: data_nascimento deve estar em YYYY-MM-DD.`);
+          continue;
+        }
+
+        const normalizedPhone = phone.replace(/\s+/g, '');
+        if (seenPhones.has(normalizedPhone)) {
+          parseErrors.push(`Linha ${lineNumber}: telefone duplicado no arquivo.`);
+          continue;
+        }
+
+        seenPhones.add(normalizedPhone);
+        parsedRows.push({
+          name,
+          phone,
+          email: email || undefined,
+          birthday: birthday || undefined,
+        });
+      }
+
+      if (parseErrors.length > 0) {
+        setImportError(parseErrors.slice(0, 6).join(' '));
+      }
+
+      if (parsedRows.length === 0) {
+        if (parseErrors.length === 0) {
+          setImportError('Nenhum cliente válido encontrado no CSV.');
+        }
+        return;
+      }
+
+      setImportRows(parsedRows);
+    };
+
+    const handleDownloadTemplate = () => {
+      const blob = new Blob([importTemplate], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = 'modelo_clientes.csv';
+      anchor.click();
+      URL.revokeObjectURL(url);
+    };
+
+    const handleImportClients = async () => {
+      if (importRows.length === 0 || isImporting) return;
+      setIsImporting(true);
+      setImportError(null);
+
+      const result = await importClients(importRows);
+      setImportResult(result);
+      setIsImporting(false);
+    };
+
     const handleDelete = (id: string) => {
       const targetClient = clients.find(c => c.id === id) || null;
       setDeleteClientError(null);
@@ -792,6 +952,16 @@ const ClientsManagement = () => {
                         className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center justify-center gap-2 hover:bg-blue-700 transition-colors shadow-sm"
                     >
                         <Plus size={18} /> Adicionar Cliente
+                    </button>
+                    <button
+                      onClick={() => {
+                        setIsImportModalOpen(true);
+                        setImportResult(null);
+                        setImportError(null);
+                      }}
+                      className="bg-white text-gray-800 border border-gray-300 px-4 py-2 rounded-lg flex items-center justify-center gap-2 hover:bg-gray-50 transition-colors shadow-sm"
+                    >
+                      <Upload size={18} /> Importar CSV
                     </button>
                 </div>
             </div>
@@ -983,6 +1153,135 @@ const ClientsManagement = () => {
                 </table>
                     </div>
             </div>
+
+            {isImportModalOpen && (
+              <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl overflow-hidden animate-fade-in">
+                  <div className="px-6 py-4 border-b flex justify-between items-center bg-gray-50">
+                    <h3 className="font-bold text-gray-900">Importar clientes via CSV</h3>
+                    <button
+                      onClick={() => {
+                        setIsImportModalOpen(false);
+                        setImportRows([]);
+                        setImportFileName('');
+                        setImportError(null);
+                        setImportResult(null);
+                      }}
+                      className="text-gray-400 hover:text-gray-600"
+                    >
+                      <X size={20} />
+                    </button>
+                  </div>
+
+                  <div className="p-6 space-y-5">
+                    <div className="space-y-2">
+                      <label className="block text-sm font-medium text-gray-700">Arquivo CSV</label>
+                      <input
+                        type="file"
+                        accept=".csv,text/csv"
+                        onChange={handleImportFileChange}
+                        className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2"
+                      />
+                      {importFileName && (
+                        <p className="text-xs text-gray-500">Arquivo selecionado: {importFileName}</p>
+                      )}
+                    </div>
+
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-2">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-sm font-semibold text-gray-800">Formato esperado do CSV</p>
+                        <button
+                          type="button"
+                          onClick={handleDownloadTemplate}
+                          className="text-sm text-blue-600 hover:text-blue-800"
+                        >
+                          Baixar modelo CSV
+                        </button>
+                      </div>
+                      <p className="text-xs text-gray-600">Colunas: nome, telefone, email, data_nascimento</p>
+                      <pre className="text-xs bg-white border border-gray-200 rounded-md p-3 overflow-x-auto text-gray-700">{importTemplate.trim()}</pre>
+                    </div>
+
+                    {importError && (
+                      <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                        {importError}
+                      </div>
+                    )}
+
+                    {importRows.length > 0 && (
+                      <div className="space-y-2">
+                        <p className="text-sm font-medium text-gray-800">Pré-visualização ({importRows.length} cliente(s))</p>
+                        <div className="max-h-48 overflow-auto border border-gray-200 rounded-lg">
+                          <table className="w-full text-sm">
+                            <thead className="bg-gray-50 text-gray-600">
+                              <tr>
+                                <th className="px-3 py-2 text-left">Nome</th>
+                                <th className="px-3 py-2 text-left">Telefone</th>
+                                <th className="px-3 py-2 text-left">Email</th>
+                                <th className="px-3 py-2 text-left">Nascimento</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y">
+                              {importRows.slice(0, 20).map((row, index) => (
+                                <tr key={`${row.phone}-${index}`}>
+                                  <td className="px-3 py-2">{row.name}</td>
+                                  <td className="px-3 py-2">{row.phone}</td>
+                                  <td className="px-3 py-2">{row.email || '-'}</td>
+                                  <td className="px-3 py-2">{row.birthday || '-'}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        {importRows.length > 20 && (
+                          <p className="text-xs text-gray-500">Mostrando 20 de {importRows.length} linhas.</p>
+                        )}
+                      </div>
+                    )}
+
+                    {importResult && (
+                      <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 space-y-2 text-sm">
+                        <p className="text-gray-800">
+                          Importação concluída: <span className="font-semibold text-green-700">{importResult.successCount}</span> sucesso(s)
+                          {' '}e <span className="font-semibold text-red-700">{importResult.failed.length}</span> falha(s).
+                        </p>
+                        {importResult.failed.length > 0 && (
+                          <ul className="space-y-1 text-xs text-red-700 max-h-24 overflow-auto">
+                            {importResult.failed.slice(0, 6).map(item => (
+                              <li key={`${item.index}-${item.phone}`}>Linha {item.index} ({item.name || item.phone}): {item.error}</li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="px-6 py-4 border-t bg-gray-50 flex gap-3 justify-end">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsImportModalOpen(false);
+                        setImportRows([]);
+                        setImportFileName('');
+                        setImportError(null);
+                        setImportResult(null);
+                      }}
+                      className="px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-white"
+                    >
+                      Fechar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleImportClients}
+                      disabled={importRows.length === 0 || isImporting}
+                      className="px-4 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      {isImporting ? 'Importando...' : `Importar ${importRows.length} cliente(s)`}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Client Modal */}
             {isModalOpen && (
