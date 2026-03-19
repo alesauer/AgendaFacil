@@ -33,6 +33,23 @@ View your app in AI Studio: https://ai.studio/apps/c70d021a-d973-4e92-9972-78af0
 
 Se seu ambiente usa `HTTP_PROXY/HTTPS_PROXY` e aparecer `Connection refused` ao acessar o Supabase, mantenha `BYPASS_PROXY_FOR_SUPABASE=true` e `DISABLE_SYSTEM_PROXY_FOR_SUPABASE=true` no `backend/.env`.
 
+### Script de carga de agendamentos (teste)
+
+Gera agendamentos aleatórios sem conflito para a barbearia atual (janela padrão: 7 dias atrás e 7 dias à frente).
+
+```bash
+cd backend
+python3 scripts/generate_agendamentos_load.py --target 900 --dry-run
+python3 scripts/generate_agendamentos_load.py --target 900
+```
+
+Parâmetros úteis:
+
+- `--slug demo` ou `--barbearia-id <uuid>` para escolher tenant explicitamente
+- `--window-days 7` para definir a janela para trás/frente
+- `--seed 20260319` para geração reproduzível
+- `--step-min 15` para granularidade dos horários
+
 ### Variáveis frontend para API
 
 Crie `.env.local` na raiz com:

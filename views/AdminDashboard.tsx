@@ -59,6 +59,39 @@ const LOGIN_LOGO_TEMPLATES = [
   },
 ];
 
+const LOGIN_BACKGROUND_TEMPLATES = [
+  {
+    id: 'fundo1',
+    name: 'Fundo 1',
+    url: 'https://eczbkkriebkwsepvlnuu.supabase.co/storage/v1/object/public/logo-templates/fundos/fundo1.jpg',
+  },
+  {
+    id: 'fundo2',
+    name: 'Fundo 2',
+    url: 'https://eczbkkriebkwsepvlnuu.supabase.co/storage/v1/object/public/logo-templates/fundos/fundo2.jpg',
+  },
+  {
+    id: 'fundo3',
+    name: 'Fundo 3',
+    url: 'https://eczbkkriebkwsepvlnuu.supabase.co/storage/v1/object/public/logo-templates/fundos/fundo3.png',
+  },
+  {
+    id: 'fundo4',
+    name: 'Fundo 4',
+    url: 'https://eczbkkriebkwsepvlnuu.supabase.co/storage/v1/object/public/logo-templates/fundos/fundo4.jpg',
+  },
+  {
+    id: 'fundo5',
+    name: 'Fundo 5',
+    url: 'https://eczbkkriebkwsepvlnuu.supabase.co/storage/v1/object/public/logo-templates/fundos/fundo5.png',
+  },
+  {
+    id: 'fundo6',
+    name: 'Fundo 6',
+    url: 'https://eczbkkriebkwsepvlnuu.supabase.co/storage/v1/object/public/logo-templates/fundos/fundo6.jpg',
+  },
+];
+
 const safeInitial = (value?: string | null) => (value && value.length > 0 ? value.charAt(0) : '?');
 const safeDateBr = (value?: string | null) => (value ? value.split('-').reverse().join('/') : 'N/A');
 const safeMoney = (value?: number | null) => Number(value || 0).toFixed(2);
@@ -5560,6 +5593,30 @@ const SettingsManagement = () => {
                           : undefined}
                       >
                         {!safeIdentityAssetSrc(identityForm.loginBackgroundUrl, 3200000) && <Camera size={22} className="text-gray-400" />}
+                      </div>
+                      <div className="mt-4">
+                        <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Ou selecione um modelo de fundo</p>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                          {LOGIN_BACKGROUND_TEMPLATES.map((item) => {
+                            const isSelected = identityForm.loginBackgroundUrl === item.url;
+                            return (
+                              <button
+                                key={item.id}
+                                type="button"
+                                onClick={() => {
+                                  setIdentityForm(prev => ({ ...prev, loginBackgroundUrl: item.url }));
+                                  setIdentityError(null);
+                                  setIdentitySuccess(null);
+                                }}
+                                className={`h-16 rounded-lg border overflow-hidden bg-white transition-all ${isSelected ? 'border-blue-500 ring-2 ring-blue-100' : 'border-gray-200 hover:border-gray-300'}`}
+                                title={item.name}
+                                aria-label={`Selecionar ${item.name}`}
+                              >
+                                <img src={item.url} alt={item.name} className="w-full h-full object-cover" />
+                              </button>
+                            );
+                          })}
+                        </div>
                       </div>
                     </div>
 
