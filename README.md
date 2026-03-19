@@ -50,6 +50,55 @@ Parâmetros úteis:
 - `--seed 20260319` para geração reproduzível
 - `--step-min 15` para granularidade dos horários
 
+## Notifications (MVP provider-agnostic + Evolution)
+
+Antes de usar, execute a migration abaixo no Supabase SQL Editor:
+
+- `backend/migrations/013_module13_notifications_core.sql`
+- `backend/migrations/014_module14_notifications_queue_ops.sql`
+
+Depois configure no `backend/.env`:
+
+- `EVOLUTION_API_BASE_URL`
+- `EVOLUTION_API_KEY`
+- `EVOLUTION_API_KEY_HEADER` (default: `apikey`)
+- `EVOLUTION_INSTANCE`
+- `EVOLUTION_SEND_TEXT_PATH` (default: `/message/sendText/{instance}`)
+
+Endpoint interno de teste (somente ADMIN autenticado):
+
+```bash
+curl -X POST http://localhost:5000/internal/notifications/test-whatsapp \
+   -H "Authorization: Bearer <TOKEN_ADMIN>" \
+   -H "X-Barbearia-Slug: demo" \
+   -H "Content-Type: application/json" \
+   -d '{
+      "to": "11999999999",
+      "template_key": "TEST_NOTIFICATION",
+      "variables": {"message": "Teste de integração Evolution"}
+   }'
+```
+
+Worker da fila (processa `QUEUED` e `RETRYING`):
+
+```bash
+cd backend
+python3 scripts/notifications_worker.py --once --limit 50
+python3 scripts/notifications_worker.py --limit 50 --poll-seconds 10
+```
+
+Job de lembrete D-1:
+
+```bash
+cd backend
+python3 scripts/notifications_reminder_job.py --slug demo
+```
+
+Endpoints internos (somente ADMIN):
+
+- `GET /internal/notifications/dispatches?status=FAILED&limit=100`
+- `POST /internal/notifications/dispatches/<dispatch_id>/retry`
+
 ### Variáveis frontend para API
 
 Crie `.env.local` na raiz com:
@@ -79,6 +128,8 @@ No SQL Editor do Supabase, execute nesta ordem:
 - `backend/migrations/010_module10_financeiro_core.sql`
 - `backend/migrations/011_module11_login_brand_assets.sql`
 - `backend/migrations/012_module12_profissionais_comissao.sql`
+- `backend/migrations/013_module13_notifications_core.sql`
+- `backend/migrations/014_module14_notifications_queue_ops.sql`
 
 ### 2) Subir backend Flask
 

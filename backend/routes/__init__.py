@@ -6,6 +6,7 @@ from backend.routes.clientes import clientes_bp
 from backend.routes.dashboard import dashboard_bp
 from backend.routes.financeiro import financeiro_bp
 from backend.routes.horarios import horarios_bp
+from backend.routes.notifications import notifications_bp
 from backend.routes.profissionais import profissionais_bp
 from backend.routes.servicos import servicos_bp
 
@@ -21,3 +22,4 @@ def register_routes(app):
     app.register_blueprint(horarios_bp)
     app.register_blueprint(dashboard_bp)
     app.register_blueprint(financeiro_bp)
+    app.register_blueprint(notifications_bp)

@@ -15,6 +15,13 @@ class Config:
     SUPABASE_HTTP_TIMEOUT_SECONDS = 8
     SUPABASE_TENANT_RETRIES = 3
 
+    EVOLUTION_API_BASE_URL = "https://http://gac.almg.uucp:8082/"
+    EVOLUTION_API_KEY = ""
+    EVOLUTION_API_KEY_HEADER = "apikey"
+    EVOLUTION_INSTANCE = "chipGac"
+    EVOLUTION_SEND_TEXT_PATH = "/message/sendText/{instance}"
+    EVOLUTION_HTTP_TIMEOUT_SECONDS = 10
+
     DEFAULT_BARBEARIA_SLUG = ""
 
 
@@ -42,6 +49,12 @@ def _hydrate_from_env(config_cls):
     config_cls.DISABLE_SYSTEM_PROXY_FOR_SUPABASE = os.getenv("DISABLE_SYSTEM_PROXY_FOR_SUPABASE", "false").lower() == "true"
     config_cls.SUPABASE_HTTP_TIMEOUT_SECONDS = int(os.getenv("SUPABASE_HTTP_TIMEOUT_SECONDS", "8"))
     config_cls.SUPABASE_TENANT_RETRIES = int(os.getenv("SUPABASE_TENANT_RETRIES", "3"))
+    config_cls.EVOLUTION_API_BASE_URL = os.getenv("EVOLUTION_API_BASE_URL", "")
+    config_cls.EVOLUTION_API_KEY = os.getenv("EVOLUTION_API_KEY", "")
+    config_cls.EVOLUTION_API_KEY_HEADER = os.getenv("EVOLUTION_API_KEY_HEADER", "apikey")
+    config_cls.EVOLUTION_INSTANCE = os.getenv("EVOLUTION_INSTANCE", "")
+    config_cls.EVOLUTION_SEND_TEXT_PATH = os.getenv("EVOLUTION_SEND_TEXT_PATH", "/message/sendText/{instance}")
+    config_cls.EVOLUTION_HTTP_TIMEOUT_SECONDS = int(os.getenv("EVOLUTION_HTTP_TIMEOUT_SECONDS", "10"))
     config_cls.DEFAULT_BARBEARIA_SLUG = os.getenv("DEFAULT_BARBEARIA_SLUG", "")
     return config_cls
 

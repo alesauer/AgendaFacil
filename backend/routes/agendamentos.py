@@ -7,6 +7,7 @@ from backend.middleware.auth import auth_required
 from backend.repositories.agendamentos_repository import AgendamentosRepository
 from backend.repositories.financeiro_repository import FinanceiroRepository
 from backend.repositories.horarios_repository import HorariosFuncionamentoRepository
+from backend.notifications.agenda_events import enqueue_for_appointment_event
 from backend.services.agenda_service import calculate_available_slots, has_conflict
 from backend.utils.http import error, success
 
@@ -235,6 +236,22 @@ def create_agendamento():
     if finance_warning:
         agendamento["finance_warning"] = finance_warning
 
+    notification_warning = None
+    try:
+        queued = enqueue_for_appointment_event(
+            g.barbearia_id,
+            str(agendamento.get("id") or ""),
+            "APPOINTMENT_CREATED",
+            correlation_id="create_agendamento",
+        )
+        if not queued:
+            notification_warning = "Falha ao enfileirar notificação de criação"
+    except Exception as exc:
+        notification_warning = str(exc)
+
+    if notification_warning:
+        agendamento["notification_warning"] = notification_warning
+
     return success(agendamento, 201)
 
 
@@ -309,6 +326,22 @@ def create_agendamento_publico():
     if finance_warning:
         agendamento["finance_warning"] = finance_warning
 
+    notification_warning = None
+    try:
+        queued = enqueue_for_appointment_event(
+            g.barbearia_id,
+            str(agendamento.get("id") or ""),
+            "APPOINTMENT_CREATED",
+            correlation_id="create_agendamento_publico",
+        )
+        if not queued:
+            notification_warning = "Falha ao enfileirar notificação de criação"
+    except Exception as exc:
+        notification_warning = str(exc)
+
+    if notification_warning:
+        agendamento["notification_warning"] = notification_warning
+
     return success(agendamento, 201)
 
 
@@ -352,6 +385,22 @@ def cancel_agendamento_publico(agendamento_id: str):
         None,
         None,
     )
+
+    notification_warning = None
+    try:
+        queued = enqueue_for_appointment_event(
+            g.barbearia_id,
+            agendamento_id,
+            "APPOINTMENT_CANCELLED",
+            correlation_id="cancel_agendamento_publico",
+        )
+        if not queued:
+            notification_warning = "Falha ao enfileirar notificação de cancelamento"
+    except Exception as exc:
+        notification_warning = str(exc)
+
+    if notification_warning:
+        updated["notification_warning"] = notification_warning
 
     return success(updated)
 
@@ -623,6 +672,23 @@ def transition_agendamento_status(agendamento_id: str):
     if finance_warning:
         updated["finance_warning"] = finance_warning
 
+    if new_status == "CANCELLED":
+        notification_warning = None
+        try:
+            queued = enqueue_for_appointment_event(
+                g.barbearia_id,
+                agendamento_id,
+                "APPOINTMENT_CANCELLED",
+                correlation_id="transition_agendamento_status",
+            )
+            if not queued:
+                notification_warning = "Falha ao enfileirar notificação de cancelamento"
+        except Exception as exc:
+            notification_warning = str(exc)
+
+        if notification_warning:
+            updated["notification_warning"] = notification_warning
+
     return success(updated)
 
 
@@ -640,7 +706,25 @@ def delete_agendamento(agendamento_id: str):
     deleted = AgendamentosRepository.cancel(g.barbearia_id, agendamento_id)
     if not deleted:
         return error("Agendamento não encontrado", 404)
-    return success({"id": deleted["id"]})
+
+    response_payload = {"id": deleted["id"]}
+    notification_warning = None
+    try:
+        queued = enqueue_for_appointment_event(
+            g.barbearia_id,
+            agendamento_id,
+            "APPOINTMENT_CANCELLED",
+            correlation_id="delete_agendamento",
+        )
+        if not queued:
+            notification_warning = "Falha ao enfileirar notificação de cancelamento"
+    except Exception as exc:
+        notification_warning = str(exc)
+
+    if notification_warning:
+        response_payload["notification_warning"] = notification_warning
+
+    return success(response_payload)
 
 
 @agendamentos_bp.post("/agenda/bloqueios")
