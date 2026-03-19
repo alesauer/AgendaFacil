@@ -16,6 +16,49 @@ import { DashboardInsightsApi, getDashboardInsightsApi } from '../services/dashb
 
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042'];
 
+const LOGIN_LOGO_TEMPLATES = [
+  {
+    id: 'cone',
+    name: 'Cone',
+    url: 'https://eczbkkriebkwsepvlnuu.supabase.co/storage/v1/object/public/logo-templates/logos/cone.png',
+  },
+  {
+    id: 'cone-preto-branco',
+    name: 'Cone preto e branco',
+    url: 'https://eczbkkriebkwsepvlnuu.supabase.co/storage/v1/object/public/logo-templates/logos/cone1.png',
+  },
+  {
+    id: 'espuma',
+    name: 'Espuma',
+    url: 'https://eczbkkriebkwsepvlnuu.supabase.co/storage/v1/object/public/logo-templates/logos/espuma.png',
+  },
+  {
+    id: 'homem',
+    name: 'Homem',
+    url: 'https://eczbkkriebkwsepvlnuu.supabase.co/storage/v1/object/public/logo-templates/logos/men1.png',
+  },
+  {
+    id: 'oculos-bigode',
+    name: 'Óculos Bigode',
+    url: 'https://eczbkkriebkwsepvlnuu.supabase.co/storage/v1/object/public/logo-templates/logos/oculos-bigode.png',
+  },
+  {
+    id: 'oculos-pente',
+    name: 'Óculos Pente',
+    url: 'https://eczbkkriebkwsepvlnuu.supabase.co/storage/v1/object/public/logo-templates/logos/oculos-pente.png',
+  },
+  {
+    id: 'tesoura-preta',
+    name: 'Tesoura Preta',
+    url: 'https://eczbkkriebkwsepvlnuu.supabase.co/storage/v1/object/public/logo-templates/logos/tesoura1.png',
+  },
+  {
+    id: 'tesoura-aberta',
+    name: 'Tesoura Aberta',
+    url: 'https://eczbkkriebkwsepvlnuu.supabase.co/storage/v1/object/public/logo-templates/logos/tesoura2.png',
+  },
+];
+
 const safeInitial = (value?: string | null) => (value && value.length > 0 ? value.charAt(0) : '?');
 const safeDateBr = (value?: string | null) => (value ? value.split('-').reverse().join('/') : 'N/A');
 const safeMoney = (value?: number | null) => Number(value || 0).toFixed(2);
@@ -5452,6 +5495,30 @@ const SettingsManagement = () => {
                           >
                             Remover
                           </button>
+                        </div>
+                      </div>
+                      <div className="mt-4">
+                        <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Ou selecione um modelo</p>
+                        <div className="grid grid-cols-4 sm:grid-cols-8 gap-2">
+                          {LOGIN_LOGO_TEMPLATES.map((item) => {
+                            const isSelected = identityForm.loginLogoUrl === item.url;
+                            return (
+                              <button
+                                key={item.id}
+                                type="button"
+                                onClick={() => {
+                                  setIdentityForm(prev => ({ ...prev, loginLogoUrl: item.url }));
+                                  setIdentityError(null);
+                                  setIdentitySuccess(null);
+                                }}
+                                className={`h-12 rounded-lg border p-1 bg-white transition-all ${isSelected ? 'border-blue-500 ring-2 ring-blue-100' : 'border-gray-200 hover:border-gray-300'}`}
+                                title={item.name}
+                                aria-label={`Selecionar modelo ${item.name}`}
+                              >
+                                <img src={item.url} alt={item.name} className="w-full h-full object-contain" />
+                              </button>
+                            );
+                          })}
                         </div>
                       </div>
                     </div>

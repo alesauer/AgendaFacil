@@ -371,11 +371,7 @@ const App: React.FC = () => {
 
     if (identidadeResult.success) {
       const mapped = mapIdentidade(identidadeResult.data);
-      setBrandIdentity(prev => ({
-        ...mapped,
-        loginLogoUrl: prev.loginLogoUrl,
-        loginBackgroundUrl: prev.loginBackgroundUrl,
-      }));
+      setBrandIdentity(mapped);
     }
 
     const servicosMapeados = servicosResult.success
