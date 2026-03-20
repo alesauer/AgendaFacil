@@ -103,6 +103,11 @@ export interface BrandIdentity {
   logoUrl?: string;
   loginLogoUrl?: string;
   loginBackgroundUrl?: string;
+  churnRiskDaysThreshold?: number;
+  allowEmployeeConfirmAppointment?: boolean;
+  allowEmployeeCreateAppointment?: boolean;
+  allowEmployeeViewFinance?: boolean;
+  allowEmployeeViewReports?: boolean;
   iconName?: string;
   primaryColor?: string;
   secondaryColor?: string;

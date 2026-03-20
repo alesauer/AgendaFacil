@@ -5,6 +5,8 @@ from psycopg.errors import UniqueViolation
 
 from backend.middleware.auth import auth_required
 from backend.repositories.agendamentos_repository import AgendamentosRepository
+from backend.repositories.barbearia_repository import BarbeariaRepository
+from backend.repositories.clientes_repository import ClientesRepository
 from backend.repositories.financeiro_repository import FinanceiroRepository
 from backend.repositories.horarios_repository import HorariosFuncionamentoRepository
 from backend.notifications.agenda_events import enqueue_for_appointment_event
@@ -45,6 +47,22 @@ def _employee_profissional_guard(profissional_id: str):
     if _is_employee() and str(profissional_id) != str(getattr(g, "user_id", "")):
         return error("Funcionário só pode gerenciar os próprios agendamentos", 403)
     return None
+
+
+def _employee_can_complete_financial() -> bool:
+    try:
+        identidade = BarbeariaRepository.get_identity(g.barbearia_id)
+        return bool((identidade or {}).get("allow_employee_confirm_appointment", False))
+    except Exception:
+        return False
+
+
+def _employee_can_create_appointment() -> bool:
+    try:
+        identidade = BarbeariaRepository.get_identity(g.barbearia_id)
+        return bool((identidade or {}).get("allow_employee_create_appointment", True))
+    except Exception:
+        return True
 
 
 def _normalized_status(value: str) -> str:
@@ -139,6 +157,16 @@ def _get_disponibilidade(profissional_id: str, data: str, duracao_min: int):
     return _filter_past_slots(data, slots), None
 
 
+def _refresh_cliente_metrics(cliente_id: str | None):
+    if not cliente_id:
+        return None
+    try:
+        ClientesRepository.recalculate_metrics(g.barbearia_id, str(cliente_id))
+        return None
+    except Exception as exc:
+        return str(exc)
+
+
 @agendamentos_bp.get("/agenda/disponibilidade")
 @auth_required
 def disponibilidade():
@@ -181,6 +209,9 @@ def create_agendamento():
 
     if status not in {"PENDING_PAYMENT", "CONFIRMED"}:
         return error("status inválido para criação", 400)
+
+    if _is_employee() and not _employee_can_create_appointment():
+        return error("Funcionário sem permissão para criar agendamentos", 403)
 
     denied = _employee_profissional_guard(profissional_id)
     if denied:
@@ -402,6 +433,10 @@ def cancel_agendamento_publico(agendamento_id: str):
     if notification_warning:
         updated["notification_warning"] = notification_warning
 
+    metrics_warning = _refresh_cliente_metrics(str(existing.get("cliente_id") or ""))
+    if metrics_warning:
+        updated["client_metrics_warning"] = metrics_warning
+
     return success(updated)
 
 
@@ -466,6 +501,10 @@ def remarca_agendamento_publico(agendamento_id: str):
     if not updated:
         return error("Agendamento não encontrado", 404)
 
+    metrics_warning = _refresh_cliente_metrics(str(existing.get("cliente_id") or ""))
+    if metrics_warning:
+        updated["client_metrics_warning"] = metrics_warning
+
     return success(updated)
 
 
@@ -514,8 +553,11 @@ def update_agendamento(agendamento_id: str):
     if transition_error:
         return transition_error
 
-    if _is_employee() and status in {"COMPLETED_FIN", "REOPENED"}:
-        return error("Somente administradores podem concluir financeiro ou reabrir", 403)
+    if _is_employee() and status == "REOPENED":
+        return error("Somente administradores podem reabrir atendimento", 403)
+
+    if _is_employee() and status == "COMPLETED_FIN" and not _employee_can_complete_financial():
+        return error("Somente administradores podem concluir financeiro", 403)
 
     hours_error = _validate_within_business_hours(
         g.barbearia_id, data, hora_inicio, hora_fim
@@ -558,6 +600,16 @@ def update_agendamento(agendamento_id: str):
         return error("Falha interna ao atualizar agendamento", 500)
     if not agendamento:
         return error("Agendamento não encontrado", 404)
+
+    previous_client_id = str(existing_row.get("cliente_id") or "")
+    updated_client_id = str(agendamento.get("cliente_id") or "")
+    metrics_warning = _refresh_cliente_metrics(previous_client_id)
+    if updated_client_id and updated_client_id != previous_client_id:
+        second_warning = _refresh_cliente_metrics(updated_client_id)
+        metrics_warning = metrics_warning or second_warning
+    if metrics_warning:
+        agendamento["client_metrics_warning"] = metrics_warning
+
     return success(agendamento)
 
 
@@ -588,8 +640,11 @@ def transition_agendamento_status(agendamento_id: str):
     if transition_error:
         return transition_error
 
-    if _is_employee() and new_status in {"COMPLETED_FIN", "REOPENED"}:
-        return error("Somente administradores podem concluir financeiro ou reabrir", 403)
+    if _is_employee() and new_status == "REOPENED":
+        return error("Somente administradores podem reabrir atendimento", 403)
+
+    if _is_employee() and new_status == "COMPLETED_FIN" and not _employee_can_complete_financial():
+        return error("Somente administradores podem concluir financeiro", 403)
 
     if new_status == "COMPLETED_FIN" and not forma_pagamento:
         return error("forma_pagamento é obrigatória para conclusão financeira", 400)
@@ -672,6 +727,10 @@ def transition_agendamento_status(agendamento_id: str):
     if finance_warning:
         updated["finance_warning"] = finance_warning
 
+    metrics_warning = _refresh_cliente_metrics(str(existing.get("cliente_id") or ""))
+    if metrics_warning:
+        updated["client_metrics_warning"] = metrics_warning
+
     if new_status == "CANCELLED":
         notification_warning = None
         try:
@@ -723,6 +782,10 @@ def delete_agendamento(agendamento_id: str):
 
     if notification_warning:
         response_payload["notification_warning"] = notification_warning
+
+    metrics_warning = _refresh_cliente_metrics(str(existing_row.get("cliente_id") or ""))
+    if metrics_warning:
+        response_payload["client_metrics_warning"] = metrics_warning
 
     return success(response_payload)
 

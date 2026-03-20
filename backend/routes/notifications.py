@@ -91,6 +91,53 @@ def list_dispatches():
     return success(rows)
 
 
+@notifications_bp.post("/internal/notifications/test-email")
+@auth_required
+def test_email_notification():
+    denied = _admin_guard()
+    if denied:
+        return denied
+
+    payload = request.get_json(silent=True) or {}
+    recipient = str(payload.get("to") or "").strip()
+    if not recipient:
+        return error("Campo 'to' é obrigatório", 400)
+
+    variables = payload.get("variables")
+    if variables is None:
+        variables = {}
+    if not isinstance(variables, dict):
+        return error("Campo 'variables' deve ser um objeto", 400)
+
+    template_key = str(payload.get("template_key") or "TEST_NOTIFICATION").strip() or "TEST_NOTIFICATION"
+    idempotency_key = str(payload.get("idempotency_key") or "").strip() or str(uuid4())
+    correlation_id = str(payload.get("correlation_id") or "").strip() or None
+
+    command = NotificationCommand(
+        tenant_id=str(getattr(g, "barbearia_id", "")),
+        channel=Channel.EMAIL,
+        to=recipient,
+        template_key=template_key,
+        variables=variables,
+        idempotency_key=idempotency_key,
+        correlation_id=correlation_id,
+    )
+
+    result = NotificationDispatcher().dispatch(command)
+
+    status_code = 200 if result.status.value in {"QUEUED", "SENT"} else 502
+    return success(
+        {
+            "status": result.status.value,
+            "provider_ref": result.provider_ref,
+            "error_code": result.error_code,
+            "error_message": result.error_message,
+            "idempotency_key": idempotency_key,
+        },
+        status_code,
+    )
+
+
 @notifications_bp.post("/internal/notifications/dispatches/<dispatch_id>/retry")
 @auth_required
 def retry_dispatch(dispatch_id: str):

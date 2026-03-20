@@ -17,13 +17,26 @@ class ClientesRepository(BaseRepository):
         )
 
     @staticmethod
+    def _is_missing_metrics_column_error(exc: Exception) -> bool:
+        message = str(exc).lower()
+        if "cortes_count" not in message and "total_gasto" not in message and "ultima_visita" not in message:
+            return False
+        return (
+            "column" in message
+            or "schema cache" in message
+            or "does not exist" in message
+            or "could not find" in message
+        )
+
+    @staticmethod
     def find_by_phone(barbearia_id: str, telefone: str):
         ClientesRepository.require_tenant(barbearia_id)
         if is_db_ready():
             try:
                 return query_one(
                     """
-                    SELECT id, barbearia_id, nome, telefone, email, data_nascimento
+                    SELECT id, barbearia_id, nome, telefone, email, data_nascimento,
+                           cortes_count, total_gasto, ultima_visita
                     FROM clientes
                     WHERE barbearia_id = %s AND telefone = %s
                     LIMIT 1
@@ -31,6 +44,29 @@ class ClientesRepository(BaseRepository):
                     (barbearia_id, telefone),
                 )
             except Exception as exc:
+                if ClientesRepository._is_missing_metrics_column_error(exc):
+                    try:
+                        return query_one(
+                            """
+                            SELECT id, barbearia_id, nome, telefone, email, data_nascimento
+                            FROM clientes
+                            WHERE barbearia_id = %s AND telefone = %s
+                            LIMIT 1
+                            """,
+                            (barbearia_id, telefone),
+                        )
+                    except Exception as nested_exc:
+                        if not ClientesRepository._is_missing_email_column_error(nested_exc):
+                            raise
+                        return query_one(
+                            """
+                            SELECT id, barbearia_id, nome, telefone, data_nascimento
+                            FROM clientes
+                            WHERE barbearia_id = %s AND telefone = %s
+                            LIMIT 1
+                            """,
+                            (barbearia_id, telefone),
+                        )
                 if not ClientesRepository._is_missing_email_column_error(exc):
                     raise
                 return query_one(
@@ -48,13 +84,36 @@ class ClientesRepository(BaseRepository):
             try:
                 response = (
                     supabase.table("clientes")
-                    .select("id,barbearia_id,nome,telefone,email,data_nascimento")
+                    .select("id,barbearia_id,nome,telefone,email,data_nascimento,cortes_count,total_gasto,ultima_visita")
                     .eq("barbearia_id", barbearia_id)
                     .eq("telefone", telefone)
                     .limit(1)
                     .execute()
                 )
             except Exception as exc:
+                if ClientesRepository._is_missing_metrics_column_error(exc):
+                    try:
+                        response = (
+                            supabase.table("clientes")
+                            .select("id,barbearia_id,nome,telefone,email,data_nascimento")
+                            .eq("barbearia_id", barbearia_id)
+                            .eq("telefone", telefone)
+                            .limit(1)
+                            .execute()
+                        )
+                    except Exception as nested_exc:
+                        if not ClientesRepository._is_missing_email_column_error(nested_exc):
+                            raise
+                        response = (
+                            supabase.table("clientes")
+                            .select("id,barbearia_id,nome,telefone,data_nascimento")
+                            .eq("barbearia_id", barbearia_id)
+                            .eq("telefone", telefone)
+                            .limit(1)
+                            .execute()
+                        )
+                    data = response.data or []
+                    return data[0] if data else None
                 if not ClientesRepository._is_missing_email_column_error(exc):
                     raise
                 response = (
@@ -109,7 +168,8 @@ class ClientesRepository(BaseRepository):
             try:
                 return query_all(
                     """
-                    SELECT id, barbearia_id, nome, telefone, email, data_nascimento
+                    SELECT id, barbearia_id, nome, telefone, email, data_nascimento,
+                           cortes_count, total_gasto, ultima_visita
                     FROM clientes
                     WHERE barbearia_id = %s
                     ORDER BY nome
@@ -117,6 +177,29 @@ class ClientesRepository(BaseRepository):
                     (barbearia_id,),
                 )
             except Exception as exc:
+                if ClientesRepository._is_missing_metrics_column_error(exc):
+                    try:
+                        return query_all(
+                            """
+                            SELECT id, barbearia_id, nome, telefone, email, data_nascimento
+                            FROM clientes
+                            WHERE barbearia_id = %s
+                            ORDER BY nome
+                            """,
+                            (barbearia_id,),
+                        )
+                    except Exception as nested_exc:
+                        if not ClientesRepository._is_missing_email_column_error(nested_exc):
+                            raise
+                        return query_all(
+                            """
+                            SELECT id, barbearia_id, nome, telefone, data_nascimento
+                            FROM clientes
+                            WHERE barbearia_id = %s
+                            ORDER BY nome
+                            """,
+                            (barbearia_id,),
+                        )
                 if not ClientesRepository._is_missing_email_column_error(exc):
                     raise
                 return query_all(
@@ -134,12 +217,32 @@ class ClientesRepository(BaseRepository):
             try:
                 response = (
                     supabase.table("clientes")
-                    .select("id,barbearia_id,nome,telefone,email,data_nascimento")
+                    .select("id,barbearia_id,nome,telefone,email,data_nascimento,cortes_count,total_gasto,ultima_visita")
                     .eq("barbearia_id", barbearia_id)
                     .order("nome")
                     .execute()
                 )
             except Exception as exc:
+                if ClientesRepository._is_missing_metrics_column_error(exc):
+                    try:
+                        response = (
+                            supabase.table("clientes")
+                            .select("id,barbearia_id,nome,telefone,email,data_nascimento")
+                            .eq("barbearia_id", barbearia_id)
+                            .order("nome")
+                            .execute()
+                        )
+                    except Exception as nested_exc:
+                        if not ClientesRepository._is_missing_email_column_error(nested_exc):
+                            raise
+                        response = (
+                            supabase.table("clientes")
+                            .select("id,barbearia_id,nome,telefone,data_nascimento")
+                            .eq("barbearia_id", barbearia_id)
+                            .order("nome")
+                            .execute()
+                        )
+                    return response.data or []
                 if not ClientesRepository._is_missing_email_column_error(exc):
                     raise
                 response = (
@@ -168,11 +271,33 @@ class ClientesRepository(BaseRepository):
                     """
                     INSERT INTO clientes (barbearia_id, nome, telefone, email, data_nascimento)
                     VALUES (%s, %s, %s, %s, %s)
-                    RETURNING id, barbearia_id, nome, telefone, email, data_nascimento
+                    RETURNING id, barbearia_id, nome, telefone, email, data_nascimento,
+                              cortes_count, total_gasto, ultima_visita
                     """,
                     (barbearia_id, nome, telefone, email, data_nascimento),
                 )
             except Exception as exc:
+                if ClientesRepository._is_missing_metrics_column_error(exc):
+                    try:
+                        return query_one(
+                            """
+                            INSERT INTO clientes (barbearia_id, nome, telefone, email, data_nascimento)
+                            VALUES (%s, %s, %s, %s, %s)
+                            RETURNING id, barbearia_id, nome, telefone, email, data_nascimento
+                            """,
+                            (barbearia_id, nome, telefone, email, data_nascimento),
+                        )
+                    except Exception as nested_exc:
+                        if not ClientesRepository._is_missing_email_column_error(nested_exc):
+                            raise
+                        return query_one(
+                            """
+                            INSERT INTO clientes (barbearia_id, nome, telefone, data_nascimento)
+                            VALUES (%s, %s, %s, %s)
+                            RETURNING id, barbearia_id, nome, telefone, data_nascimento
+                            """,
+                            (barbearia_id, nome, telefone, data_nascimento),
+                        )
                 if not ClientesRepository._is_missing_email_column_error(exc):
                     raise
                 return query_one(
@@ -198,9 +323,43 @@ class ClientesRepository(BaseRepository):
                             "data_nascimento": data_nascimento,
                         }
                     )
+                    .select("id,barbearia_id,nome,telefone,email,data_nascimento,cortes_count,total_gasto,ultima_visita")
                     .execute()
                 )
             except Exception as exc:
+                if ClientesRepository._is_missing_metrics_column_error(exc):
+                    try:
+                        response = (
+                            supabase.table("clientes")
+                            .insert(
+                                {
+                                    "barbearia_id": barbearia_id,
+                                    "nome": nome,
+                                    "telefone": telefone,
+                                    "email": email,
+                                    "data_nascimento": data_nascimento,
+                                }
+                            )
+                            .select("id,barbearia_id,nome,telefone,email,data_nascimento")
+                            .execute()
+                        )
+                    except Exception as nested_exc:
+                        if not ClientesRepository._is_missing_email_column_error(nested_exc):
+                            raise
+                        response = (
+                            supabase.table("clientes")
+                            .insert(
+                                {
+                                    "barbearia_id": barbearia_id,
+                                    "nome": nome,
+                                    "telefone": telefone,
+                                    "data_nascimento": data_nascimento,
+                                }
+                            )
+                            .execute()
+                        )
+                    data = response.data or []
+                    return data[0] if data else None
                 if not ClientesRepository._is_missing_email_column_error(exc):
                     raise
                 response = (
@@ -237,11 +396,35 @@ class ClientesRepository(BaseRepository):
                     UPDATE clientes
                     SET nome = %s, telefone = %s, email = %s, data_nascimento = %s
                     WHERE barbearia_id = %s AND id = %s
-                    RETURNING id, barbearia_id, nome, telefone, email, data_nascimento
+                    RETURNING id, barbearia_id, nome, telefone, email, data_nascimento,
+                              cortes_count, total_gasto, ultima_visita
                     """,
                     (nome, telefone, email, data_nascimento, barbearia_id, cliente_id),
                 )
             except Exception as exc:
+                if ClientesRepository._is_missing_metrics_column_error(exc):
+                    try:
+                        return query_one(
+                            """
+                            UPDATE clientes
+                            SET nome = %s, telefone = %s, email = %s, data_nascimento = %s
+                            WHERE barbearia_id = %s AND id = %s
+                            RETURNING id, barbearia_id, nome, telefone, email, data_nascimento
+                            """,
+                            (nome, telefone, email, data_nascimento, barbearia_id, cliente_id),
+                        )
+                    except Exception as nested_exc:
+                        if not ClientesRepository._is_missing_email_column_error(nested_exc):
+                            raise
+                        return query_one(
+                            """
+                            UPDATE clientes
+                            SET nome = %s, telefone = %s, data_nascimento = %s
+                            WHERE barbearia_id = %s AND id = %s
+                            RETURNING id, barbearia_id, nome, telefone, data_nascimento
+                            """,
+                            (nome, telefone, data_nascimento, barbearia_id, cliente_id),
+                        )
                 if not ClientesRepository._is_missing_email_column_error(exc):
                     raise
                 return query_one(
@@ -269,9 +452,45 @@ class ClientesRepository(BaseRepository):
                     )
                     .eq("barbearia_id", barbearia_id)
                     .eq("id", cliente_id)
+                    .select("id,barbearia_id,nome,telefone,email,data_nascimento,cortes_count,total_gasto,ultima_visita")
                     .execute()
                 )
             except Exception as exc:
+                if ClientesRepository._is_missing_metrics_column_error(exc):
+                    try:
+                        response = (
+                            supabase.table("clientes")
+                            .update(
+                                {
+                                    "nome": nome,
+                                    "telefone": telefone,
+                                    "email": email,
+                                    "data_nascimento": data_nascimento,
+                                }
+                            )
+                            .eq("barbearia_id", barbearia_id)
+                            .eq("id", cliente_id)
+                            .select("id,barbearia_id,nome,telefone,email,data_nascimento")
+                            .execute()
+                        )
+                    except Exception as nested_exc:
+                        if not ClientesRepository._is_missing_email_column_error(nested_exc):
+                            raise
+                        response = (
+                            supabase.table("clientes")
+                            .update(
+                                {
+                                    "nome": nome,
+                                    "telefone": telefone,
+                                    "data_nascimento": data_nascimento,
+                                }
+                            )
+                            .eq("barbearia_id", barbearia_id)
+                            .eq("id", cliente_id)
+                            .execute()
+                        )
+                    data = response.data or []
+                    return data[0] if data else None
                 if not ClientesRepository._is_missing_email_column_error(exc):
                     raise
                 response = (
@@ -332,6 +551,90 @@ class ClientesRepository(BaseRepository):
                 .execute()
             )
             data = response.data or []
+            return data[0] if data else None
+
+        return None
+
+    @staticmethod
+    def recalculate_metrics(barbearia_id: str, cliente_id: str):
+        ClientesRepository.require_tenant(barbearia_id)
+        if not cliente_id:
+            return None
+
+        allowed_status = ("COMPLETED_OP", "COMPLETED_FIN", "COMPLETED")
+
+        if is_db_ready():
+            stats = query_one(
+                """
+                SELECT
+                  COUNT(*)::int AS cortes_count,
+                  COALESCE(SUM(COALESCE(valor_final, 0)), 0)::numeric(10,2) AS total_gasto,
+                  MAX(data) AS ultima_visita
+                FROM agendamentos
+                WHERE barbearia_id = %s
+                  AND cliente_id = %s
+                                    AND status IN ('COMPLETED_OP', 'COMPLETED_FIN', 'COMPLETED')
+                """,
+                                (barbearia_id, cliente_id),
+            ) or {}
+
+            return query_one(
+                """
+                UPDATE clientes
+                SET cortes_count = %s,
+                    total_gasto = %s,
+                    ultima_visita = %s
+                WHERE barbearia_id = %s AND id = %s
+                RETURNING id, barbearia_id, nome, telefone, email, data_nascimento,
+                          cortes_count, total_gasto, ultima_visita
+                """,
+                (
+                    int(stats.get("cortes_count") or 0),
+                    float(stats.get("total_gasto") or 0),
+                    stats.get("ultima_visita"),
+                    barbearia_id,
+                    cliente_id,
+                ),
+            )
+
+        if is_supabase_ready():
+            supabase = get_supabase_client()
+            response = (
+                supabase.table("agendamentos")
+                .select("data,valor_final,status")
+                .eq("barbearia_id", barbearia_id)
+                .eq("cliente_id", cliente_id)
+                .in_("status", list(allowed_status))
+                .execute()
+            )
+            rows = response.data or []
+
+            cortes_count = len(rows)
+            total_gasto = 0.0
+            ultima_visita = None
+            for row in rows:
+                total_gasto += float(row.get("valor_final") or 0)
+                data = row.get("data")
+                if data is not None:
+                    data_str = str(data)
+                    if ultima_visita is None or data_str > ultima_visita:
+                        ultima_visita = data_str
+
+            updated = (
+                supabase.table("clientes")
+                .update(
+                    {
+                        "cortes_count": cortes_count,
+                        "total_gasto": round(total_gasto, 2),
+                        "ultima_visita": ultima_visita,
+                    }
+                )
+                .eq("barbearia_id", barbearia_id)
+                .eq("id", cliente_id)
+                .select("id,barbearia_id,nome,telefone,email,data_nascimento,cortes_count,total_gasto,ultima_visita")
+                .execute()
+            )
+            data = updated.data or []
             return data[0] if data else None
 
         return None

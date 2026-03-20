@@ -50,8 +50,8 @@ interface AppContextType {
   updateClient: (client: Client) => void;
   deleteClient: (id: string) => Promise<{ success: boolean; error?: string }>;
   users: User[];
-  addUser: (user: User & { password?: string }) => Promise<{ success: boolean; error?: string }>;
-  updateUser: (user: User & { password?: string }) => Promise<{ success: boolean; error?: string }>;
+  addUser: (user: User & { password?: string; commissionPercentage?: number }) => Promise<{ success: boolean; error?: string }>;
+  updateUser: (user: User & { password?: string; commissionPercentage?: number }) => Promise<{ success: boolean; error?: string }>;
   deleteUser: (id: string) => Promise<{ success: boolean; error?: string }>;
   businessHours: BusinessHour[];
   saveBusinessHours: (hours: BusinessHour[]) => Promise<{ success: boolean; error?: string }>;
@@ -155,6 +155,11 @@ const App: React.FC = () => {
           logoUrl: parsed.logoUrl,
           loginLogoUrl: parsed.loginLogoUrl,
           loginBackgroundUrl: parsed.loginBackgroundUrl,
+          churnRiskDaysThreshold: Number(parsed.churnRiskDaysThreshold || 45),
+          allowEmployeeConfirmAppointment: Boolean(parsed.allowEmployeeConfirmAppointment),
+          allowEmployeeCreateAppointment: parsed.allowEmployeeCreateAppointment !== undefined ? Boolean(parsed.allowEmployeeCreateAppointment) : true,
+          allowEmployeeViewFinance: Boolean(parsed.allowEmployeeViewFinance),
+          allowEmployeeViewReports: Boolean(parsed.allowEmployeeViewReports),
           iconName: parsed.iconName || 'scissors',
           primaryColor: parsed.primaryColor || DEFAULT_PRIMARY_COLOR,
           secondaryColor: parsed.secondaryColor || DEFAULT_SECONDARY_COLOR,
@@ -166,6 +171,11 @@ const App: React.FC = () => {
 
     return {
       name: 'AgendeFácil Barbearia',
+      churnRiskDaysThreshold: 45,
+      allowEmployeeConfirmAppointment: false,
+      allowEmployeeCreateAppointment: true,
+      allowEmployeeViewFinance: false,
+      allowEmployeeViewReports: false,
       iconName: 'scissors',
       primaryColor: DEFAULT_PRIMARY_COLOR,
       secondaryColor: DEFAULT_SECONDARY_COLOR,
@@ -265,9 +275,9 @@ const App: React.FC = () => {
     name: client.nome,
     phone: client.telefone,
     birthday: client.data_nascimento || undefined,
-    totalSpent: 0,
-    haircutsCount: 0,
-    lastVisit: undefined,
+    totalSpent: Number(client.total_gasto || 0),
+    haircutsCount: Number(client.cortes_count || 0),
+    lastVisit: client.ultima_visita || undefined,
   });
 
   const mapAgendamento = (agendamento: AgendamentoApi, servicosAtuais: Service[]): Appointment => {
@@ -312,6 +322,11 @@ const App: React.FC = () => {
     logoUrl: identidade.logo_url || undefined,
     loginLogoUrl: identidade.login_logo_url || undefined,
     loginBackgroundUrl: identidade.login_background_url || undefined,
+    churnRiskDaysThreshold: Number(identidade.churn_risk_days_threshold || 45),
+    allowEmployeeConfirmAppointment: Boolean(identidade.allow_employee_confirm_appointment),
+    allowEmployeeCreateAppointment: identidade.allow_employee_create_appointment === undefined || identidade.allow_employee_create_appointment === null ? true : Boolean(identidade.allow_employee_create_appointment),
+    allowEmployeeViewFinance: Boolean(identidade.allow_employee_view_finance),
+    allowEmployeeViewReports: Boolean(identidade.allow_employee_view_reports),
     iconName: identidade.icone_marca || 'scissors',
     primaryColor: identidade.cor_primaria || '#2563eb',
     secondaryColor: identidade.cor_secundaria || '#eff6ff',
@@ -585,6 +600,11 @@ const App: React.FC = () => {
           logoUrl: result.data.logo_url || undefined,
           loginLogoUrl: result.data.login_logo_url || undefined,
           loginBackgroundUrl: result.data.login_background_url || undefined,
+          churnRiskDaysThreshold: Number(result.data.churn_risk_days_threshold || 45),
+          allowEmployeeConfirmAppointment: Boolean(result.data.allow_employee_confirm_appointment),
+          allowEmployeeCreateAppointment: result.data.allow_employee_create_appointment === undefined || result.data.allow_employee_create_appointment === null ? true : Boolean(result.data.allow_employee_create_appointment),
+          allowEmployeeViewFinance: Boolean(result.data.allow_employee_view_finance),
+          allowEmployeeViewReports: Boolean(result.data.allow_employee_view_reports),
           iconName: result.data.icone_marca || 'scissors',
           primaryColor: result.data.cor_primaria || DEFAULT_PRIMARY_COLOR,
           secondaryColor: result.data.cor_secundaria || DEFAULT_SECONDARY_COLOR,
@@ -1050,9 +1070,6 @@ const App: React.FC = () => {
 
       const mappedClient: Client = {
         ...mapClient(result.data),
-        totalSpent: newClient.totalSpent,
-        haircutsCount: newClient.haircutsCount,
-        lastVisit: newClient.lastVisit,
       };
       setClients(prev => [...prev, mappedClient]);
     })();
@@ -1104,9 +1121,6 @@ const App: React.FC = () => {
 
       createdClients.push({
         ...mapClient(result.data),
-        totalSpent: 0,
-        haircutsCount: 0,
-        lastVisit: undefined,
       });
     }
 
@@ -1137,9 +1151,6 @@ const App: React.FC = () => {
 
       const mappedClient: Client = {
         ...mapClient(result.data),
-        totalSpent: updatedClient.totalSpent,
-        haircutsCount: updatedClient.haircutsCount,
-        lastVisit: updatedClient.lastVisit,
       };
       setClients(prev => prev.map(c => c.id === updatedClient.id ? mappedClient : c));
     })();
@@ -1161,7 +1172,7 @@ const App: React.FC = () => {
     return { success: true };
   };
 
-  const addUser = async (newUser: User & { password?: string }): Promise<{ success: boolean; error?: string }> => {
+  const addUser = async (newUser: User & { password?: string; commissionPercentage?: number }): Promise<{ success: boolean; error?: string }> => {
     if (!isAdminApiSession()) {
       setUsers(prev => [...prev, newUser]);
       return { success: true };
@@ -1198,13 +1209,18 @@ const App: React.FC = () => {
 
     const existingProfessional = professionals.find(p => p.id === authResult.data.id);
     const hasProfissional = Boolean(existingProfessional);
+    const commissionPercentage = Number(
+      typeof newUser.commissionPercentage === 'number'
+        ? newUser.commissionPercentage
+        : (existingProfessional?.commissionPercentage || 0)
+    );
     const profissionalPayload = {
       id: authResult.data.id,
       nome: newUser.name,
       cargo: newUser.role === 'ADMIN' ? 'Administrador' : 'Profissional',
       telefone: newUser.phone,
       foto_url: normalizeAvatar(newUser.avatar) || null,
-      comissao_percentual: Number(existingProfessional?.commissionPercentage || 0),
+      comissao_percentual: Number(commissionPercentage.toFixed(2)),
       ativo: true,
     };
 
@@ -1230,7 +1246,7 @@ const App: React.FC = () => {
     return { success: true };
   };
 
-  const updateUser = async (updatedUser: User & { password?: string }): Promise<{ success: boolean; error?: string }> => {
+  const updateUser = async (updatedUser: User & { password?: string; commissionPercentage?: number }): Promise<{ success: boolean; error?: string }> => {
     if (!isAdminApiSession()) {
       setUsers(prev => prev.map(u => u.id === updatedUser.id ? updatedUser : u));
       return { success: true };
@@ -1266,13 +1282,18 @@ const App: React.FC = () => {
 
     const existingProfessional = professionals.find(p => p.id === updatedUser.id);
     const hasProfissional = Boolean(existingProfessional);
+    const commissionPercentage = Number(
+      typeof updatedUser.commissionPercentage === 'number'
+        ? updatedUser.commissionPercentage
+        : (existingProfessional?.commissionPercentage || 0)
+    );
     const profissionalPayload = {
       id: updatedUser.id,
       nome: updatedUser.name,
       cargo: updatedUser.role === 'ADMIN' ? 'Administrador' : 'Profissional',
       telefone: updatedUser.phone,
       foto_url: normalizeAvatar(updatedUser.avatar) || null,
-      comissao_percentual: Number(existingProfessional?.commissionPercentage || 0),
+      comissao_percentual: Number(commissionPercentage.toFixed(2)),
       ativo: updatedUser.active ?? true,
     };
 
@@ -1356,6 +1377,11 @@ const App: React.FC = () => {
       logo_url: identity.logoUrl || null,
       login_logo_url: identity.loginLogoUrl || null,
       login_background_url: identity.loginBackgroundUrl || null,
+      churn_risk_days_threshold: Math.max(1, Math.min(365, Number(identity.churnRiskDaysThreshold || 45))),
+      allow_employee_confirm_appointment: Boolean(identity.allowEmployeeConfirmAppointment),
+      allow_employee_create_appointment: identity.allowEmployeeCreateAppointment === undefined ? true : Boolean(identity.allowEmployeeCreateAppointment),
+      allow_employee_view_finance: Boolean(identity.allowEmployeeViewFinance),
+      allow_employee_view_reports: Boolean(identity.allowEmployeeViewReports),
       icone_marca: identity.iconName || 'scissors',
       cor_primaria: identity.primaryColor || '#2563eb',
       cor_secundaria: identity.secondaryColor || '#eff6ff',

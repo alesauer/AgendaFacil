@@ -22,6 +22,12 @@ class Config:
     EVOLUTION_SEND_TEXT_PATH = "/message/sendText/{instance}"
     EVOLUTION_HTTP_TIMEOUT_SECONDS = 10
 
+    RESEND_API_BASE_URL = "https://api.resend.com"
+    RESEND_API_KEY = ""
+    RESEND_HTTP_TIMEOUT_SECONDS = 10
+    EMAIL_FROM_ADDRESS = "alesauer@gmail.com"
+    EMAIL_FROM_NAME = "AgendaFácil"
+
     DEFAULT_BARBEARIA_SLUG = ""
 
 
@@ -55,6 +61,11 @@ def _hydrate_from_env(config_cls):
     config_cls.EVOLUTION_INSTANCE = os.getenv("EVOLUTION_INSTANCE", "")
     config_cls.EVOLUTION_SEND_TEXT_PATH = os.getenv("EVOLUTION_SEND_TEXT_PATH", "/message/sendText/{instance}")
     config_cls.EVOLUTION_HTTP_TIMEOUT_SECONDS = int(os.getenv("EVOLUTION_HTTP_TIMEOUT_SECONDS", "10"))
+    config_cls.RESEND_API_BASE_URL = os.getenv("RESEND_API_BASE_URL", "https://api.resend.com")
+    config_cls.RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
+    config_cls.RESEND_HTTP_TIMEOUT_SECONDS = int(os.getenv("RESEND_HTTP_TIMEOUT_SECONDS", "10"))
+    config_cls.EMAIL_FROM_ADDRESS = os.getenv("EMAIL_FROM_ADDRESS", "")
+    config_cls.EMAIL_FROM_NAME = os.getenv("EMAIL_FROM_NAME", "AgendaFácil")
     config_cls.DEFAULT_BARBEARIA_SLUG = os.getenv("DEFAULT_BARBEARIA_SLUG", "")
     return config_cls
 

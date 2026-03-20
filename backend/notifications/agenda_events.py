@@ -71,19 +71,31 @@ def _fetch_appointment_snapshot(barbearia_id: str, agendamento_id: str) -> dict[
 
     cliente_nome = "Cliente"
     cliente_telefone = ""
+    cliente_email = ""
     if cliente_id:
-        cliente_response = (
-            supabase.table("clientes")
-            .select("nome,telefone")
-            .eq("barbearia_id", barbearia_id)
-            .eq("id", cliente_id)
-            .limit(1)
-            .execute()
-        )
+        try:
+            cliente_response = (
+                supabase.table("clientes")
+                .select("nome,telefone,email")
+                .eq("barbearia_id", barbearia_id)
+                .eq("id", cliente_id)
+                .limit(1)
+                .execute()
+            )
+        except Exception:
+            cliente_response = (
+                supabase.table("clientes")
+                .select("nome,telefone")
+                .eq("barbearia_id", barbearia_id)
+                .eq("id", cliente_id)
+                .limit(1)
+                .execute()
+            )
         clientes = cliente_response.data or []
         if clientes:
             cliente_nome = str(clientes[0].get("nome") or "Cliente")
             cliente_telefone = _normalize_phone(str(clientes[0].get("telefone") or ""))
+            cliente_email = str(clientes[0].get("email") or "").strip()
 
     profissional_nome = "Profissional"
     if profissional_id:
@@ -120,6 +132,7 @@ def _fetch_appointment_snapshot(barbearia_id: str, agendamento_id: str) -> dict[
         "hora_inicio": str(appointment.get("hora_inicio") or "")[:5],
         "cliente_nome": cliente_nome,
         "cliente_telefone": cliente_telefone,
+        "cliente_email": cliente_email,
         "profissional_nome": profissional_nome,
         "servico_nome": servico_nome,
     }
@@ -135,22 +148,44 @@ def enqueue_for_appointment_event(
     if not snapshot:
         return None
 
-    recipient = str(snapshot.get("cliente_telefone") or "")
-    if not recipient:
-        return None
-
     payload = _build_payload(snapshot)
-    idempotency_key = f"{template_key}:{agendamento_id}:WHATSAPP"
-    return NotificationsRepository.enqueue_dispatch(
-        barbearia_id=barbearia_id,
-        channel="WHATSAPP",
-        provider_name="EVOLUTION",
-        recipient=recipient,
-        template_key=template_key,
-        payload=payload,
-        idempotency_key=idempotency_key,
-        correlation_id=correlation_id,
-    )
+    queued_items: list[dict[str, Any]] = []
+
+    phone_recipient = str(snapshot.get("cliente_telefone") or "")
+    if phone_recipient:
+        idempotency_key_whatsapp = f"{template_key}:{agendamento_id}:WHATSAPP"
+        created = NotificationsRepository.enqueue_dispatch(
+            barbearia_id=barbearia_id,
+            channel="WHATSAPP",
+            provider_name="EVOLUTION",
+            recipient=phone_recipient,
+            template_key=template_key,
+            payload=payload,
+            idempotency_key=idempotency_key_whatsapp,
+            correlation_id=correlation_id,
+        )
+        if created:
+            queued_items.append(created)
+
+    email_recipient = str(snapshot.get("cliente_email") or "").strip()
+    if email_recipient:
+        idempotency_key_email = f"{template_key}:{agendamento_id}:EMAIL"
+        created = NotificationsRepository.enqueue_dispatch(
+            barbearia_id=barbearia_id,
+            channel="EMAIL",
+            provider_name="RESEND",
+            recipient=email_recipient,
+            template_key=template_key,
+            payload=payload,
+            idempotency_key=idempotency_key_email,
+            correlation_id=correlation_id,
+        )
+        if created:
+            queued_items.append(created)
+
+    if not queued_items:
+        return None
+    return {"items": queued_items, "count": len(queued_items)}
 
 
 def enqueue_reminders_d1(barbearia_id: str) -> dict[str, int]:

@@ -43,6 +43,18 @@ POST /clientes
 PUT /clientes/:id  
 DELETE /clientes/:id  
 
+### Campos de clientes (response)
+
+- id
+- barbearia_id
+- nome
+- telefone
+- email
+- data_nascimento
+- cortes_count
+- total_gasto
+- ultima_visita
+
 ## Agenda
 
 GET /agenda/disponibilidade  

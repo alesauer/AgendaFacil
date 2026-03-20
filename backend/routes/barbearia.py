@@ -14,6 +14,22 @@ MAX_IMAGE_URL_LENGTH = 300000
 MAX_LOGIN_BACKGROUND_URL_LENGTH = 3200000
 
 
+def _parse_bool(value, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "t", "yes", "y", "sim", "s", "on"}:
+            return True
+        if normalized in {"0", "false", "f", "no", "n", "nao", "não", "off", ""}:
+            return False
+    return default
+
+
 def _normalize_image_url(value: str | None, field_name: str, max_length: int = MAX_IMAGE_URL_LENGTH):
     if not value:
         return None
@@ -61,6 +77,11 @@ def get_identidade_publica():
             "logo_url": item.get("logo_url"),
             "login_logo_url": item.get("login_logo_url"),
             "login_background_url": item.get("login_background_url"),
+            "churn_risk_days_threshold": int(item.get("churn_risk_days_threshold") or 45),
+            "allow_employee_confirm_appointment": bool(item.get("allow_employee_confirm_appointment", False)),
+            "allow_employee_create_appointment": bool(item.get("allow_employee_create_appointment", True)),
+            "allow_employee_view_finance": bool(item.get("allow_employee_view_finance", False)),
+            "allow_employee_view_reports": bool(item.get("allow_employee_view_reports", False)),
             "icone_marca": item.get("icone_marca"),
             "cor_primaria": item.get("cor_primaria"),
             "cor_secundaria": item.get("cor_secundaria"),
@@ -75,6 +96,9 @@ def update_identidade():
         return error("Acesso negado", 403)
 
     payload = request.get_json(silent=True) or {}
+    current_item = BarbeariaRepository.get_identity(g.barbearia_id)
+    if not current_item:
+        return error("Barbearia não encontrada", 404)
 
     nome = str(payload.get("nome") or "").strip()
     if not nome:
@@ -95,6 +119,49 @@ def update_identidade():
             "login_background_url",
             MAX_LOGIN_BACKGROUND_URL_LENGTH,
         )
+        raw_churn_threshold = payload.get("churn_risk_days_threshold", current_item.get("churn_risk_days_threshold", 45))
+        try:
+            churn_risk_days_threshold = int(raw_churn_threshold)
+        except (TypeError, ValueError):
+            raise ValueError("churn_risk_days_threshold deve ser um número inteiro")
+        if churn_risk_days_threshold < 1 or churn_risk_days_threshold > 365:
+            raise ValueError("churn_risk_days_threshold deve estar entre 1 e 365")
+        if "allow_employee_confirm_appointment" in payload:
+            allow_employee_confirm_appointment = _parse_bool(
+                payload.get("allow_employee_confirm_appointment"),
+                False,
+            )
+        else:
+            allow_employee_confirm_appointment = bool(
+                current_item.get("allow_employee_confirm_appointment", False)
+            )
+        if "allow_employee_create_appointment" in payload:
+            allow_employee_create_appointment = _parse_bool(
+                payload.get("allow_employee_create_appointment"),
+                True,
+            )
+        else:
+            allow_employee_create_appointment = bool(
+                current_item.get("allow_employee_create_appointment", True)
+            )
+        if "allow_employee_view_finance" in payload:
+            allow_employee_view_finance = _parse_bool(
+                payload.get("allow_employee_view_finance"),
+                False,
+            )
+        else:
+            allow_employee_view_finance = bool(
+                current_item.get("allow_employee_view_finance", False)
+            )
+        if "allow_employee_view_reports" in payload:
+            allow_employee_view_reports = _parse_bool(
+                payload.get("allow_employee_view_reports"),
+                False,
+            )
+        else:
+            allow_employee_view_reports = bool(
+                current_item.get("allow_employee_view_reports", False)
+            )
         cor_primaria = _normalize_color(payload.get("cor_primaria"), "cor_primaria")
         cor_secundaria = _normalize_color(payload.get("cor_secundaria"), "cor_secundaria")
     except ValueError as exc:
@@ -106,6 +173,11 @@ def update_identidade():
         logo_url,
         login_logo_url,
         login_background_url,
+        churn_risk_days_threshold,
+        allow_employee_confirm_appointment,
+        allow_employee_create_appointment,
+        allow_employee_view_finance,
+        allow_employee_view_reports,
         icone_marca,
         cor_primaria,
         cor_secundaria,

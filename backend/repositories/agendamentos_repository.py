@@ -744,8 +744,9 @@ class AgendamentosRepository(BaseRepository):
         }
 
     @staticmethod
-    def dashboard_insights(barbearia_id: str):
+    def dashboard_insights(barbearia_id: str, churn_risk_days_threshold: int = 45):
         AgendamentosRepository.require_tenant(barbearia_id)
+        churn_threshold = max(1, min(int(churn_risk_days_threshold or 45), 365))
 
         base = {
             "top_clientes_frequentes": [],
@@ -806,11 +807,11 @@ class AgendamentosRepository(BaseRepository):
                 WHERE a.barbearia_id = %s
                   AND a.status NOT IN ('BLOCKED', 'CANCELLED')
                 GROUP BY c.id, c.nome
-                HAVING (CURRENT_DATE - MAX(a.data)) >= 45
+                HAVING (CURRENT_DATE - MAX(a.data)) >= %s
                 ORDER BY dias_sem_retorno DESC, ultima_visita ASC
                 LIMIT 5
                 """,
-                (barbearia_id,),
+                (barbearia_id, churn_threshold),
             )
 
             base["top_clientes_frequentes"] = top_frequentes
@@ -917,7 +918,7 @@ class AgendamentosRepository(BaseRepository):
                 except ValueError:
                     continue
                 dias_sem_retorno = (today - ultima).days
-                if dias_sem_retorno >= 45:
+                if dias_sem_retorno >= churn_threshold:
                     item["dias_sem_retorno"] = dias_sem_retorno
                     risco_churn.append(item)
 

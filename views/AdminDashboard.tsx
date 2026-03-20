@@ -4,6 +4,8 @@ import { useNavigate } from 'react-router-dom';
 import { Appointment, BrandIdentity, Client, Service } from '../types';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 import { LayoutDashboard, Users, Calendar, Settings, LogOut, Plus, Edit, Trash2, DollarSign, X, Clock, Tag, Image as ImageIcon, Search, ChevronLeft, ChevronRight, Bell, Mail, MessageSquare, Shield, Globe, Menu, Scissors, Sparkles, Smile, Zap, Heart, Share2, RotateCcw, ChevronDown, Lock, Camera, Store, User as UserIcon, Palette, Check, CreditCard, Receipt, BarChart3, Phone, Headphones, ExternalLink, List, Upload } from 'lucide-react';
+import { jsPDF } from 'jspdf';
+import * as XLSX from 'xlsx';
 import { createProfissionalApi, deleteProfissionalApi, listProfissionaisApi, updateProfissionalApi } from '../services/profissionaisApi';
 import {
   listRecebiveisApi,
@@ -166,7 +168,8 @@ const BrandIcon = ({ name, className }: { name?: string, className?: string }) =
 };
 
 const DashboardHome = ({ onViewAllRecent }: { onViewAllRecent: () => void }) => {
-  const { appointments, services, professionals, clients, brandIdentity } = useAppContext();
+  const { appointments, services, professionals, clients, brandIdentity, businessHours } = useAppContext();
+  const churnRiskDaysThreshold = Math.max(1, Math.min(365, Number(brandIdentity.churnRiskDaysThreshold || 45)));
   const [dashboardInsights, setDashboardInsights] = useState<DashboardInsightsApi>({
     top_clientes_frequentes: [],
     top_clientes_faturamento: [],
@@ -238,12 +241,16 @@ const DashboardHome = ({ onViewAllRecent }: { onViewAllRecent: () => void }) => 
       const month = String(current.getMonth() + 1).padStart(2, '0');
       const day = String(current.getDate()).padStart(2, '0');
       const key = `${year}-${month}-${day}`;
+      const weekday = current.getDay();
+      const dayConfig = businessHours.find((item) => item.dayOfWeek === weekday);
+      const isClosed = dayConfig ? !Boolean(dayConfig.open) : false;
 
       dateKeys.push(key);
       const row: Record<string, string | number> = {
         name: `${day}/${month}`,
         uv: 0,
         fullDate: key,
+        isClosed: isClosed ? 1 : 0,
       };
 
       professionalSeries.forEach((series) => {
@@ -253,8 +260,8 @@ const DashboardHome = ({ onViewAllRecent }: { onViewAllRecent: () => void }) => 
       data.push(row);
     }
 
-    const indexByDate = new Map(dateKeys.map((key, index) => [key, index]));
-    const seriesKeyByProfessionalId = new Map(professionalSeries.map((series) => [series.id, series.key]));
+    const indexByDate = new Map<string, number>(dateKeys.map((key, index) => [key, index]));
+    const seriesKeyByProfessionalId = new Map<string, string>(professionalSeries.map((series) => [series.id, series.key]));
 
     appointments.forEach((appointment) => {
       if (normalizeAppointmentStatus(appointment.status) === 'BLOCKED') return;
@@ -263,6 +270,9 @@ const DashboardHome = ({ onViewAllRecent }: { onViewAllRecent: () => void }) => 
 
       const index = indexByDate.get(key);
       if (typeof index !== 'number') return;
+
+      const isClosed = Number(data[index].isClosed || 0) === 1;
+      if (isClosed) return;
 
       const currentTotal = Number(data[index].uv || 0);
       data[index].uv = currentTotal + 1;
@@ -273,7 +283,7 @@ const DashboardHome = ({ onViewAllRecent }: { onViewAllRecent: () => void }) => 
     });
 
     return data;
-  }, [appointments, professionalSeries]);
+  }, [appointments, professionalSeries, businessHours]);
 
   const serviceData = useMemo(() => {
     const appointmentsByService = new Map<string, number>();
@@ -328,7 +338,7 @@ const DashboardHome = ({ onViewAllRecent }: { onViewAllRecent: () => void }) => 
           total,
         };
       })
-      .filter((item): item is { id: string; name: string; role: string; avatar?: string; total: number } => Boolean(item))
+      .filter((item): item is { id: string; name: string; role: string; avatar: string | undefined; total: number } => item !== null)
       .sort((left, right) => right.total - left.total)
       .slice(0, 5);
   }, [appointments, professionals]);
@@ -404,7 +414,7 @@ const DashboardHome = ({ onViewAllRecent }: { onViewAllRecent: () => void }) => 
           : 0;
         return { ...item, dias_sem_retorno };
       })
-      .filter((item) => item.dias_sem_retorno >= 45)
+      .filter((item) => item.dias_sem_retorno >= churnRiskDaysThreshold)
       .sort((a, b) => b.dias_sem_retorno - a.dias_sem_retorno)
       .slice(0, 5);
 
@@ -413,7 +423,7 @@ const DashboardHome = ({ onViewAllRecent }: { onViewAllRecent: () => void }) => 
       top_clientes_faturamento,
       clientes_risco_churn,
     };
-  }, [appointments, clients]);
+  }, [appointments, clients, churnRiskDaysThreshold]);
 
   useEffect(() => {
     let isMounted = true;
@@ -478,11 +488,30 @@ const DashboardHome = ({ onViewAllRecent }: { onViewAllRecent: () => void }) => 
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={dailyData}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="name" />
+                <XAxis
+                  dataKey="name"
+                  tickFormatter={(value, index) => {
+                    const row = dailyData[index];
+                    const isClosed = Number(row?.isClosed || 0) === 1;
+                    return isClosed ? `${value} 🔒` : String(value);
+                  }}
+                />
                 <YAxis />
                 <Tooltip
-                  formatter={(value, name) => [`${value} agendamentos`, String(name)]}
-                  labelFormatter={(label) => `Data: ${label}`}
+                  formatter={(value, name, props) => {
+                    const payload = props?.payload as Record<string, unknown> | undefined;
+                    const isClosed = Number(payload?.isClosed || 0) === 1;
+                    if (isClosed) {
+                      return ['Estabelecimento fechado neste dia', 'Status'];
+                    }
+                    return [`${value} agendamentos`, String(name)];
+                  }}
+                  labelFormatter={(label, payload) => {
+                    const first = Array.isArray(payload) && payload.length > 0 ? payload[0] : undefined;
+                    const point = first?.payload as Record<string, unknown> | undefined;
+                    const isClosed = Number(point?.isClosed || 0) === 1;
+                    return isClosed ? `Data: ${label} • Fechado` : `Data: ${label}`;
+                  }}
                 />
                 <Legend wrapperStyle={{ fontSize: 12 }} />
                 {professionalSeries.length > 0 ? (
@@ -494,14 +523,25 @@ const DashboardHome = ({ onViewAllRecent }: { onViewAllRecent: () => void }) => 
                       stackId="appointments"
                       fill={series.color}
                       radius={index === professionalSeries.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0]}
-                    />
+                    >
+                      {dailyData.map((entry) => {
+                        const closed = Number(entry.isClosed || 0) === 1;
+                        return <Cell key={`${series.id}-${String(entry.fullDate)}`} fill={closed ? '#d1d5db' : series.color} />;
+                      })}
+                    </Bar>
                   ))
                 ) : (
-                  <Bar dataKey="uv" fill={brandIdentity.primaryColor || '#3B82F6'} radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="uv" fill={brandIdentity.primaryColor || '#3B82F6'} radius={[4, 4, 0, 0]}>
+                    {dailyData.map((entry) => {
+                      const closed = Number(entry.isClosed || 0) === 1;
+                      return <Cell key={`default-${String(entry.fullDate)}`} fill={closed ? '#d1d5db' : (brandIdentity.primaryColor || '#3B82F6')} />;
+                    })}
+                  </Bar>
                 )}
               </BarChart>
             </ResponsiveContainer>
           </div>
+          <p className="mt-2 text-xs text-gray-500">🔒 indica dia fechado no horário de funcionamento.</p>
         </div>
 
         <div className="bg-white p-6 rounded-xl shadow-sm">
@@ -640,7 +680,8 @@ const DashboardHome = ({ onViewAllRecent }: { onViewAllRecent: () => void }) => 
         </div>
 
         <div className="bg-white rounded-xl shadow-sm p-6">
-          <h3 className="font-bold text-gray-800 mb-4">Clientes em Risco de Churn</h3>
+          <h3 className="font-bold text-gray-800 mb-1">Clientes em Risco de Churn</h3>
+          <p className="text-xs text-gray-500 mb-3">Sem retorno há {churnRiskDaysThreshold}+ dias</p>
           <div className="space-y-2">
             {insights.clientes_risco_churn.map((item) => (
               <div key={item.cliente_id} className="rounded-lg border border-amber-100 bg-amber-50/40 px-3 py-2.5">
@@ -1997,7 +2038,7 @@ const CalendarManagement = ({
 }: {
   navigationRequest?: { date: string; viewMode: 'DAY' | 'WEEK' | 'MONTH'; nonce: number } | null;
 }) => {
-  const { user, appointments, services, professionals, clients, addAppointment, updateAppointment, transitionAppointmentStatus, deleteAppointment, businessHours } = useAppContext();
+  const { user, appointments, services, professionals, clients, addAppointment, updateAppointment, transitionAppointmentStatus, deleteAppointment, businessHours, brandIdentity } = useAppContext();
     const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
     const [selectedProfessionalId, setSelectedProfessionalId] = useState<string | 'ALL'>('ALL');
     const [viewMode, setViewMode] = useState<'DAY' | 'WEEK' | 'MONTH'>('DAY');
@@ -2027,9 +2068,13 @@ const CalendarManagement = ({
         isAllDay: false,
         blockReason: ''
     });
+      const dayViewScrollRef = useRef<HTMLDivElement | null>(null);
 
     const selectedApt = appointments.find(a => a.id === selectedAptId);
     const isEmployeeUser = user?.role === 'EMPLOYEE';
+    const allowEmployeeConfirmAppointment = Boolean(brandIdentity.allowEmployeeConfirmAppointment);
+    const allowEmployeeCreateAppointment = brandIdentity.allowEmployeeCreateAppointment === undefined ? true : Boolean(brandIdentity.allowEmployeeCreateAppointment);
+    const canEmployeeCreateAppointment = !isEmployeeUser || allowEmployeeCreateAppointment;
     const employeeProfessionalId = user?.id || '';
     const canManageSelectedAppointment = !selectedApt || !isEmployeeUser || selectedApt.professionalId === employeeProfessionalId;
 
@@ -2112,6 +2157,31 @@ const CalendarManagement = ({
       setIsDetailsModalOpen(false);
       setSelectedAptId(null);
     }, [navigationRequest]);
+
+    useEffect(() => {
+      if (viewMode !== 'DAY') return;
+      if (!isSelectedDateOpen || TIME_SLOTS.length === 0) return;
+
+      const today = new Date().toISOString().split('T')[0];
+      if (selectedDate !== today) return;
+
+      const container = dayViewScrollRef.current;
+      if (!container) return;
+
+      const now = new Date();
+      const nowMinutes = now.getHours() * 60 + now.getMinutes();
+      const startMinutes = dayStartMinutes;
+      const endMinutes = dayEndMinutes;
+
+      const clampedNow = Math.min(Math.max(nowMinutes, startMinutes), endMinutes);
+      const pixelsPerMinute = SLOT_HEIGHT / 30;
+      const offsetFromStart = (clampedNow - startMinutes) * pixelsPerMinute;
+      const targetScrollTop = Math.max(offsetFromStart - 140, 0);
+
+      window.requestAnimationFrame(() => {
+        container.scrollTo({ top: targetScrollTop, behavior: 'smooth' });
+      });
+    }, [viewMode, selectedDate, isSelectedDateOpen, TIME_SLOTS.length, dayStartMinutes, dayEndMinutes]);
 
     useEffect(() => {
       if (!isModalOpen || selectedAptId || !isEmployeeUser) return;
@@ -2249,6 +2319,11 @@ const CalendarManagement = ({
 
       if (isEmployeeUser && formData.professionalId !== employeeProfessionalId) {
         setAppointmentSubmitError('Você só pode gerenciar seus próprios agendamentos.');
+        return;
+      }
+
+      if (!selectedAptId && isEmployeeUser && !allowEmployeeCreateAppointment) {
+        setAppointmentSubmitError('Seu perfil não possui permissão para criar agendamentos.');
         return;
       }
 
@@ -2401,7 +2476,7 @@ const CalendarManagement = ({
         case 'PENDING_PAYMENT':
         case 'CONFIRMED':
         case 'REOPENED':
-          return { label: 'Confirmar Atendimento', target: 'COMPLETED_FIN', adminOnly: true };
+          return { label: 'Confirmar Atendimento', target: 'COMPLETED_FIN', adminOnly: !allowEmployeeConfirmAppointment };
         case 'COMPLETED_FIN':
           return { label: 'Reabrir Atendimento', target: 'REOPENED', adminOnly: true };
         default:
@@ -2436,6 +2511,11 @@ const CalendarManagement = ({
       setTransitionObservation('');
       setTransitionTotalValue('');
       setTransitionPaymentMethod('PIX');
+
+      if (target === 'COMPLETED_FIN') {
+        setIsDetailsModalOpen(false);
+        setSelectedAptId(null);
+      }
     };
 
     const openTransitionModal = (target: 'COMPLETED_FIN' | 'REOPENED') => {
@@ -2547,6 +2627,10 @@ const CalendarManagement = ({
                             <button className="p-1.5 hover:bg-gray-100 rounded-full text-gray-400"><Bell size={18} /></button>
                             <button 
                                 onClick={() => {
+                                    if (!canEmployeeCreateAppointment) {
+                                      setAppointmentSubmitError('Seu perfil não possui permissão para criar agendamentos.');
+                                      return;
+                                    }
                                     setSelectedAptId(null);
                                     setFormData({ 
                                         clientId: '',
@@ -2651,34 +2735,36 @@ const CalendarManagement = ({
                                 Mês
                             </button>
                         </div>
-                        <button 
-                            onClick={() => {
-                                setSelectedAptId(null);
-                                setFormData({ 
-                                    clientId: '',
-                                    serviceId: '',
-                                    professionalId: isEmployeeUser ? employeeProfessionalId : '',
-                                    date: selectedDate,
-                                    time: defaultStartTime,
-                                  endTime: defaultEndTime,
-                                    isBlocked: false,
-                                  isAllDay: false,
-                                    blockReason: ''
-                                });
-                                setClientSearchTerm('');
-                                setIsClientSearchOpen(false);
-                                setIsModalOpen(true);
-                            }}
-                            className="hidden sm:flex items-center gap-1 bg-blue-600 text-white px-4 py-2 rounded-lg font-bold text-xs hover:bg-blue-700 transition-colors shadow-md uppercase tracking-wider whitespace-nowrap"
-                        >
-                            <Plus size={16} /> Adicionar
-                        </button>
+                        {canEmployeeCreateAppointment && (
+                          <button 
+                              onClick={() => {
+                                  setSelectedAptId(null);
+                                  setFormData({ 
+                                      clientId: '',
+                                      serviceId: '',
+                                      professionalId: isEmployeeUser ? employeeProfessionalId : '',
+                                      date: selectedDate,
+                                      time: defaultStartTime,
+                                    endTime: defaultEndTime,
+                                      isBlocked: false,
+                                    isAllDay: false,
+                                      blockReason: ''
+                                  });
+                                  setClientSearchTerm('');
+                                  setIsClientSearchOpen(false);
+                                  setIsModalOpen(true);
+                              }}
+                              className="hidden sm:flex items-center gap-1 bg-blue-600 text-white px-4 py-2 rounded-lg font-bold text-xs hover:bg-blue-700 transition-colors shadow-md uppercase tracking-wider whitespace-nowrap"
+                          >
+                              <Plus size={16} /> Adicionar
+                          </button>
+                        )}
                     </div>
                 </div>
             </div>
 
             {/* Grid Container */}
-            <div className="flex-1 overflow-auto relative touch-pan-x touch-pan-y rounded-b-xl">
+            <div ref={dayViewScrollRef} className="flex-1 overflow-auto relative touch-pan-x touch-pan-y rounded-b-xl">
                 {viewMode === 'DAY' && (
                     <div style={{ width: `${60 + (filteredProfessionals.length * 150)}px` }} className="min-w-full">
                         {/* Professionals Header */}
@@ -4119,6 +4205,20 @@ const SettingsManagement = () => {
   const [identityError, setIdentityError] = useState<string | null>(null);
   const [identitySuccess, setIdentitySuccess] = useState<string | null>(null);
   const [isSavingIdentity, setIsSavingIdentity] = useState(false);
+  const [isEmployeeProfileModalOpen, setIsEmployeeProfileModalOpen] = useState(false);
+  const [allowEmployeeConfirmAppointment, setAllowEmployeeConfirmAppointment] = useState(Boolean(brandIdentity.allowEmployeeConfirmAppointment));
+  const [allowEmployeeCreateAppointment, setAllowEmployeeCreateAppointment] = useState(
+    brandIdentity.allowEmployeeCreateAppointment === undefined ? true : Boolean(brandIdentity.allowEmployeeCreateAppointment)
+  );
+  const [allowEmployeeViewFinance, setAllowEmployeeViewFinance] = useState(Boolean(brandIdentity.allowEmployeeViewFinance));
+  const [allowEmployeeViewReports, setAllowEmployeeViewReports] = useState(Boolean(brandIdentity.allowEmployeeViewReports));
+  const [profileSettingsError, setProfileSettingsError] = useState<string | null>(null);
+  const [profileSettingsSuccess, setProfileSettingsSuccess] = useState<string | null>(null);
+  const [isSavingProfileSettings, setIsSavingProfileSettings] = useState(false);
+  const [churnRiskDaysThreshold, setChurnRiskDaysThreshold] = useState<number>(Math.max(1, Math.min(365, Number(brandIdentity.churnRiskDaysThreshold || 45))));
+  const [churnSettingsError, setChurnSettingsError] = useState<string | null>(null);
+  const [churnSettingsSuccess, setChurnSettingsSuccess] = useState<string | null>(null);
+  const [isSavingChurnSettings, setIsSavingChurnSettings] = useState(false);
   const logoInputRef = useRef<HTMLInputElement | null>(null);
   const loginLogoInputRef = useRef<HTMLInputElement | null>(null);
   const loginBackgroundInputRef = useRef<HTMLInputElement | null>(null);
@@ -4139,6 +4239,30 @@ const SettingsManagement = () => {
   useEffect(() => {
     setIdentityForm(brandIdentity);
   }, [brandIdentity]);
+
+  useEffect(() => {
+    setAllowEmployeeConfirmAppointment(Boolean(brandIdentity.allowEmployeeConfirmAppointment));
+  }, [brandIdentity.allowEmployeeConfirmAppointment]);
+
+  useEffect(() => {
+    setAllowEmployeeCreateAppointment(
+      brandIdentity.allowEmployeeCreateAppointment === undefined
+        ? true
+        : Boolean(brandIdentity.allowEmployeeCreateAppointment)
+    );
+  }, [brandIdentity.allowEmployeeCreateAppointment]);
+
+  useEffect(() => {
+    setAllowEmployeeViewFinance(Boolean(brandIdentity.allowEmployeeViewFinance));
+  }, [brandIdentity.allowEmployeeViewFinance]);
+
+  useEffect(() => {
+    setAllowEmployeeViewReports(Boolean(brandIdentity.allowEmployeeViewReports));
+  }, [brandIdentity.allowEmployeeViewReports]);
+
+  useEffect(() => {
+    setChurnRiskDaysThreshold(Math.max(1, Math.min(365, Number(brandIdentity.churnRiskDaysThreshold || 45))));
+  }, [brandIdentity.churnRiskDaysThreshold]);
 
   const toggleDay = (id: number) => {
     setLocalBusinessHours(prev => prev.map(h => h.dayOfWeek === id ? { ...h, open: !h.open } : h));
@@ -4193,6 +4317,9 @@ const SettingsManagement = () => {
       logoUrl: identityForm.logoUrl?.trim() || undefined,
       loginLogoUrl: identityForm.loginLogoUrl?.trim() || undefined,
       loginBackgroundUrl: identityForm.loginBackgroundUrl?.trim() || undefined,
+      allowEmployeeConfirmAppointment: Boolean(identityForm.allowEmployeeConfirmAppointment),
+      allowEmployeeCreateAppointment: identityForm.allowEmployeeCreateAppointment === undefined ? true : Boolean(identityForm.allowEmployeeCreateAppointment),
+      allowEmployeeViewFinance: Boolean(identityForm.allowEmployeeViewFinance),
       iconName: identityForm.iconName || 'scissors',
       primaryColor: identityForm.primaryColor || '#2563eb',
       secondaryColor: identityForm.secondaryColor || '#eff6ff',
@@ -4206,6 +4333,65 @@ const SettingsManagement = () => {
 
     setIdentitySuccess('Identidade visual atualizada com sucesso.');
     setIsSavingIdentity(false);
+  };
+
+  const handleSaveEmployeeProfileSettings = async () => {
+    if (isSavingProfileSettings) return;
+    setIsSavingProfileSettings(true);
+    setProfileSettingsError(null);
+    setProfileSettingsSuccess(null);
+
+    const result = await saveBrandIdentity({
+      ...brandIdentity,
+      name: (brandIdentity.name || 'AgendeFácil Barbearia').trim(),
+      iconName: brandIdentity.iconName || 'scissors',
+      primaryColor: brandIdentity.primaryColor || '#2563eb',
+      secondaryColor: brandIdentity.secondaryColor || '#eff6ff',
+      allowEmployeeConfirmAppointment,
+      allowEmployeeCreateAppointment,
+      allowEmployeeViewFinance,
+      allowEmployeeViewReports,
+    });
+
+    if (!result.success) {
+      setProfileSettingsError(result.error || 'Falha ao salvar permissões do perfil Funcionário / Equipe.');
+      setIsSavingProfileSettings(false);
+      return;
+    }
+
+    setProfileSettingsSuccess('Permissões atualizadas com sucesso.');
+    setIsSavingProfileSettings(false);
+  };
+
+  const handleSaveChurnSettings = async () => {
+    if (isSavingChurnSettings) return;
+    setChurnSettingsError(null);
+    setChurnSettingsSuccess(null);
+
+    const threshold = Number(churnRiskDaysThreshold);
+    if (!Number.isInteger(threshold) || threshold < 1 || threshold > 365) {
+      setChurnSettingsError('Informe um valor inteiro entre 1 e 365 dias.');
+      return;
+    }
+
+    setIsSavingChurnSettings(true);
+    const result = await saveBrandIdentity({
+      ...brandIdentity,
+      name: (brandIdentity.name || 'AgendeFácil Barbearia').trim(),
+      iconName: brandIdentity.iconName || 'scissors',
+      primaryColor: brandIdentity.primaryColor || '#2563eb',
+      secondaryColor: brandIdentity.secondaryColor || '#eff6ff',
+      churnRiskDaysThreshold: threshold,
+    });
+
+    if (!result.success) {
+      setChurnSettingsError(result.error || 'Falha ao salvar configuração de churn.');
+      setIsSavingChurnSettings(false);
+      return;
+    }
+
+    setChurnSettingsSuccess('Configuração de churn atualizada com sucesso.');
+    setIsSavingChurnSettings(false);
   };
 
   const handleIdentityImageUpload =
@@ -4318,6 +4504,7 @@ const SettingsManagement = () => {
         password: data.password,
         role: data.accessRole === 'ADMIN' ? 'ADMIN' : 'EMPLOYEE',
         avatar: data.avatar,
+        commissionPercentage: Number(comissaoPercentual.toFixed(2)),
       };
 
       if (selectedProfessional && linkedUser) {
@@ -4790,15 +4977,35 @@ const SettingsManagement = () => {
                     desc: 'Acesso total ao sistema e financeiro',
                     icon: <Shield className="text-purple-600" />,
                     count: adminUsersCount,
+                    key: 'ADMIN',
                   },
                   {
                     title: 'Funcionário / Equipe',
                     desc: 'Gestão da agenda e operações do dia a dia',
                     icon: <Users className="text-blue-600" />,
                     count: employeeUsersCount,
+                    key: 'EMPLOYEE',
                   }
                 ].map((p, i) => (
-                  <div key={i} className="p-4 border rounded-xl hover:border-blue-300 transition-colors cursor-pointer">
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => {
+                      if (p.key !== 'EMPLOYEE') return;
+                      setProfileSettingsError(null);
+                      setProfileSettingsSuccess(null);
+                      setAllowEmployeeConfirmAppointment(Boolean(brandIdentity.allowEmployeeConfirmAppointment));
+                      setAllowEmployeeCreateAppointment(
+                        brandIdentity.allowEmployeeCreateAppointment === undefined
+                          ? true
+                          : Boolean(brandIdentity.allowEmployeeCreateAppointment)
+                      );
+                      setAllowEmployeeViewFinance(Boolean(brandIdentity.allowEmployeeViewFinance));
+                      setAllowEmployeeViewReports(Boolean(brandIdentity.allowEmployeeViewReports));
+                      setIsEmployeeProfileModalOpen(true);
+                    }}
+                    className={`w-full text-left p-4 border rounded-xl transition-colors ${p.key === 'EMPLOYEE' ? 'hover:border-blue-300 cursor-pointer' : 'cursor-default'}`}
+                  >
                     <div className="mb-2 flex items-center justify-between gap-2">
                       {p.icon}
                       <span className="text-xs font-bold px-2 py-1 rounded-full bg-gray-100 text-gray-700">
@@ -4807,9 +5014,169 @@ const SettingsManagement = () => {
                     </div>
                     <p className="font-bold text-gray-900">{p.title}</p>
                     <p className="text-xs text-gray-500 mt-1">{p.desc}</p>
-                  </div>
+                    {p.key === 'EMPLOYEE' && (
+                      <p className="text-[11px] text-blue-600 font-bold mt-3">Configurar permissões</p>
+                    )}
+                  </button>
                 ))}
               </div>
+
+              <div className="rounded-2xl border border-gray-200 p-5 space-y-4">
+                <div>
+                  <h4 className="font-bold text-gray-900">Risco de Churn</h4>
+                  <p className="text-xs text-gray-500 mt-1">Defina quantos dias sem retorno classificam o cliente como risco de churn na Visão Geral.</p>
+                </div>
+
+                <div className="max-w-xs">
+                  <label className="block text-sm font-bold text-gray-700 mb-1">Dias sem retorno</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={365}
+                    step={1}
+                    value={churnRiskDaysThreshold}
+                    onChange={(event) => setChurnRiskDaysThreshold(Number(event.target.value || 0))}
+                    className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
+                  />
+                </div>
+
+                {churnSettingsError && (
+                  <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                    {churnSettingsError}
+                  </div>
+                )}
+
+                {churnSettingsSuccess && (
+                  <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
+                    {churnSettingsSuccess}
+                  </div>
+                )}
+
+                <div className="pt-1">
+                  <button
+                    type="button"
+                    onClick={() => void handleSaveChurnSettings()}
+                    disabled={isSavingChurnSettings}
+                    className="px-5 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    {isSavingChurnSettings ? 'Salvando...' : 'Salvar limite de churn'}
+                  </button>
+                </div>
+              </div>
+
+              {isEmployeeProfileModalOpen && (
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                  <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg overflow-hidden animate-fade-in">
+                    <div className="px-6 py-4 border-b flex justify-between items-center bg-gray-50">
+                      <h3 className="font-bold text-gray-900">Funcionário / Equipe</h3>
+                      <button
+                        onClick={() => {
+                          if (isSavingProfileSettings) return;
+                          setIsEmployeeProfileModalOpen(false);
+                          setProfileSettingsError(null);
+                          setProfileSettingsSuccess(null);
+                        }}
+                        className="text-gray-400 hover:text-gray-600"
+                      >
+                        <X size={20} />
+                      </button>
+                    </div>
+
+                    <div className="p-6 space-y-4">
+                      <div className="rounded-xl border border-gray-200 p-4 flex items-start justify-between gap-4">
+                        <div>
+                          <p className="font-bold text-gray-900 text-sm">Permitir confirmar atendimento na Agenda</p>
+                          <p className="text-xs text-gray-500 mt-1">Quando ativado, usuários do perfil Funcionário / Equipe podem concluir atendimento nos próprios agendamentos.</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setAllowEmployeeConfirmAppointment(prev => !prev)}
+                          className={`w-12 h-6 rounded-full relative transition-colors shrink-0 ${allowEmployeeConfirmAppointment ? 'bg-blue-600' : 'bg-gray-300'}`}
+                        >
+                          <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${allowEmployeeConfirmAppointment ? 'right-1' : 'left-1'}`}></div>
+                        </button>
+                      </div>
+
+                      <div className="rounded-xl border border-gray-200 p-4 flex items-start justify-between gap-4">
+                        <div>
+                          <p className="font-bold text-gray-900 text-sm">Permitir criar agendamento na Agenda</p>
+                          <p className="text-xs text-gray-500 mt-1">Quando ativado, usuários do perfil Funcionário / Equipe veem o botão Adicionar e podem cadastrar novos agendamentos.</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setAllowEmployeeCreateAppointment(prev => !prev)}
+                          className={`w-12 h-6 rounded-full relative transition-colors shrink-0 ${allowEmployeeCreateAppointment ? 'bg-blue-600' : 'bg-gray-300'}`}
+                        >
+                          <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${allowEmployeeCreateAppointment ? 'right-1' : 'left-1'}`}></div>
+                        </button>
+                      </div>
+
+                      <div className="rounded-xl border border-gray-200 p-4 flex items-start justify-between gap-4">
+                        <div>
+                          <p className="font-bold text-gray-900 text-sm">Permitir visualizar Financeiro</p>
+                          <p className="text-xs text-gray-500 mt-1">Quando ativado, usuários do perfil Funcionário / Equipe terão acesso à aba Financeiro apenas com seus próprios dados.</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setAllowEmployeeViewFinance(prev => !prev)}
+                          className={`w-12 h-6 rounded-full relative transition-colors shrink-0 ${allowEmployeeViewFinance ? 'bg-blue-600' : 'bg-gray-300'}`}
+                        >
+                          <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${allowEmployeeViewFinance ? 'right-1' : 'left-1'}`}></div>
+                        </button>
+                      </div>
+
+                      <div className="rounded-xl border border-gray-200 p-4 flex items-start justify-between gap-4">
+                        <div>
+                          <p className="font-bold text-gray-900 text-sm">Permitir visualizar Relatórios</p>
+                          <p className="text-xs text-gray-500 mt-1">Quando ativado, usuários do perfil Funcionário / Equipe terão acesso à aba Relatórios.</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setAllowEmployeeViewReports(prev => !prev)}
+                          className={`w-12 h-6 rounded-full relative transition-colors shrink-0 ${allowEmployeeViewReports ? 'bg-blue-600' : 'bg-gray-300'}`}
+                        >
+                          <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${allowEmployeeViewReports ? 'right-1' : 'left-1'}`}></div>
+                        </button>
+                      </div>
+
+                      {profileSettingsError && (
+                        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                          {profileSettingsError}
+                        </div>
+                      )}
+
+                      {profileSettingsSuccess && (
+                        <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
+                          {profileSettingsSuccess}
+                        </div>
+                      )}
+
+                      <div className="pt-2 flex gap-3">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (isSavingProfileSettings) return;
+                            setIsEmployeeProfileModalOpen(false);
+                            setProfileSettingsError(null);
+                            setProfileSettingsSuccess(null);
+                          }}
+                          className="flex-1 px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50"
+                        >
+                          Fechar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleSaveEmployeeProfileSettings()}
+                          disabled={isSavingProfileSettings}
+                          className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                        >
+                          {isSavingProfileSettings ? 'Salvando...' : 'Salvar'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -5677,6 +6044,11 @@ const SettingsManagement = () => {
 };
 
 const FinanceManagement = () => {
+  const { user, brandIdentity } = useAppContext();
+  const isAdminFinanceUser = user?.role === 'ADMIN';
+  const isEmployeeFinanceUser = user?.role === 'EMPLOYEE';
+  const employeeCanViewFinance = Boolean(brandIdentity.allowEmployeeViewFinance);
+  const isReadOnlyFinance = !isAdminFinanceUser;
   const [receivables, setReceivables] = useState<RecebivelApi[]>([]);
   const [professionalFilter, setProfessionalFilter] = useState<string>('ALL');
   const [professionalOptions, setProfessionalOptions] = useState<Array<{ id: string; nome: string }>>([]);
@@ -5705,6 +6077,13 @@ const FinanceManagement = () => {
   const PAGE_SIZE = 10;
 
   const loadFinanceData = async () => {
+    if (!isAdminFinanceUser && (!isEmployeeFinanceUser || !employeeCanViewFinance)) {
+      setIsLoading(false);
+      setReceivables([]);
+      setErrorMessage('Seu perfil não possui acesso ao Financeiro.');
+      return;
+    }
+
     const token = localStorage.getItem('auth_token');
     if (!token) {
       setIsLoading(false);
@@ -5716,15 +6095,14 @@ const FinanceManagement = () => {
     setIsLoading(true);
     setErrorMessage(null);
 
-    const [receivablesResponse, professionalsResponse] = await Promise.all([
-      listRecebiveisApi({
-        profissional_id: professionalFilter === 'ALL' ? undefined : professionalFilter,
-        data_inicio: startDateFilter || undefined,
-        data_fim: endDateFilter || undefined,
-        limit: 500,
-      }),
-      listProfissionaisApi(),
-    ]);
+    const receivablesResponse = await listRecebiveisApi({
+      profissional_id: isAdminFinanceUser
+        ? (professionalFilter === 'ALL' ? undefined : professionalFilter)
+        : undefined,
+      data_inicio: startDateFilter || undefined,
+      data_fim: endDateFilter || undefined,
+      limit: 500,
+    });
 
     if (!receivablesResponse.success) {
       setErrorMessage('error' in receivablesResponse ? receivablesResponse.error : 'Falha ao carregar recebíveis.');
@@ -5732,13 +6110,18 @@ const FinanceManagement = () => {
       return;
     }
 
-    if (professionalsResponse.success) {
-      setProfessionalOptions(
-        (professionalsResponse.data || []).map((item) => ({
-          id: String(item.id || ''),
-          nome: String(item.nome || 'Profissional'),
-        })),
-      );
+    if (isAdminFinanceUser) {
+      const professionalsResponse = await listProfissionaisApi();
+      if (professionalsResponse.success) {
+        setProfessionalOptions(
+          (professionalsResponse.data || []).map((item) => ({
+            id: String(item.id || ''),
+            nome: String(item.nome || 'Profissional'),
+          })),
+        );
+      }
+    } else {
+      setProfessionalOptions([]);
     }
 
     setReceivables(receivablesResponse.data || []);
@@ -5748,7 +6131,7 @@ const FinanceManagement = () => {
 
   useEffect(() => {
     loadFinanceData();
-  }, [professionalFilter, startDateFilter, endDateFilter]);
+  }, [professionalFilter, startDateFilter, endDateFilter, isAdminFinanceUser, isEmployeeFinanceUser, employeeCanViewFinance]);
 
   const clearFilters = () => {
     setProfessionalFilter('ALL');
@@ -6029,7 +6412,11 @@ const FinanceManagement = () => {
       <div className="flex flex-col gap-4">
         <div>
           <h2 className="text-2xl font-bold text-gray-800">Financeiro</h2>
-          <p className="text-sm text-gray-500">Recebimentos, pagamentos parciais e estornos.</p>
+          <p className="text-sm text-gray-500">
+            {isReadOnlyFinance
+              ? 'Visualização dos seus detalhes financeiros e comissão estimada.'
+              : 'Recebimentos, pagamentos parciais e estornos.'}
+          </p>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2">
           <input
@@ -6039,16 +6426,18 @@ const FinanceManagement = () => {
             placeholder="Pesquisar por cliente, serviço, profissional..."
             className="px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm sm:col-span-2 lg:col-span-2"
           />
-          <select
-            value={professionalFilter}
-            onChange={(event) => setProfessionalFilter(event.target.value)}
-            className="px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm"
-          >
-            <option value="ALL">Todos os profissionais</option>
-            {professionalOptions.map((item) => (
-              <option key={item.id} value={item.id}>{item.nome}</option>
-            ))}
-          </select>
+          {isAdminFinanceUser && (
+            <select
+              value={professionalFilter}
+              onChange={(event) => setProfessionalFilter(event.target.value)}
+              className="px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm"
+            >
+              <option value="ALL">Todos os profissionais</option>
+              {professionalOptions.map((item) => (
+                <option key={item.id} value={item.id}>{item.nome}</option>
+              ))}
+            </select>
+          )}
           <input
             type="date"
             value={startDateFilter}
@@ -6166,13 +6555,13 @@ const FinanceManagement = () => {
                     Status {sortIndicator('STATUS')}
                   </button>
                 </th>
-                <th className="px-6 py-3 text-right">Ações</th>
+                {!isReadOnlyFinance && <th className="px-6 py-3 text-right">Ações</th>}
               </tr>
             </thead>
             <tbody className="divide-y">
               {isLoading && (
                 <tr>
-                  <td colSpan={10} className="px-6 py-8 text-center text-gray-500">Carregando financeiro...</td>
+                  <td colSpan={isReadOnlyFinance ? 9 : 10} className="px-6 py-8 text-center text-gray-500">Carregando financeiro...</td>
                 </tr>
               )}
 
@@ -6208,31 +6597,33 @@ const FinanceManagement = () => {
                         {statusLabel(row.status)}
                       </span>
                     </td>
-                    <td className="px-6 py-3">
-                      <div className="flex items-center justify-end gap-2">
-                        <button
-                          onClick={() => openPaymentModal(row)}
-                          disabled={!canPay}
-                          className="px-3 py-1.5 bg-green-600 text-white rounded-lg text-xs font-medium hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed"
-                        >
-                          Receber
-                        </button>
-                        <button
-                          onClick={() => openRefundModal(row)}
-                          disabled={!canRefund}
-                          className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-xs font-medium hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed"
-                        >
-                          Estornar
-                        </button>
-                      </div>
-                    </td>
+                    {!isReadOnlyFinance && (
+                      <td className="px-6 py-3">
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            onClick={() => openPaymentModal(row)}
+                            disabled={!canPay}
+                            className="px-3 py-1.5 bg-green-600 text-white rounded-lg text-xs font-medium hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                          >
+                            Receber
+                          </button>
+                          <button
+                            onClick={() => openRefundModal(row)}
+                            disabled={!canRefund}
+                            className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-xs font-medium hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                          >
+                            Estornar
+                          </button>
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 );
               })}
 
               {!isLoading && paginatedReceivables.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="px-6 py-8 text-center text-gray-500">Nenhum recebível encontrado.</td>
+                  <td colSpan={isReadOnlyFinance ? 9 : 10} className="px-6 py-8 text-center text-gray-500">Nenhum recebível encontrado.</td>
                 </tr>
               )}
             </tbody>
@@ -6264,7 +6655,7 @@ const FinanceManagement = () => {
         )}
       </div>
 
-      {actionModal.open && actionModal.receivable && (
+      {!isReadOnlyFinance && actionModal.open && actionModal.receivable && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden">
             <div className="p-6 border-b flex items-center justify-between bg-gray-50">
@@ -6412,10 +6803,629 @@ const CategoryModal = ({ isOpen, onClose, onSave, categoryToEdit }: { isOpen: bo
   );
 };
 
+type ReportKey = 'FINANCIAL' | 'OCCUPANCY' | 'PROFESSIONAL' | 'CLIENTS' | 'SERVICES';
+type ReportPeriod = 'TODAY' | 'LAST_7_DAYS' | 'LAST_30_DAYS' | 'THIS_MONTH' | 'CUSTOM';
+
+type ReportColumn = {
+  key: string;
+  label: string;
+};
+
+type ReportCard = {
+  label: string;
+  value: string;
+};
+
+type ReportData = {
+  title: string;
+  description: string;
+  columns: ReportColumn[];
+  rows: Array<Record<string, string | number>>;
+  cards: ReportCard[];
+};
+
+const ReportsManagement = () => {
+  const { appointments, professionals, services, clients } = useAppContext();
+  const [selectedReport, setSelectedReport] = useState<ReportKey>('FINANCIAL');
+  const [sortBy, setSortBy] = useState<string>('');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+  const [period, setPeriod] = useState<ReportPeriod>('LAST_30_DAYS');
+  const [professionalFilter, setProfessionalFilter] = useState<string>('ALL');
+  const [statusFilter, setStatusFilter] = useState<string>('ALL');
+  const [customStartDate, setCustomStartDate] = useState<string>('');
+  const [customEndDate, setCustomEndDate] = useState<string>('');
+
+  const reportOptions: Array<{ key: ReportKey; title: string; description: string }> = [
+    { key: 'FINANCIAL', title: 'Faturamento e Recebimentos', description: 'Receita, ticket médio e volume de atendimentos.' },
+    { key: 'OCCUPANCY', title: 'Agenda e Ocupação', description: 'Ocupação, no-show e cancelamentos por profissional.' },
+    { key: 'PROFESSIONAL', title: 'Desempenho por Profissional', description: 'Produção, faturamento e comissão estimada.' },
+    { key: 'CLIENTS', title: 'Clientes (CRM)', description: 'Recorrência, gasto e risco de churn.' },
+    { key: 'SERVICES', title: 'Serviços e Mix de Vendas', description: 'Serviços mais vendidos e faturamento por serviço.' },
+  ];
+
+  const statusOptions = [
+    'ALL',
+    'PENDING_PAYMENT',
+    'CONFIRMED',
+    'IN_PROGRESS',
+    'COMPLETED_OP',
+    'COMPLETED_FIN',
+    'REOPENED',
+    'NO_SHOW',
+    'CANCELLED',
+  ];
+
+  const todayIso = useMemo(() => new Date().toISOString().slice(0, 10), []);
+
+  useEffect(() => {
+    if (!customEndDate) {
+      setCustomEndDate(todayIso);
+    }
+    if (!customStartDate) {
+      const d = new Date();
+      d.setDate(d.getDate() - 29);
+      setCustomStartDate(d.toISOString().slice(0, 10));
+    }
+  }, [customEndDate, customStartDate, todayIso]);
+
+  const dateRange = useMemo(() => {
+    const end = new Date();
+    end.setHours(0, 0, 0, 0);
+
+    const start = new Date(end);
+
+    if (period === 'TODAY') {
+      return { startDate: end.toISOString().slice(0, 10), endDate: end.toISOString().slice(0, 10) };
+    }
+
+    if (period === 'LAST_7_DAYS') {
+      start.setDate(start.getDate() - 6);
+      return { startDate: start.toISOString().slice(0, 10), endDate: end.toISOString().slice(0, 10) };
+    }
+
+    if (period === 'LAST_30_DAYS') {
+      start.setDate(start.getDate() - 29);
+      return { startDate: start.toISOString().slice(0, 10), endDate: end.toISOString().slice(0, 10) };
+    }
+
+    if (period === 'THIS_MONTH') {
+      const monthStart = new Date(end.getFullYear(), end.getMonth(), 1);
+      return { startDate: monthStart.toISOString().slice(0, 10), endDate: end.toISOString().slice(0, 10) };
+    }
+
+    return {
+      startDate: customStartDate || end.toISOString().slice(0, 10),
+      endDate: customEndDate || end.toISOString().slice(0, 10),
+    };
+  }, [period, customStartDate, customEndDate]);
+
+  const filteredAppointments = useMemo(() => {
+    return appointments.filter((appointment) => {
+      const status = normalizeAppointmentStatus(appointment.status);
+      if (status === 'BLOCKED') return false;
+
+      if (professionalFilter !== 'ALL' && appointment.professionalId !== professionalFilter) {
+        return false;
+      }
+
+      if (statusFilter !== 'ALL' && status !== statusFilter) {
+        return false;
+      }
+
+      const date = String(appointment.date || '').slice(0, 10);
+      return date >= dateRange.startDate && date <= dateRange.endDate;
+    });
+  }, [appointments, professionalFilter, statusFilter, dateRange]);
+
+  const completedStatuses = new Set(['COMPLETED_OP', 'COMPLETED_FIN', 'COMPLETED']);
+
+  const reportData = useMemo<ReportData>(() => {
+    if (selectedReport === 'FINANCIAL') {
+      const commissionByProfessional = new Map<string, number>(
+        professionals.map((professional) => [professional.id, Number(professional.commissionPercentage || 0)])
+      );
+      const byDate = new Map<string, { total: number; profissional: number; barbearia: number; atendimentos: number }>();
+
+      filteredAppointments.forEach((appointment) => {
+        const normalizedStatus = normalizeAppointmentStatus(appointment.status);
+        if (!completedStatuses.has(normalizedStatus)) return;
+
+        const date = String(appointment.date || '').slice(0, 10);
+        const current = byDate.get(date) || { total: 0, profissional: 0, barbearia: 0, atendimentos: 0 };
+        const totalValue = Number(appointment.totalValue || 0);
+        const commissionRate = Number(commissionByProfessional.get(appointment.professionalId) || 0);
+        const professionalRevenue = totalValue * (commissionRate / 100);
+        const barbershopRevenue = totalValue - professionalRevenue;
+
+        current.total += totalValue;
+        current.profissional += professionalRevenue;
+        current.barbearia += barbershopRevenue;
+        current.atendimentos += 1;
+        byDate.set(date, current);
+      });
+
+      const rows = Array.from(byDate.entries())
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([date, values]) => ({
+          Data: safeDateBr(date),
+          Atendimentos: values.atendimentos,
+          'Faturamento Barbearia': Number(values.barbearia.toFixed(2)),
+          'Faturamento Profissional': Number(values.profissional.toFixed(2)),
+          'Faturamento Total': Number(values.total.toFixed(2)),
+          'Ticket Médio': values.atendimentos > 0 ? Number((values.total / values.atendimentos).toFixed(2)) : 0,
+        }));
+
+      const totalRevenue = rows.reduce((sum, row) => sum + Number(row['Faturamento Total'] || 0), 0);
+      const totalBarbershopRevenue = rows.reduce((sum, row) => sum + Number(row['Faturamento Barbearia'] || 0), 0);
+      const totalProfessionalRevenue = rows.reduce((sum, row) => sum + Number(row['Faturamento Profissional'] || 0), 0);
+      const totalAppointments = rows.reduce((sum, row) => sum + Number(row.Atendimentos || 0), 0);
+      const avgTicket = totalAppointments > 0 ? totalRevenue / totalAppointments : 0;
+      const barbershopMargin = totalRevenue > 0 ? (totalBarbershopRevenue / totalRevenue) * 100 : 0;
+
+      return {
+        title: 'Faturamento e Recebimentos',
+        description: 'Consolidação financeira por data no período filtrado.',
+        columns: [
+          { key: 'Data', label: 'Data' },
+          { key: 'Atendimentos', label: 'Atendimentos' },
+          { key: 'Faturamento Barbearia', label: 'Faturamento Barbearia (R$)' },
+          { key: 'Faturamento Profissional', label: 'Faturamento Profissional (R$)' },
+          { key: 'Faturamento Total', label: 'Faturamento Total (R$)' },
+          { key: 'Ticket Médio', label: 'Ticket Médio (R$)' },
+        ],
+        rows,
+        cards: [
+          { label: 'Faturamento barbearia', value: `R$ ${safeMoney(totalBarbershopRevenue)}` },
+          { label: 'Faturamento profissional', value: `R$ ${safeMoney(totalProfessionalRevenue)}` },
+          { label: 'Faturamento total', value: `R$ ${safeMoney(totalRevenue)}` },
+          { label: 'Margem barbearia', value: `${barbershopMargin.toFixed(1)}%` },
+          { label: 'Atendimentos concluídos', value: `${totalAppointments}` },
+          { label: 'Ticket médio', value: `R$ ${safeMoney(avgTicket)}` },
+        ],
+      };
+    }
+
+    if (selectedReport === 'OCCUPANCY') {
+      const rows = professionals.map((professional) => {
+        const items = filteredAppointments.filter((appointment) => appointment.professionalId === professional.id);
+        const total = items.length;
+        const noShow = items.filter((appointment) => normalizeAppointmentStatus(appointment.status) === 'NO_SHOW').length;
+        const cancelled = items.filter((appointment) => normalizeAppointmentStatus(appointment.status) === 'CANCELLED').length;
+        const concluded = items.filter((appointment) => completedStatuses.has(normalizeAppointmentStatus(appointment.status))).length;
+        const occupancy = total > 0 ? (concluded / total) * 100 : 0;
+
+        return {
+          Profissional: professional.name,
+          Agendamentos: total,
+          Concluídos: concluded,
+          'No-show': noShow,
+          Cancelados: cancelled,
+          'Taxa Ocupação (%)': Number(occupancy.toFixed(1)),
+        };
+      });
+
+      return {
+        title: 'Agenda e Ocupação',
+        description: 'Eficiência operacional por profissional.',
+        columns: [
+          { key: 'Profissional', label: 'Profissional' },
+          { key: 'Agendamentos', label: 'Agendamentos' },
+          { key: 'Concluídos', label: 'Concluídos' },
+          { key: 'No-show', label: 'No-show' },
+          { key: 'Cancelados', label: 'Cancelados' },
+          { key: 'Taxa Ocupação (%)', label: 'Taxa Ocupação (%)' },
+        ],
+        rows,
+        cards: [
+          { label: 'Agendamentos totais', value: `${rows.reduce((sum, row) => sum + Number(row.Agendamentos || 0), 0)}` },
+          { label: 'No-show total', value: `${rows.reduce((sum, row) => sum + Number(row['No-show'] || 0), 0)}` },
+          { label: 'Cancelamentos', value: `${rows.reduce((sum, row) => sum + Number(row.Cancelados || 0), 0)}` },
+        ],
+      };
+    }
+
+    if (selectedReport === 'PROFESSIONAL') {
+      const rows = professionals.map((professional) => {
+        const items = filteredAppointments.filter((appointment) => appointment.professionalId === professional.id);
+        const concluded = items.filter((appointment) => completedStatuses.has(normalizeAppointmentStatus(appointment.status)));
+        const revenue = concluded.reduce((sum, appointment) => sum + Number(appointment.totalValue || 0), 0);
+        const avgTicket = concluded.length > 0 ? revenue / concluded.length : 0;
+        const commissionRate = Number(professional.commissionPercentage || 0);
+        const commissionEstimate = revenue * (commissionRate / 100);
+
+        return {
+          Profissional: professional.name,
+          'Atendimentos Concluídos': concluded.length,
+          Faturamento: Number(revenue.toFixed(2)),
+          'Ticket Médio': Number(avgTicket.toFixed(2)),
+          'Comissão %': Number(commissionRate.toFixed(2)),
+          'Comissão Estimada': Number(commissionEstimate.toFixed(2)),
+        };
+      });
+
+      return {
+        title: 'Desempenho por Profissional',
+        description: 'Resultados de produção e potencial de comissão.',
+        columns: [
+          { key: 'Profissional', label: 'Profissional' },
+          { key: 'Atendimentos Concluídos', label: 'Atendimentos Concluídos' },
+          { key: 'Faturamento', label: 'Faturamento (R$)' },
+          { key: 'Ticket Médio', label: 'Ticket Médio (R$)' },
+          { key: 'Comissão %', label: 'Comissão (%)' },
+          { key: 'Comissão Estimada', label: 'Comissão Estimada (R$)' },
+        ],
+        rows,
+        cards: [
+          { label: 'Faturamento total', value: `R$ ${safeMoney(rows.reduce((sum, row) => sum + Number(row.Faturamento || 0), 0))}` },
+          { label: 'Atendimentos concluídos', value: `${rows.reduce((sum, row) => sum + Number(row['Atendimentos Concluídos'] || 0), 0)}` },
+          { label: 'Comissão estimada', value: `R$ ${safeMoney(rows.reduce((sum, row) => sum + Number(row['Comissão Estimada'] || 0), 0))}` },
+        ],
+      };
+    }
+
+    if (selectedReport === 'CLIENTS') {
+      const rows = clients
+        .map((client) => {
+          const items = filteredAppointments.filter((appointment) => appointment.clientId === client.id);
+          const concluded = items.filter((appointment) => completedStatuses.has(normalizeAppointmentStatus(appointment.status)));
+          const spent = concluded.reduce((sum, appointment) => sum + Number(appointment.totalValue || 0), 0);
+          const lastVisit = concluded
+            .map((appointment) => String(appointment.date || '').slice(0, 10))
+            .sort()
+            .pop();
+
+          let churnDays = 0;
+          if (lastVisit) {
+            const last = new Date(`${lastVisit}T00:00:00`);
+            const end = new Date(`${dateRange.endDate}T00:00:00`);
+            churnDays = Math.max(Math.floor((end.getTime() - last.getTime()) / 86400000), 0);
+          }
+
+          return {
+            Cliente: client.name,
+            Visitas: concluded.length,
+            'Total Gasto': Number(spent.toFixed(2)),
+            'Última Visita': lastVisit ? safeDateBr(lastVisit) : 'N/A',
+            'Dias sem retorno': churnDays,
+          };
+        })
+        .filter((row) => Number(row.Visitas || 0) > 0)
+        .sort((a, b) => Number(b['Total Gasto'] || 0) - Number(a['Total Gasto'] || 0));
+
+      return {
+        title: 'Clientes (CRM)',
+        description: 'Recorrência, valor e sinais de churn no período.',
+        columns: [
+          { key: 'Cliente', label: 'Cliente' },
+          { key: 'Visitas', label: 'Visitas' },
+          { key: 'Total Gasto', label: 'Total Gasto (R$)' },
+          { key: 'Última Visita', label: 'Última Visita' },
+          { key: 'Dias sem retorno', label: 'Dias sem retorno' },
+        ],
+        rows,
+        cards: [
+          { label: 'Clientes ativos', value: `${rows.length}` },
+          { label: 'Total gasto', value: `R$ ${safeMoney(rows.reduce((sum, row) => sum + Number(row['Total Gasto'] || 0), 0))}` },
+          { label: 'Clientes em risco (45+ dias)', value: `${rows.filter((row) => Number(row['Dias sem retorno'] || 0) >= 45).length}` },
+        ],
+      };
+    }
+
+    const serviceRows = services.map((service) => {
+      const items = filteredAppointments.filter((appointment) => appointment.serviceId === service.id);
+      const concluded = items.filter((appointment) => completedStatuses.has(normalizeAppointmentStatus(appointment.status)));
+      const revenue = concluded.reduce((sum, appointment) => sum + Number(appointment.totalValue || 0), 0);
+
+      return {
+        Serviço: service.title,
+        'Qtd. Vendas': concluded.length,
+        Faturamento: Number(revenue.toFixed(2)),
+        'Preço Médio': concluded.length > 0 ? Number((revenue / concluded.length).toFixed(2)) : 0,
+      };
+    }).sort((a, b) => Number(b.Faturamento || 0) - Number(a.Faturamento || 0));
+
+    return {
+      title: 'Serviços e Mix de Vendas',
+      description: 'Performance comercial por serviço no período.',
+      columns: [
+        { key: 'Serviço', label: 'Serviço' },
+        { key: 'Qtd. Vendas', label: 'Qtd. Vendas' },
+        { key: 'Faturamento', label: 'Faturamento (R$)' },
+        { key: 'Preço Médio', label: 'Preço Médio (R$)' },
+      ],
+      rows: serviceRows,
+      cards: [
+        { label: 'Serviços com vendas', value: `${serviceRows.filter((row) => Number(row['Qtd. Vendas'] || 0) > 0).length}` },
+        { label: 'Faturamento total', value: `R$ ${safeMoney(serviceRows.reduce((sum, row) => sum + Number(row.Faturamento || 0), 0))}` },
+        { label: 'Vendas totais', value: `${serviceRows.reduce((sum, row) => sum + Number(row['Qtd. Vendas'] || 0), 0)}` },
+      ],
+    };
+  }, [selectedReport, filteredAppointments, professionals, services, clients, dateRange.endDate]);
+
+  useEffect(() => {
+    const firstColumn = reportData.columns[0]?.key || '';
+    setSortBy(firstColumn);
+    setSortDirection('desc');
+  }, [selectedReport, reportData.columns]);
+
+  const parseSortableValue = (value: string | number | undefined) => {
+    if (typeof value === 'number') return value;
+    const text = String(value || '').trim();
+    if (!text) return '';
+
+    if (/^\d{2}\/\d{2}\/\d{4}$/.test(text)) {
+      const [day, month, year] = text.split('/');
+      return Date.parse(`${year}-${month}-${day}T00:00:00`) || 0;
+    }
+
+    const normalized = text.replace(',', '.');
+    const maybeNumber = Number(normalized);
+    if (!Number.isNaN(maybeNumber)) return maybeNumber;
+
+    return text.toLowerCase();
+  };
+
+  const sortedRows = useMemo(() => {
+    const rows = [...reportData.rows];
+    if (!sortBy) return rows;
+
+    rows.sort((left, right) => {
+      const leftValue = parseSortableValue(left[sortBy]);
+      const rightValue = parseSortableValue(right[sortBy]);
+
+      if (typeof leftValue === 'number' && typeof rightValue === 'number') {
+        return sortDirection === 'asc' ? leftValue - rightValue : rightValue - leftValue;
+      }
+
+      const leftText = String(leftValue);
+      const rightText = String(rightValue);
+      return sortDirection === 'asc'
+        ? leftText.localeCompare(rightText)
+        : rightText.localeCompare(leftText);
+    });
+
+    return rows;
+  }, [reportData.rows, sortBy, sortDirection]);
+
+  const handleSort = (columnKey: string) => {
+    if (sortBy === columnKey) {
+      setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+      return;
+    }
+    setSortBy(columnKey);
+    setSortDirection('asc');
+  };
+
+  const getSortIndicator = (columnKey: string) => {
+    if (sortBy !== columnKey) return '↕';
+    return sortDirection === 'asc' ? '↑' : '↓';
+  };
+
+  const exportToExcel = () => {
+    const worksheet = XLSX.utils.json_to_sheet(sortedRows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Relatorio');
+    const fileName = `relatorio_${selectedReport.toLowerCase()}_${dateRange.startDate}_${dateRange.endDate}.xlsx`;
+    XLSX.writeFile(workbook, fileName);
+  };
+
+  const exportToPdf = () => {
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
+    const margin = 40;
+    const lineHeight = 14;
+    let y = margin;
+
+    doc.setFontSize(16);
+    doc.text(reportData.title, margin, y);
+    y += 18;
+
+    doc.setFontSize(10);
+    doc.text(`${reportData.description}`, margin, y);
+    y += 14;
+    doc.text(`Período: ${safeDateBr(dateRange.startDate)} até ${safeDateBr(dateRange.endDate)}`, margin, y);
+    y += 20;
+
+    const header = reportData.columns.map((column) => column.label).join(' | ');
+    doc.setFontSize(9);
+    const headerLines = doc.splitTextToSize(header, 760);
+    headerLines.forEach((line: string) => {
+      doc.text(line, margin, y);
+      y += lineHeight;
+    });
+    y += 4;
+
+    sortedRows.forEach((row) => {
+      const text = reportData.columns
+        .map((column) => `${column.label}: ${String(row[column.key] ?? '')}`)
+        .join('   |   ');
+
+      const wrapped = doc.splitTextToSize(text, 760);
+      wrapped.forEach((line: string) => {
+        if (y > 560) {
+          doc.addPage();
+          y = margin;
+        }
+        doc.text(line, margin, y);
+        y += lineHeight;
+      });
+      y += 2;
+    });
+
+    const fileName = `relatorio_${selectedReport.toLowerCase()}_${dateRange.startDate}_${dateRange.endDate}.pdf`;
+    doc.save(fileName);
+  };
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-2xl font-bold text-gray-800">Relatórios</h2>
+        <p className="text-sm text-gray-500">Filtros padrão, visão executiva e exportação PDF/Excel no layout do painel.</p>
+      </div>
+
+      <div className="bg-white rounded-xl shadow-sm p-4 md:p-5 border border-gray-100 space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1">Período</label>
+            <select
+              value={period}
+              onChange={(event) => setPeriod(event.target.value as ReportPeriod)}
+              className="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm"
+            >
+              <option value="TODAY">Hoje</option>
+              <option value="LAST_7_DAYS">Últimos 7 dias</option>
+              <option value="LAST_30_DAYS">Últimos 30 dias</option>
+              <option value="THIS_MONTH">Este mês</option>
+              <option value="CUSTOM">Personalizado</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1">Profissional</label>
+            <select
+              value={professionalFilter}
+              onChange={(event) => setProfessionalFilter(event.target.value)}
+              className="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm"
+            >
+              <option value="ALL">Todos</option>
+              {professionals.map((professional) => (
+                <option key={professional.id} value={professional.id}>{professional.name}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1">Status</label>
+            <select
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value)}
+              className="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm"
+            >
+              {statusOptions.map((status) => (
+                <option key={status} value={status}>{status === 'ALL' ? 'Todos' : getAppointmentStatusLabel(status)}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex items-end gap-2">
+            <button
+              type="button"
+              onClick={exportToPdf}
+              className="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm font-medium hover:bg-gray-50"
+            >
+              Exportar PDF
+            </button>
+            <button
+              type="button"
+              onClick={exportToExcel}
+              className="w-full px-3 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
+            >
+              Exportar Excel
+            </button>
+          </div>
+        </div>
+
+        {period === 'CUSTOM' && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1">Data inicial</label>
+              <input
+                type="date"
+                value={customStartDate}
+                onChange={(event) => setCustomStartDate(event.target.value)}
+                max={customEndDate || undefined}
+                className="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1">Data final</label>
+              <input
+                type="date"
+                value={customEndDate}
+                onChange={(event) => setCustomEndDate(event.target.value)}
+                min={customStartDate || undefined}
+                className="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm"
+              />
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
+        {reportOptions.map((option) => (
+          <button
+            key={option.key}
+            type="button"
+            onClick={() => setSelectedReport(option.key)}
+            className={`p-4 rounded-xl border text-left transition-colors ${selectedReport === option.key ? 'border-blue-300 bg-blue-50' : 'border-gray-200 bg-white hover:border-gray-300'}`}
+          >
+            <p className="text-sm font-semibold text-gray-900">{option.title}</p>
+            <p className="text-xs text-gray-500 mt-1">{option.description}</p>
+          </button>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {reportData.cards.map((card) => (
+          <div key={card.label} className="bg-white p-5 rounded-xl shadow-sm border-l-4 border-blue-500">
+            <p className="text-xs text-gray-500">{card.label}</p>
+            <p className="text-2xl font-bold text-gray-800">{card.value}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="bg-white rounded-xl shadow-sm overflow-hidden border border-gray-100">
+        <div className="px-6 py-4 border-b bg-gray-50/60">
+          <h3 className="font-bold text-gray-800">{reportData.title}</h3>
+          <p className="text-xs text-gray-500 mt-1">{reportData.description}</p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm text-left">
+            <thead className="bg-gray-50 text-gray-600 font-medium">
+              <tr>
+                {reportData.columns.map((column) => (
+                  <th key={column.key} className="px-6 py-3">
+                    <button
+                      type="button"
+                      onClick={() => handleSort(column.key)}
+                      className="inline-flex items-center gap-1 hover:text-gray-900"
+                    >
+                      {column.label} <span aria-hidden>{getSortIndicator(column.key)}</span>
+                    </button>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {sortedRows.map((row, index) => (
+                <tr key={`${index}-${String(row[reportData.columns[0]?.key || ''])}`} className="hover:bg-gray-50">
+                  {reportData.columns.map((column) => (
+                    <td key={column.key} className="px-6 py-3 text-gray-700">{String(row[column.key] ?? '-')}</td>
+                  ))}
+                </tr>
+              ))}
+              {sortedRows.length === 0 && (
+                <tr>
+                  <td colSpan={reportData.columns.length} className="px-6 py-8 text-center text-gray-500">
+                    Nenhum dado encontrado para os filtros selecionados.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export const AdminDashboard: React.FC = () => {
   const { user, logout, brandIdentity } = useAppContext();
   const isAdminUser = user?.role === 'ADMIN';
-  const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'SERVICES' | 'USERS' | 'AGENDA' | 'FINANCE' | 'SETTINGS'>(isAdminUser ? 'DASHBOARD' : 'AGENDA');
+  const canEmployeeViewFinance = user?.role === 'EMPLOYEE' && Boolean(brandIdentity.allowEmployeeViewFinance);
+  const canEmployeeViewReports = user?.role === 'EMPLOYEE' && Boolean(brandIdentity.allowEmployeeViewReports);
+  const canAccessFinanceTab = isAdminUser || canEmployeeViewFinance;
+  const canAccessReportsTab = isAdminUser || canEmployeeViewReports;
+  const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'SERVICES' | 'USERS' | 'AGENDA' | 'FINANCE' | 'REPORTS' | 'SETTINGS'>(isAdminUser ? 'DASHBOARD' : 'AGENDA');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [agendaNavigationRequest, setAgendaNavigationRequest] = useState<{
     date: string;
@@ -6426,13 +7436,19 @@ export const AdminDashboard: React.FC = () => {
   const toggleMobileMenu = () => setIsMobileMenuOpen(!isMobileMenuOpen);
 
   useEffect(() => {
-    if (!isAdminUser) {
+    if (!isAdminUser && activeTab !== 'AGENDA' && activeTab !== 'FINANCE' && activeTab !== 'REPORTS') {
       setActiveTab('AGENDA');
     }
-  }, [isAdminUser]);
+    if (!canAccessFinanceTab && activeTab === 'FINANCE') {
+      setActiveTab('AGENDA');
+    }
+    if (!canAccessReportsTab && activeTab === 'REPORTS') {
+      setActiveTab('AGENDA');
+    }
+  }, [isAdminUser, canAccessFinanceTab, canAccessReportsTab, activeTab]);
 
-  const handleTabChange = (tab: 'DASHBOARD' | 'SERVICES' | 'USERS' | 'AGENDA' | 'FINANCE' | 'SETTINGS') => {
-    if (!isAdminUser && tab !== 'AGENDA') {
+  const handleTabChange = (tab: 'DASHBOARD' | 'SERVICES' | 'USERS' | 'AGENDA' | 'FINANCE' | 'REPORTS' | 'SETTINGS') => {
+    if (!isAdminUser && tab !== 'AGENDA' && !(tab === 'FINANCE' && canEmployeeViewFinance) && !(tab === 'REPORTS' && canEmployeeViewReports)) {
       return;
     }
     setActiveTab(tab);
@@ -6462,7 +7478,7 @@ export const AdminDashboard: React.FC = () => {
 
       {/* Sidebar */}
       <aside className={`
-        fixed inset-y-0 left-0 z-40 w-64 bg-white shadow-xl transform transition-transform duration-300 ease-in-out md:relative md:translate-x-0 md:shadow-md flex flex-col
+        fixed inset-y-0 left-0 z-40 w-64 bg-white shadow-xl transform transition-transform duration-300 ease-in-out md:sticky md:top-0 md:inset-y-auto md:h-screen md:translate-x-0 md:shadow-md flex flex-col min-h-0
         ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}
       `}>
         <div className="p-6 border-b flex justify-between items-center">
@@ -6478,7 +7494,7 @@ export const AdminDashboard: React.FC = () => {
           </button>
         </div>
         
-        <nav className="flex-1 p-4 space-y-2">
+        <nav className="flex-1 min-h-0 overflow-y-auto p-4 space-y-2">
           {isAdminUser && (
             <button 
               onClick={() => handleTabChange('DASHBOARD')}
@@ -6493,6 +7509,22 @@ export const AdminDashboard: React.FC = () => {
           >
             <Calendar size={20} /> Agenda
           </button>
+          {canAccessFinanceTab && (
+            <button
+              onClick={() => handleTabChange('FINANCE')}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'FINANCE' ? 'bg-blue-50 text-blue-600 font-medium' : 'text-gray-600 hover:bg-gray-50'}`}
+            >
+              <Receipt size={20} /> Financeiro
+            </button>
+          )}
+          {canAccessReportsTab && (
+            <button
+              onClick={() => handleTabChange('REPORTS')}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'REPORTS' ? 'bg-blue-50 text-blue-600 font-medium' : 'text-gray-600 hover:bg-gray-50'}`}
+            >
+              <BarChart3 size={20} /> Relatórios
+            </button>
+          )}
           {isAdminUser && (
             <>
               <button 
@@ -6500,12 +7532,6 @@ export const AdminDashboard: React.FC = () => {
                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'SERVICES' ? 'bg-blue-50 text-blue-600 font-medium' : 'text-gray-600 hover:bg-gray-50'}`}
               >
                 <DollarSign size={20} /> Serviços
-              </button>
-              <button
-                onClick={() => handleTabChange('FINANCE')}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'FINANCE' ? 'bg-blue-50 text-blue-600 font-medium' : 'text-gray-600 hover:bg-gray-50'}`}
-              >
-                <Receipt size={20} /> Financeiro
               </button>
               <button 
                 onClick={() => handleTabChange('USERS')}
@@ -6523,7 +7549,7 @@ export const AdminDashboard: React.FC = () => {
           )}
         </nav>
 
-        <div className="p-4 border-t">
+        <div className="p-4 border-t bg-white shrink-0">
           <div className="flex items-center gap-3 mb-4">
              <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600">
                 <Users size={20} />
@@ -6555,7 +7581,8 @@ export const AdminDashboard: React.FC = () => {
          <div className={`p-4 md:p-6 ${activeTab === 'AGENDA' ? 'flex-1 overflow-hidden' : ''}`}>
           {activeTab === 'DASHBOARD' && isAdminUser && <DashboardHome onViewAllRecent={handleViewAllRecent} />}
           {activeTab === 'SERVICES' && isAdminUser && <ServicesManagement />}
-          {activeTab === 'FINANCE' && isAdminUser && <FinanceManagement />}
+          {activeTab === 'FINANCE' && canAccessFinanceTab && <FinanceManagement />}
+          {activeTab === 'REPORTS' && canAccessReportsTab && <ReportsManagement />}
           {activeTab === 'USERS' && isAdminUser && <ClientsManagement />}
             {activeTab === 'AGENDA' && <CalendarManagement navigationRequest={agendaNavigationRequest} />}
           {activeTab === 'SETTINGS' && isAdminUser && <SettingsManagement />}

@@ -7,6 +7,9 @@ export type ClienteApi = {
   telefone: string;
   email?: string | null;
   data_nascimento?: string | null;
+  cortes_count?: number | null;
+  total_gasto?: number | null;
+  ultima_visita?: string | null;
 };
 
 export type ClientePayload = {

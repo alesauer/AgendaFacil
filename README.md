@@ -64,6 +64,9 @@ Depois configure no `backend/.env`:
 - `EVOLUTION_API_KEY_HEADER` (default: `apikey`)
 - `EVOLUTION_INSTANCE`
 - `EVOLUTION_SEND_TEXT_PATH` (default: `/message/sendText/{instance}`)
+- `RESEND_API_KEY`
+- `EMAIL_FROM_ADDRESS`
+- `EMAIL_FROM_NAME` (default: `AgendaFácil`)
 
 Endpoint interno de teste (somente ADMIN autenticado):
 
@@ -76,6 +79,23 @@ curl -X POST http://localhost:5000/internal/notifications/test-whatsapp \
       "to": "11999999999",
       "template_key": "TEST_NOTIFICATION",
       "variables": {"message": "Teste de integração Evolution"}
+   }'
+```
+
+Endpoint interno de teste de e-mail (somente ADMIN autenticado):
+
+```bash
+curl -X POST http://localhost:5000/internal/notifications/test-email \
+   -H "Authorization: Bearer <TOKEN_ADMIN>" \
+   -H "X-Barbearia-Slug: demo" \
+   -H "Content-Type: application/json" \
+   -d '{
+      "to": "cliente@exemplo.com",
+      "template_key": "TEST_NOTIFICATION",
+      "variables": {
+        "subject": "Teste Resend",
+        "text": "Teste de integração email AgendaFácil"
+      }
    }'
 ```
 
@@ -98,6 +118,7 @@ Endpoints internos (somente ADMIN):
 
 - `GET /internal/notifications/dispatches?status=FAILED&limit=100`
 - `POST /internal/notifications/dispatches/<dispatch_id>/retry`
+- `POST /internal/notifications/test-email`
 
 ### Variáveis frontend para API
 

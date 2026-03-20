@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from backend.notifications.models import Channel, DispatchStatus, NotificationCommand
 from backend.notifications.provider_resolver import ProviderResolver
-from backend.notifications.template_renderer import render_whatsapp_template
+from backend.notifications.template_renderer import render_email_template, render_whatsapp_template
 from backend.repositories.notifications_repository import NotificationsRepository
 
 
@@ -80,6 +80,14 @@ def process_due_dispatches(limit: int = 50, worker_id: str | None = None) -> dic
         payload = dict(row.get("payload") or {})
         if channel == Channel.WHATSAPP and not payload.get("message"):
             payload["message"] = render_whatsapp_template(str(row.get("template_key") or ""), payload)
+        if channel == Channel.EMAIL and (not payload.get("subject") or (not payload.get("text") and not payload.get("html"))):
+            email_parts = render_email_template(str(row.get("template_key") or ""), payload)
+            payload = {
+                **payload,
+                "subject": payload.get("subject") or email_parts["subject"],
+                "text": payload.get("text") or email_parts["text"],
+                "html": payload.get("html") or email_parts["html"],
+            }
 
         command = NotificationCommand(
             tenant_id=barbearia_id,
