@@ -183,6 +183,11 @@ const DashboardHome = ({ onViewAllRecent }: { onViewAllRecent: () => void }) => 
 
   const chartColors = ['#2563eb', '#14b8a6', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#84cc16', '#f97316'];
 
+  const getWeekdayFromIsoDate = (isoDate: string): number => {
+    const date = new Date(`${isoDate}T12:00:00`);
+    return Number.isNaN(date.getTime()) ? -1 : date.getDay();
+  };
+
   const professionalSeries = useMemo(() => {
     const dateKeys = new Set<string>();
     const today = new Date();
@@ -241,7 +246,7 @@ const DashboardHome = ({ onViewAllRecent }: { onViewAllRecent: () => void }) => 
       const month = String(current.getMonth() + 1).padStart(2, '0');
       const day = String(current.getDate()).padStart(2, '0');
       const key = `${year}-${month}-${day}`;
-      const weekday = current.getDay();
+      const weekday = getWeekdayFromIsoDate(key);
       const dayConfig = businessHours.find((item) => item.dayOfWeek === weekday);
       const isClosed = dayConfig ? !Boolean(dayConfig.open) : false;
 
@@ -284,6 +289,15 @@ const DashboardHome = ({ onViewAllRecent }: { onViewAllRecent: () => void }) => 
 
     return data;
   }, [appointments, professionalSeries, businessHours]);
+
+  const isClosedByLabel = useMemo(() => {
+    return new Map(
+      dailyData.map((row) => [
+        String(row.name || ''),
+        Number(row.isClosed || 0) === 1,
+      ]),
+    );
+  }, [dailyData]);
 
   const serviceData = useMemo(() => {
     const appointmentsByService = new Map<string, number>();
@@ -490,10 +504,10 @@ const DashboardHome = ({ onViewAllRecent }: { onViewAllRecent: () => void }) => 
                 <CartesianGrid strokeDasharray="3 3" vertical={false} />
                 <XAxis
                   dataKey="name"
-                  tickFormatter={(value, index) => {
-                    const row = dailyData[index];
-                    const isClosed = Number(row?.isClosed || 0) === 1;
-                    return isClosed ? `${value} 🔒` : String(value);
+                  tickFormatter={(value) => {
+                    const label = String(value || '');
+                    const isClosed = Boolean(isClosedByLabel.get(label));
+                    return isClosed ? `${label} 🔒` : label;
                   }}
                 />
                 <YAxis />
@@ -4178,7 +4192,8 @@ const EmailIntegration = () => {
 const SettingsManagement = () => {
   const navigate = useNavigate();
   const { users, professionals, addUser, updateUser, deleteUser, categories, addCategory, updateCategory, deleteCategory, businessHours, saveBusinessHours, brandIdentity, saveBrandIdentity } = useAppContext();
-  const [activeSubTab, setActiveSubTab] = useState<'PROFESSIONALS' | 'ALERTS' | 'PROFILES' | 'HOURS' | 'INTEGRATIONS' | 'OTHER' | 'ONBOARDING' | 'BILLING' | 'CONTACT' | 'CATEGORIES'>('PROFESSIONALS');
+  const [activeSubTab, setActiveSubTab] = useState<'PROFESSIONALS' | 'SERVICES' | 'ALERTS' | 'PROFILES' | 'HOURS' | 'INTEGRATIONS' | 'OTHER' | 'ONBOARDING' | 'BILLING' | 'CONTACT'>('PROFESSIONALS');
+  const [activeServiceTab, setActiveServiceTab] = useState<'SERVICES' | 'CATEGORIES'>('SERVICES');
   const [activeIntegrationTab, setActiveIntegrationTab] = useState<'WHATSAPP' | 'EMAIL'>('WHATSAPP');
   const [activeBillingTab, setActiveBillingTab] = useState<'PLAN' | 'UTILIZATION' | 'PAYMENT' | 'INVOICING'>('PLAN');
   const [activeIdentityTab, setActiveIdentityTab] = useState<'LOGO' | 'COLORS' | 'OTHER_PREFERENCES'>('LOGO');
@@ -4622,7 +4637,7 @@ const SettingsManagement = () => {
 
   const tabs = [
     { id: 'PROFESSIONALS', label: 'Profissionais', icon: <Scissors size={18} />, desc: 'Equipe de atendimento' },
-    { id: 'CATEGORIES', label: 'Categorias', icon: <Tag size={18} />, desc: 'Organize serviços' },
+    { id: 'SERVICES', label: 'Serviços', icon: <DollarSign size={18} />, desc: 'Gerencie os serviços' },
     { id: 'ALERTS', label: 'Alertas', icon: <Bell size={18} />, desc: 'WhatsApp e e-mail' },
     { id: 'PROFILES', label: 'Perfis', icon: <Shield size={18} />, desc: 'Níveis de permissão' },
     { id: 'HOURS', label: 'Horários', icon: <Clock size={18} />, desc: 'Funcionamento' },
@@ -4770,46 +4785,80 @@ const SettingsManagement = () => {
             </div>
           )}
 
-          {activeSubTab === 'CATEGORIES' && (
+          {activeSubTab === 'SERVICES' && (
             <div className="space-y-6">
-              <div className="flex justify-between items-center">
-                <h3 className="font-bold text-gray-800">Categorias de Serviços</h3>
-                <button 
-                  onClick={openNewCategory}
-                  className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-blue-700 text-sm"
+              <nav className="flex overflow-x-auto pb-2 gap-2 no-scrollbar -mx-2 px-2">
+                <button
+                  onClick={() => setActiveServiceTab('SERVICES')}
+                  className={`px-4 py-2 rounded-full text-xs sm:text-sm font-bold whitespace-nowrap transition-all ${
+                    activeServiceTab === 'SERVICES'
+                      ? 'bg-blue-600 text-white shadow-md shadow-blue-100'
+                      : 'bg-white border border-gray-200 text-gray-600'
+                  }`}
                 >
-                  <Plus size={16} /> Nova Categoria
+                  Serviços
                 </button>
-              </div>
-              <div className="divide-y">
-                {categories.map((c) => (
-                  <div key={c.id} className="py-4 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center text-blue-600">
-                        <Tag size={20} />
-                      </div>
-                      <div>
-                        <p className="font-medium text-gray-900">{c.name}</p>
-                        <p className="text-xs text-gray-500">{c.description || 'Sem descrição'}</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2 self-end sm:self-auto">
-                      <button 
-                        onClick={() => openEditCategory(c)}
-                        className="text-blue-600 hover:text-blue-800 p-2"
-                      >
-                        <Edit size={18} />
-                      </button>
-                      <button 
-                        onClick={() => openDeleteCategory(c)}
-                        className="text-red-600 hover:text-red-800 p-2"
-                      >
-                        <Trash2 size={18} />
-                      </button>
-                    </div>
+                <button
+                  onClick={() => setActiveServiceTab('CATEGORIES')}
+                  className={`px-4 py-2 rounded-full text-xs sm:text-sm font-bold whitespace-nowrap transition-all ${
+                    activeServiceTab === 'CATEGORIES'
+                      ? 'bg-blue-600 text-white shadow-md shadow-blue-100'
+                      : 'bg-white border border-gray-200 text-gray-600'
+                  }`}
+                >
+                  Categorias
+                </button>
+              </nav>
+
+              {activeServiceTab === 'SERVICES' && <ServicesManagement />}
+
+              {activeServiceTab === 'CATEGORIES' && (
+                <div className="bg-white rounded-xl border border-gray-100 p-4 sm:p-6 space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <h3 className="font-bold text-gray-800">Categorias de Serviços</h3>
+                    <button 
+                      onClick={openNewCategory}
+                      className="w-full sm:w-auto bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center justify-center gap-2 hover:bg-blue-700 text-sm"
+                    >
+                      <Plus size={16} /> Nova Categoria
+                    </button>
                   </div>
-                ))}
-              </div>
+
+                  {categories.length === 0 ? (
+                    <div className="py-2 text-sm text-gray-500">Nenhuma categoria cadastrada.</div>
+                  ) : (
+                    <div className="divide-y">
+                      {categories.map((c) => (
+                        <div key={c.id} className="py-4 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center text-blue-600 flex-shrink-0">
+                              <Tag size={20} />
+                            </div>
+                            <div className="min-w-0">
+                              <p className="font-medium text-gray-900 truncate">{c.name}</p>
+                              <p className="text-xs text-gray-500 truncate">{c.description || 'Sem descrição'}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 self-end sm:self-auto">
+                            <button 
+                              onClick={() => openEditCategory(c)}
+                              className="text-blue-600 hover:text-blue-800 p-2"
+                            >
+                              <Edit size={18} />
+                            </button>
+                            <button 
+                              onClick={() => openDeleteCategory(c)}
+                              className="text-red-600 hover:text-red-800 p-2"
+                            >
+                              <Trash2 size={18} />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
@@ -6044,6 +6093,8 @@ const SettingsManagement = () => {
 };
 
 const FinanceManagement = () => {
+  type FinancePeriod = 'TODAY' | 'LAST_7_DAYS' | 'LAST_30_DAYS' | 'THIS_MONTH' | 'CUSTOM';
+
   const { user, brandIdentity } = useAppContext();
   const isAdminFinanceUser = user?.role === 'ADMIN';
   const isEmployeeFinanceUser = user?.role === 'EMPLOYEE';
@@ -6052,6 +6103,9 @@ const FinanceManagement = () => {
   const [receivables, setReceivables] = useState<RecebivelApi[]>([]);
   const [professionalFilter, setProfessionalFilter] = useState<string>('ALL');
   const [professionalOptions, setProfessionalOptions] = useState<Array<{ id: string; nome: string }>>([]);
+  const [period, setPeriod] = useState<FinancePeriod>('LAST_30_DAYS');
+  const [customStartDate, setCustomStartDate] = useState<string>('');
+  const [customEndDate, setCustomEndDate] = useState<string>('');
   const [startDateFilter, setStartDateFilter] = useState<string>('');
   const [endDateFilter, setEndDateFilter] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState('');
@@ -6075,6 +6129,56 @@ const FinanceManagement = () => {
   const [actionReason, setActionReason] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const PAGE_SIZE = 10;
+  const todayIso = useMemo(() => new Date().toISOString().slice(0, 10), []);
+
+  useEffect(() => {
+    if (!customEndDate) {
+      setCustomEndDate(todayIso);
+    }
+    if (!customStartDate) {
+      const d = new Date();
+      d.setDate(d.getDate() - 29);
+      setCustomStartDate(d.toISOString().slice(0, 10));
+    }
+  }, [customEndDate, customStartDate, todayIso]);
+
+  useEffect(() => {
+    const end = new Date();
+    end.setHours(0, 0, 0, 0);
+
+    if (period === 'TODAY') {
+      const iso = end.toISOString().slice(0, 10);
+      setStartDateFilter(iso);
+      setEndDateFilter(iso);
+      return;
+    }
+
+    if (period === 'LAST_7_DAYS') {
+      const start = new Date(end);
+      start.setDate(start.getDate() - 6);
+      setStartDateFilter(start.toISOString().slice(0, 10));
+      setEndDateFilter(end.toISOString().slice(0, 10));
+      return;
+    }
+
+    if (period === 'LAST_30_DAYS') {
+      const start = new Date(end);
+      start.setDate(start.getDate() - 29);
+      setStartDateFilter(start.toISOString().slice(0, 10));
+      setEndDateFilter(end.toISOString().slice(0, 10));
+      return;
+    }
+
+    if (period === 'THIS_MONTH') {
+      const monthStart = new Date(end.getFullYear(), end.getMonth(), 1);
+      setStartDateFilter(monthStart.toISOString().slice(0, 10));
+      setEndDateFilter(end.toISOString().slice(0, 10));
+      return;
+    }
+
+    setStartDateFilter(customStartDate || todayIso);
+    setEndDateFilter(customEndDate || todayIso);
+  }, [period, customStartDate, customEndDate, todayIso]);
 
   const loadFinanceData = async () => {
     if (!isAdminFinanceUser && (!isEmployeeFinanceUser || !employeeCanViewFinance)) {
@@ -6135,8 +6239,9 @@ const FinanceManagement = () => {
 
   const clearFilters = () => {
     setProfessionalFilter('ALL');
-    setStartDateFilter('');
-    setEndDateFilter('');
+    setPeriod('LAST_30_DAYS');
+    setCustomStartDate('');
+    setCustomEndDate('');
   };
 
   const openPaymentModal = (receivable: RecebivelApi) => {
@@ -6418,13 +6523,13 @@ const FinanceManagement = () => {
               : 'Recebimentos, pagamentos parciais e estornos.'}
           </p>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
           <input
             type="text"
             value={searchTerm}
             onChange={(event) => setSearchTerm(event.target.value)}
             placeholder="Pesquisar por cliente, serviço, profissional..."
-            className="px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm sm:col-span-2 lg:col-span-2"
+            className="px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm sm:col-span-2"
           />
           {isAdminFinanceUser && (
             <select
@@ -6438,23 +6543,41 @@ const FinanceManagement = () => {
               ))}
             </select>
           )}
-          <input
-            type="date"
-            value={startDateFilter}
-            max={endDateFilter || undefined}
-            onChange={(event) => setStartDateFilter(event.target.value)}
+          <select
+            value={period}
+            onChange={(event) => setPeriod(event.target.value as FinancePeriod)}
             className="px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm"
-            aria-label="Data inicial"
-          />
-          <input
-            type="date"
-            value={endDateFilter}
-            min={startDateFilter || undefined}
-            onChange={(event) => setEndDateFilter(event.target.value)}
-            className="px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm"
-            aria-label="Data final"
-          />
+            aria-label="Período"
+          >
+            <option value="TODAY">Hoje</option>
+            <option value="LAST_7_DAYS">Últimos 7 dias</option>
+            <option value="LAST_30_DAYS">Últimos 30 dias</option>
+            <option value="THIS_MONTH">Este mês</option>
+            <option value="CUSTOM">Personalizado</option>
+          </select>
         </div>
+
+        {period === 'CUSTOM' && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <input
+              type="date"
+              value={customStartDate}
+              max={customEndDate || undefined}
+              onChange={(event) => setCustomStartDate(event.target.value)}
+              className="px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm"
+              aria-label="Data inicial"
+            />
+            <input
+              type="date"
+              value={customEndDate}
+              min={customStartDate || undefined}
+              onChange={(event) => setCustomEndDate(event.target.value)}
+              className="px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm"
+              aria-label="Data final"
+            />
+          </div>
+        )}
+
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
           <button
             onClick={loadFinanceData}
@@ -7425,7 +7548,7 @@ export const AdminDashboard: React.FC = () => {
   const canEmployeeViewReports = user?.role === 'EMPLOYEE' && Boolean(brandIdentity.allowEmployeeViewReports);
   const canAccessFinanceTab = isAdminUser || canEmployeeViewFinance;
   const canAccessReportsTab = isAdminUser || canEmployeeViewReports;
-  const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'SERVICES' | 'USERS' | 'AGENDA' | 'FINANCE' | 'REPORTS' | 'SETTINGS'>(isAdminUser ? 'DASHBOARD' : 'AGENDA');
+  const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'USERS' | 'AGENDA' | 'FINANCE' | 'REPORTS' | 'SETTINGS'>(isAdminUser ? 'DASHBOARD' : 'AGENDA');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [agendaNavigationRequest, setAgendaNavigationRequest] = useState<{
     date: string;
@@ -7447,7 +7570,7 @@ export const AdminDashboard: React.FC = () => {
     }
   }, [isAdminUser, canAccessFinanceTab, canAccessReportsTab, activeTab]);
 
-  const handleTabChange = (tab: 'DASHBOARD' | 'SERVICES' | 'USERS' | 'AGENDA' | 'FINANCE' | 'REPORTS' | 'SETTINGS') => {
+  const handleTabChange = (tab: 'DASHBOARD' | 'USERS' | 'AGENDA' | 'FINANCE' | 'REPORTS' | 'SETTINGS') => {
     if (!isAdminUser && tab !== 'AGENDA' && !(tab === 'FINANCE' && canEmployeeViewFinance) && !(tab === 'REPORTS' && canEmployeeViewReports)) {
       return;
     }
@@ -7528,12 +7651,6 @@ export const AdminDashboard: React.FC = () => {
           {isAdminUser && (
             <>
               <button 
-                 onClick={() => handleTabChange('SERVICES')}
-                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'SERVICES' ? 'bg-blue-50 text-blue-600 font-medium' : 'text-gray-600 hover:bg-gray-50'}`}
-              >
-                <DollarSign size={20} /> Serviços
-              </button>
-              <button 
                 onClick={() => handleTabChange('USERS')}
                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'USERS' ? 'bg-blue-50 text-blue-600 font-medium' : 'text-gray-600 hover:bg-gray-50'}`}
               >
@@ -7580,7 +7697,6 @@ export const AdminDashboard: React.FC = () => {
 
          <div className={`p-4 md:p-6 ${activeTab === 'AGENDA' ? 'flex-1 overflow-hidden' : ''}`}>
           {activeTab === 'DASHBOARD' && isAdminUser && <DashboardHome onViewAllRecent={handleViewAllRecent} />}
-          {activeTab === 'SERVICES' && isAdminUser && <ServicesManagement />}
           {activeTab === 'FINANCE' && canAccessFinanceTab && <FinanceManagement />}
           {activeTab === 'REPORTS' && canAccessReportsTab && <ReportsManagement />}
           {activeTab === 'USERS' && isAdminUser && <ClientsManagement />}
