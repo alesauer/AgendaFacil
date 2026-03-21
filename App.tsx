@@ -4,6 +4,7 @@ import { User, AppNotification, Appointment, Service, Professional, Client, Cate
 import { MOCK_NOTIFICATIONS } from './constants';
 import { AgendamentoApi, cancelAgendamentoPublicApi, createAgendamentoApi, createAgendamentoPublicApi, createBloqueioApi, deleteAgendamentoApi, deleteBloqueioApi, listAgendamentosApi, listAgendamentosPublicByClientApi, transitionAgendamentoStatusApi, updateAgendamentoApi, updateAgendamentoPublicApi, updateBloqueioApi } from './services/agendamentosApi';
 import { AuthUser, createAuthUserApi, deleteAuthUserApi, listAuthUsersApi, loginApi, meApi, updateAuthUserApi } from './services/authApi';
+import { masterLoginApi, masterMeApi } from './services/authApi';
 import { CategoriaApi, createCategoriaApi, deleteCategoriaApi, listCategoriasApi, updateCategoriaApi } from './services/categoriasApi';
 import { ClienteApi, createClienteApi, deleteClienteApi, findClienteByPhonePublicApi, listClientesApi, updateClienteApi } from './services/clientesApi';
 import { createProfissionalApi, deleteProfissionalApi, listProfissionaisApi, listProfissionaisPublicApi, ProfissionalApi, updateProfissionalApi } from './services/profissionaisApi';
@@ -13,6 +14,7 @@ import { getIdentidadeApi, getIdentidadePublicaApi, IdentidadeApi, saveIdentidad
 import { Login } from './views/Login';
 import { ClientPortal } from './views/ClientPortal';
 import { AdminDashboard } from './views/AdminDashboard';
+import { MasterDashboard } from './views/MasterDashboard';
 import { Onboarding } from './views/Onboarding';
 
 // --- Contexts ---
@@ -26,7 +28,7 @@ type ClientImportInput = {
 
 interface AppContextType {
   user: User | null;
-  login: (phone: string, role: 'CLIENT' | 'ADMIN' | 'EMPLOYEE', password?: string) => Promise<void>;
+  login: (phone: string, role: 'CLIENT' | 'ADMIN' | 'EMPLOYEE' | 'MASTER', password?: string) => Promise<void>;
   logout: () => void;
   notifications: AppNotification[];
   markNotificationRead: (id: string) => void;
@@ -458,7 +460,10 @@ const App: React.FC = () => {
       try {
         const token = localStorage.getItem('auth_token');
         if (token) {
-          const result = await meApi();
+          let result = await meApi();
+          if (!result.success) {
+            result = await masterMeApi();
+          }
           if (result.success) {
             const restoredUser: User = {
               id: result.data.id,
@@ -478,7 +483,7 @@ const App: React.FC = () => {
         const savedUser = localStorage.getItem('app_user');
         if (savedUser) {
           const parsedUser = JSON.parse(savedUser) as User;
-          const isBackofficeUser = parsedUser.role === 'ADMIN' || parsedUser.role === 'EMPLOYEE';
+          const isBackofficeUser = parsedUser.role === 'ADMIN' || parsedUser.role === 'EMPLOYEE' || parsedUser.role === 'MASTER';
           if (isBackofficeUser) {
             localStorage.removeItem('app_user');
           } else {
@@ -636,7 +641,32 @@ const App: React.FC = () => {
     }
   }, [brandIdentity]);
 
-  const login = async (phone: string, role: 'CLIENT' | 'ADMIN' | 'EMPLOYEE', password?: string) => {
+  const login = async (phone: string, role: 'CLIENT' | 'ADMIN' | 'EMPLOYEE' | 'MASTER', password?: string) => {
+    if (role === 'MASTER') {
+      const result = await masterLoginApi({
+        login: phone,
+        senha: password || '',
+      });
+
+      if (!result.success) {
+        throw new Error(('error' in result && result.error) ? result.error : 'Falha na autenticação master');
+      }
+
+      const authenticatedUser: User = {
+        id: result.data.user.id,
+        name: result.data.user.nome,
+        phone: result.data.user.telefone,
+        email: result.data.user.email || '',
+        role: 'MASTER',
+        active: result.data.user.ativo,
+      };
+
+      localStorage.setItem('auth_token', result.data.token);
+      localStorage.setItem('app_user', JSON.stringify(authenticatedUser));
+      setUser(authenticatedUser);
+      return;
+    }
+
     if (role !== 'CLIENT') {
       const result = await loginApi({
         login: phone,
@@ -1427,7 +1457,7 @@ const App: React.FC = () => {
       <HashRouter>
         <div className="min-h-screen bg-gray-50 text-gray-900 font-sans">
           <Routes>
-            <Route path="/login" element={!user ? <Login /> : <Navigate to={shouldOpenOnboarding ? '/onboarding' : ((user.role === 'ADMIN' || user.role === 'EMPLOYEE') ? '/admin' : '/client')} />} />
+            <Route path="/login" element={!user ? <Login /> : <Navigate to={shouldOpenOnboarding ? '/onboarding' : (user.role === 'MASTER' ? '/master' : ((user.role === 'ADMIN' || user.role === 'EMPLOYEE') ? '/admin' : '/client'))} />} />
             
             <Route path="/client/*" element={
               user && user.role === 'CLIENT' ? <ClientPortal /> : <Navigate to="/login" />
@@ -1436,6 +1466,12 @@ const App: React.FC = () => {
             <Route path="/admin/*" element={
               user && (user.role === 'ADMIN' || user.role === 'EMPLOYEE')
                 ? (shouldOpenOnboarding ? <Navigate to="/onboarding" /> : <AdminDashboard />)
+                : <Navigate to="/login" />
+            } />
+
+            <Route path="/master/*" element={
+              user && user.role === 'MASTER'
+                ? <MasterDashboard onLogout={logout} />
                 : <Navigate to="/login" />
             } />
 

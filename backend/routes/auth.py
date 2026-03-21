@@ -1,9 +1,11 @@
-from flask import Blueprint, g, request
+import hmac
+
+from flask import Blueprint, current_app, g, request
 from psycopg.errors import UniqueViolation
 from werkzeug.security import check_password_hash, generate_password_hash
 from uuid import UUID
 
-from backend.middleware.auth import auth_required, create_access_token
+from backend.middleware.auth import auth_required, create_access_token, create_master_access_token, master_auth_required
 from backend.repositories.auth_repository import AuthRepository
 from backend.utils.http import error, success
 
@@ -14,6 +16,59 @@ def _admin_guard():
     if str(getattr(g, "user_role", "")).upper() != "ADMIN":
         return error("Acesso negado", 403)
     return None
+
+
+@auth_bp.post("/master/login")
+def master_login():
+        payload = request.get_json(silent=True) or {}
+        login_value = str(payload.get("login") or payload.get("email") or payload.get("telefone") or "").strip()
+        senha = str(payload.get("senha") or "")
+
+        expected_login = str(current_app.config.get("MASTER_LOGIN") or "").strip()
+        expected_password = str(current_app.config.get("MASTER_PASSWORD") or "")
+        master_name = str(current_app.config.get("MASTER_NAME") or "Master SaaS")
+
+        if not expected_login or not expected_password:
+                return error("Credenciais MASTER não configuradas no servidor", 503)
+
+        if not login_value or not senha:
+                return error("login e senha são obrigatórios", 400)
+
+        login_ok = hmac.compare_digest(login_value.lower(), expected_login.lower())
+        password_ok = hmac.compare_digest(senha, expected_password)
+
+        if not login_ok or not password_ok:
+                return error("Credenciais inválidas", 401)
+
+        token = create_master_access_token("master")
+        user = {
+            "id": "master",
+            "barbearia_id": "master",
+            "nome": master_name,
+            "telefone": expected_login,
+            "email": expected_login if "@" in expected_login else None,
+            "role": "MASTER",
+            "ativo": True,
+        }
+        return success({"token": token, "user": user})
+
+
+@auth_bp.get("/master/me")
+@master_auth_required
+def master_me():
+        expected_login = str(current_app.config.get("MASTER_LOGIN") or "").strip()
+        master_name = str(current_app.config.get("MASTER_NAME") or "Master SaaS")
+        return success(
+                {
+                        "id": "master",
+                        "barbearia_id": "master",
+                        "nome": master_name,
+                        "telefone": expected_login,
+                        "email": expected_login if "@" in expected_login else None,
+                        "role": "MASTER",
+                        "ativo": True,
+                }
+        )
 
 
 @auth_bp.post("/signup")

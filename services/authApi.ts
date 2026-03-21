@@ -21,7 +21,7 @@ export type AuthUser = {
   nome: string;
   telefone: string;
   email?: string | null;
-  role: 'ADMIN' | 'EMPLOYEE' | 'CLIENT';
+  role: 'ADMIN' | 'EMPLOYEE' | 'CLIENT' | 'MASTER';
   ativo: boolean;
 };
 
@@ -56,6 +56,19 @@ export async function signupApi(payload: SignupPayload) {
 
 export async function meApi() {
   return apiRequest<AuthUser>('/auth/me', {
+    method: 'GET',
+  });
+}
+
+export async function masterLoginApi(payload: LoginPayload) {
+  return apiRequest<AuthResult>('/auth/master/login', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function masterMeApi() {
+  return apiRequest<AuthUser>('/auth/master/me', {
     method: 'GET',
   });
 }

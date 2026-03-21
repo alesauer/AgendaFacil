@@ -5,6 +5,7 @@ import { User as UserIcon, Lock, Phone, ArrowRight, X, Mail, CheckCircle } from 
 export const Login: React.FC = () => {
   const { login, brandIdentity } = useAppContext();
   const [isClient, setIsClient] = useState(true);
+  const [backofficeMode, setBackofficeMode] = useState<'TEAM' | 'MASTER'>('TEAM');
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -32,8 +33,12 @@ export const Login: React.FC = () => {
     setError('');
 
     try {
-      if (phone.length < 8) {
+      if (isClient && phone.length < 8) {
         setError('Telefone inválido');
+        return;
+      }
+      if (!isClient && !phone.trim()) {
+        setError('Informe seu login');
         return;
       }
       if (!isClient && !password) {
@@ -41,7 +46,7 @@ export const Login: React.FC = () => {
         return;
       }
 
-      await login(phone, isClient ? 'CLIENT' : 'ADMIN', password);
+      await login(phone, isClient ? 'CLIENT' : (backofficeMode === 'MASTER' ? 'MASTER' : 'ADMIN'), password);
     } catch (err: any) {
       setError(err?.message || 'Não foi possível entrar');
     } finally {
@@ -88,7 +93,10 @@ export const Login: React.FC = () => {
             </div>
           </button>
           <button 
-            onClick={() => setIsClient(false)}
+            onClick={() => {
+              setIsClient(false);
+              setBackofficeMode('TEAM');
+            }}
             className={`flex-1 py-4 text-center transition-colors ${!isClient ? 'text-white' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'}`}
             style={!isClient ? { backgroundColor: brandIdentity.primaryColor || '#2563eb' } : undefined}
           >
@@ -116,15 +124,36 @@ export const Login: React.FC = () => {
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-6">
+            {!isClient && (
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setBackofficeMode('TEAM')}
+                  className={`flex-1 py-2 rounded-lg text-xs font-bold transition-colors ${backofficeMode === 'TEAM' ? 'text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                  style={backofficeMode === 'TEAM' ? { backgroundColor: brandIdentity.primaryColor || '#2563eb' } : undefined}
+                >
+                  Admin / Equipe
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBackofficeMode('MASTER')}
+                  className={`flex-1 py-2 rounded-lg text-xs font-bold transition-colors ${backofficeMode === 'MASTER' ? 'text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                  style={backofficeMode === 'MASTER' ? { backgroundColor: brandIdentity.primaryColor || '#2563eb' } : undefined}
+                >
+                  Master SaaS
+                </button>
+              </div>
+            )}
+
             <div>
-              <label className="block text-sm font-medium text-gray-500 mb-2">Celular</label>
+              <label className="block text-sm font-medium text-gray-500 mb-2">{isClient ? 'Celular' : 'Login'}</label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Phone className="h-5 w-5 text-gray-400" />
+                  {isClient ? <Phone className="h-5 w-5 text-gray-400" /> : <UserIcon className="h-5 w-5 text-gray-400" />}
                 </div>
                 <input
-                  type="tel"
-                  placeholder="(00) 00000-0000"
+                  type={isClient ? 'tel' : 'text'}
+                  placeholder={isClient ? '(00) 00000-0000' : 'Telefone ou e-mail master'}
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
                   className="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 transition-colors text-gray-600"

@@ -29,6 +29,9 @@ class Config:
     EMAIL_FROM_NAME = "AgendaFácil"
 
     DEFAULT_BARBEARIA_SLUG = ""
+    MASTER_LOGIN = "master"
+    MASTER_PASSWORD = ""
+    MASTER_NAME = "Master SaaS"
 
 
 class DevelopmentConfig(Config):
@@ -67,6 +70,9 @@ def _hydrate_from_env(config_cls):
     config_cls.EMAIL_FROM_ADDRESS = os.getenv("EMAIL_FROM_ADDRESS", "")
     config_cls.EMAIL_FROM_NAME = os.getenv("EMAIL_FROM_NAME", "AgendaFácil")
     config_cls.DEFAULT_BARBEARIA_SLUG = os.getenv("DEFAULT_BARBEARIA_SLUG", "")
+    config_cls.MASTER_LOGIN = os.getenv("MASTER_LOGIN", "master")
+    config_cls.MASTER_PASSWORD = os.getenv("MASTER_PASSWORD", "admin123")
+    config_cls.MASTER_NAME = os.getenv("MASTER_NAME", "Master SaaS")
     return config_cls
 
 
