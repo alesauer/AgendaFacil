@@ -5,7 +5,6 @@ import { User as UserIcon, Lock, Phone, ArrowRight, X, Mail, CheckCircle } from 
 export const Login: React.FC = () => {
   const { login, brandIdentity } = useAppContext();
   const [isClient, setIsClient] = useState(true);
-  const [backofficeMode, setBackofficeMode] = useState<'TEAM' | 'MASTER'>('TEAM');
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -46,7 +45,7 @@ export const Login: React.FC = () => {
         return;
       }
 
-      await login(phone, isClient ? 'CLIENT' : (backofficeMode === 'MASTER' ? 'MASTER' : 'ADMIN'), password);
+      await login(phone, isClient ? 'CLIENT' : 'ADMIN', password);
     } catch (err: any) {
       setError(err?.message || 'Não foi possível entrar');
     } finally {
@@ -93,10 +92,7 @@ export const Login: React.FC = () => {
             </div>
           </button>
           <button 
-            onClick={() => {
-              setIsClient(false);
-              setBackofficeMode('TEAM');
-            }}
+            onClick={() => setIsClient(false)}
             className={`flex-1 py-4 text-center transition-colors ${!isClient ? 'text-white' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'}`}
             style={!isClient ? { backgroundColor: brandIdentity.primaryColor || '#2563eb' } : undefined}
           >
@@ -124,27 +120,6 @@ export const Login: React.FC = () => {
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-6">
-            {!isClient && (
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setBackofficeMode('TEAM')}
-                  className={`flex-1 py-2 rounded-lg text-xs font-bold transition-colors ${backofficeMode === 'TEAM' ? 'text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
-                  style={backofficeMode === 'TEAM' ? { backgroundColor: brandIdentity.primaryColor || '#2563eb' } : undefined}
-                >
-                  Admin / Equipe
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setBackofficeMode('MASTER')}
-                  className={`flex-1 py-2 rounded-lg text-xs font-bold transition-colors ${backofficeMode === 'MASTER' ? 'text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
-                  style={backofficeMode === 'MASTER' ? { backgroundColor: brandIdentity.primaryColor || '#2563eb' } : undefined}
-                >
-                  Master SaaS
-                </button>
-              </div>
-            )}
-
             <div>
               <label className="block text-sm font-medium text-gray-500 mb-2">{isClient ? 'Celular' : 'Login'}</label>
               <div className="relative">

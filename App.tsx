@@ -15,6 +15,7 @@ import { Login } from './views/Login';
 import { ClientPortal } from './views/ClientPortal';
 import { AdminDashboard } from './views/AdminDashboard';
 import { MasterDashboard } from './views/MasterDashboard';
+import { MasterLogin } from './views/MasterLogin';
 import { Onboarding } from './views/Onboarding';
 
 // --- Contexts ---
@@ -1470,9 +1471,9 @@ const App: React.FC = () => {
             } />
 
             <Route path="/master/*" element={
-              user && user.role === 'MASTER'
-                ? <MasterDashboard onLogout={logout} />
-                : <Navigate to="/login" />
+              user
+                ? (user.role === 'MASTER' ? <MasterDashboard onLogout={logout} /> : <Navigate to={user.role === 'CLIENT' ? '/client' : '/admin'} />)
+                : <MasterLogin />
             } />
 
             <Route path="/onboarding" element={
