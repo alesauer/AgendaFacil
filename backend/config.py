@@ -32,6 +32,13 @@ class Config:
     MASTER_LOGIN = "master"
     MASTER_PASSWORD = ""
     MASTER_NAME = "Master SaaS"
+    STRIPE_SECRET_KEY = ""
+    STRIPE_WEBHOOK_SECRET = ""
+    STRIPE_PRICE_ID_MONTHLY = ""
+    STRIPE_PRICE_ID_YEARLY = ""
+    STRIPE_WEBHOOK_BARBEARIA_SLUG = ""
+    STRIPE_PAYMENT_LINK_MONTHLY = ""
+    STRIPE_PAYMENT_LINK_YEARLY = ""
 
 
 class DevelopmentConfig(Config):
@@ -73,6 +80,13 @@ def _hydrate_from_env(config_cls):
     config_cls.MASTER_LOGIN = os.getenv("MASTER_LOGIN", "master")
     config_cls.MASTER_PASSWORD = os.getenv("MASTER_PASSWORD", "admin123")
     config_cls.MASTER_NAME = os.getenv("MASTER_NAME", "Master SaaS")
+    config_cls.STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "").strip()
+    config_cls.STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "").strip()
+    config_cls.STRIPE_PRICE_ID_MONTHLY = os.getenv("STRIPE_PRICE_ID_MONTHLY", "").strip()
+    config_cls.STRIPE_PRICE_ID_YEARLY = os.getenv("STRIPE_PRICE_ID_YEARLY", "").strip()
+    config_cls.STRIPE_WEBHOOK_BARBEARIA_SLUG = os.getenv("STRIPE_WEBHOOK_BARBEARIA_SLUG", "").strip()
+    config_cls.STRIPE_PAYMENT_LINK_MONTHLY = os.getenv("STRIPE_PAYMENT_LINK_MONTHLY", "").strip()
+    config_cls.STRIPE_PAYMENT_LINK_YEARLY = os.getenv("STRIPE_PAYMENT_LINK_YEARLY", "").strip()
     return config_cls
 
 

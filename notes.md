@@ -20,3 +20,7 @@ echo "$TOKEN"
 
 
 api resend: re_2sSscbka_JhmYkU5baN6Fn9xVtrWmEHWK
+
+
+#stripe
+stripe listen --forward-to http://127.0.0.1:5000/stripe/webhook

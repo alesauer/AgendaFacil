@@ -1,6 +1,6 @@
 import re
 
-from flask import Blueprint, g, request
+from flask import Blueprint, current_app, g, request
 
 from backend.middleware.auth import auth_required
 from backend.repositories.barbearia_repository import BarbeariaRepository
@@ -12,6 +12,7 @@ HEX_COLOR_REGEX = re.compile(r"^#([A-Fa-f0-9]{6})$")
 ALLOWED_ICONES = {"scissors", "store", "user", "sparkles", "heart", "zap"}
 MAX_IMAGE_URL_LENGTH = 300000
 MAX_LOGIN_BACKGROUND_URL_LENGTH = 3200000
+ALLOWED_BILLING_CYCLES = {"MONTHLY", "YEARLY"}
 
 
 def _parse_bool(value, default: bool = False) -> bool:
@@ -184,4 +185,80 @@ def update_identidade():
     )
     if not item:
         return error("Barbearia não encontrada", 404)
+    return success(item)
+
+
+@barbearia_bp.get("/assinatura")
+@auth_required
+def get_assinatura():
+    if str(getattr(g, "user_role", "")).upper() != "ADMIN":
+        return error("Acesso negado", 403)
+
+    item = BarbeariaRepository.get_subscription(g.barbearia_id)
+    if not item:
+        return error("Barbearia não encontrada", 404)
+
+    ciclo = str(item.get("ciclo_cobranca") or "MONTHLY").upper()
+    valor_centavos = int(item.get("valor_plano_centavos") or (3900 if ciclo == "MONTHLY" else 29700))
+
+    stripe_link_monthly = str(current_app.config.get("STRIPE_PAYMENT_LINK_MONTHLY") or "").strip()
+    stripe_link_yearly = str(current_app.config.get("STRIPE_PAYMENT_LINK_YEARLY") or "").strip()
+
+    return success(
+        {
+            "plano": item.get("plano"),
+            "assinatura_status": item.get("assinatura_status"),
+            "assinatura_status_efetivo": item.get("assinatura_status_efetivo"),
+            "ciclo_cobranca": ciclo,
+            "valor_plano_centavos": valor_centavos,
+            "trial_usado": bool(item.get("trial_usado", False)),
+            "trial_inicio_em": item.get("trial_inicio_em"),
+            "trial_fim_em": item.get("trial_fim_em"),
+            "dias_restantes_trial": int(item.get("dias_restantes_trial") or 0),
+            "assinatura_inicio_em": item.get("assinatura_inicio_em"),
+            "proxima_cobranca_em": item.get("proxima_cobranca_em"),
+            "atualizado_assinatura_em": item.get("atualizado_assinatura_em"),
+            "planos_disponiveis": [
+                {
+                    "codigo": "MENSAL_39",
+                    "ciclo_cobranca": "MONTHLY",
+                    "titulo": "Mensal",
+                    "valor_centavos": 3900,
+                    "descricao": "Comece agora sem compromisso e teste na prática.",
+                    "link_pagamento": stripe_link_monthly or None,
+                },
+                {
+                    "codigo": "ANUAL_297",
+                    "ciclo_cobranca": "YEARLY",
+                    "titulo": "Anual",
+                    "valor_centavos": 29700,
+                    "descricao": "Economize e tenha tranquilidade na gestão o ano inteiro.",
+                    "link_pagamento": stripe_link_yearly or None,
+                },
+            ],
+            "trial": {
+                "dias": 7,
+                "habilitado": True,
+            },
+        }
+    )
+
+
+@barbearia_bp.put("/assinatura")
+@auth_required
+def update_assinatura():
+    if str(getattr(g, "user_role", "")).upper() != "ADMIN":
+        return error("Acesso negado", 403)
+
+    payload = request.get_json(silent=True) or {}
+    ciclo_cobranca = str(payload.get("ciclo_cobranca") or "").strip().upper()
+    if ciclo_cobranca not in ALLOWED_BILLING_CYCLES:
+        return error("ciclo_cobranca inválido. Use MONTHLY ou YEARLY", 400)
+
+    iniciar_trial = _parse_bool(payload.get("iniciar_trial"), False)
+
+    item = BarbeariaRepository.update_subscription(g.barbearia_id, ciclo_cobranca, iniciar_trial)
+    if not item:
+        return error("Barbearia não encontrada", 404)
+
     return success(item)

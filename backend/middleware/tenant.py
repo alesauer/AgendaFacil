@@ -30,6 +30,9 @@ def resolve_tenant():
     if request.path.startswith("/health"):
         return None
 
+    if request.path.startswith("/stripe/webhook"):
+        return None
+
     if request.path.startswith("/master") or request.path.startswith("/auth/master"):
         return None
 

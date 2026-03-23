@@ -36,3 +36,7 @@ backend/venv/
 
 # Environment templates
 *.env.example
+
+# Environment files (secrets)
+.env
+backend/.env

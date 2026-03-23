@@ -15,6 +15,7 @@ import {
   FinanceiroResumoApi,
 } from '../services/financeiroApi';
 import { DashboardInsightsApi, getDashboardInsightsApi } from '../services/dashboardApi';
+import { AssinaturaApi, getAssinaturaApi, saveAssinaturaApi } from '../services/assinaturaApi';
 
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042'];
 
@@ -4388,6 +4389,11 @@ const SettingsManagement = () => {
   const [churnSettingsError, setChurnSettingsError] = useState<string | null>(null);
   const [churnSettingsSuccess, setChurnSettingsSuccess] = useState<string | null>(null);
   const [isSavingChurnSettings, setIsSavingChurnSettings] = useState(false);
+  const [subscriptionData, setSubscriptionData] = useState<AssinaturaApi | null>(null);
+  const [isLoadingSubscription, setIsLoadingSubscription] = useState(false);
+  const [isSavingSubscription, setIsSavingSubscription] = useState(false);
+  const [subscriptionError, setSubscriptionError] = useState<string | null>(null);
+  const [subscriptionSuccess, setSubscriptionSuccess] = useState<string | null>(null);
   const logoInputRef = useRef<HTMLInputElement | null>(null);
   const loginLogoInputRef = useRef<HTMLInputElement | null>(null);
   const loginBackgroundInputRef = useRef<HTMLInputElement | null>(null);
@@ -4432,6 +4438,114 @@ const SettingsManagement = () => {
   useEffect(() => {
     setChurnRiskDaysThreshold(Math.max(1, Math.min(365, Number(brandIdentity.churnRiskDaysThreshold || 45))));
   }, [brandIdentity.churnRiskDaysThreshold]);
+
+  const formatMoneyFromCents = (value: number) => {
+    const safe = Number.isFinite(Number(value)) ? Number(value) : 0;
+    return (safe / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  };
+
+  const formatStatusLabel = (status?: string) => {
+    const key = String(status || '').toUpperCase();
+    if (key === 'TRIAL') return 'Trial';
+    if (key === 'ACTIVE') return 'Ativo';
+    if (key === 'PAST_DUE') return 'Pagamento pendente';
+    if (key === 'CANCELLED') return 'Cancelado';
+    if (key === 'SUSPENDED') return 'Suspenso';
+    return key || 'Indefinido';
+  };
+
+  const formatStatusClass = (status?: string) => {
+    const key = String(status || '').toUpperCase();
+    if (key === 'TRIAL') return 'bg-blue-100 text-blue-700';
+    if (key === 'ACTIVE') return 'bg-emerald-100 text-emerald-700';
+    if (key === 'PAST_DUE') return 'bg-amber-100 text-amber-700';
+    if (key === 'CANCELLED') return 'bg-red-100 text-red-700';
+    if (key === 'SUSPENDED') return 'bg-slate-200 text-slate-700';
+    return 'bg-gray-100 text-gray-700';
+  };
+
+  const loadSubscription = async () => {
+    if (isLoadingSubscription) return;
+    setIsLoadingSubscription(true);
+    setSubscriptionError(null);
+
+    const result = await getAssinaturaApi();
+    if (!result.success) {
+      setSubscriptionError(result.error || 'Falha ao carregar assinatura.');
+      setIsLoadingSubscription(false);
+      return;
+    }
+
+    setSubscriptionData(result.data);
+    setIsLoadingSubscription(false);
+  };
+
+  const handleChoosePlan = async (cycle: 'MONTHLY' | 'YEARLY') => {
+    if (isSavingSubscription) return;
+    setIsSavingSubscription(true);
+    setSubscriptionError(null);
+    setSubscriptionSuccess(null);
+
+    const shouldStartTrial = Boolean(!subscriptionData?.trial_usado && !subscriptionData?.trial_inicio_em);
+    const result = await saveAssinaturaApi({
+      ciclo_cobranca: cycle,
+      iniciar_trial: shouldStartTrial,
+    });
+
+    if (!result.success) {
+      setSubscriptionError(result.error || 'Falha ao salvar plano.');
+      setIsSavingSubscription(false);
+      return;
+    }
+
+    setSubscriptionData(result.data);
+    setSubscriptionSuccess(shouldStartTrial ? 'Plano selecionado com trial de 7 dias iniciado.' : 'Plano atualizado com sucesso.');
+    setIsSavingSubscription(false);
+  };
+
+  const handleOpenPaymentLink = (cycle: 'MONTHLY' | 'YEARLY') => {
+    const plan = availablePlans.find((item) => String(item.ciclo_cobranca || '').toUpperCase() === cycle);
+    const link = String(plan?.link_pagamento || '').trim();
+
+    setSubscriptionError(null);
+    setSubscriptionSuccess(null);
+
+    if (!link) {
+      setSubscriptionError(`Link de pagamento ${cycle === 'MONTHLY' ? 'mensal' : 'anual'} não configurado no backend.`);
+      return;
+    }
+
+    window.open(link, '_blank', 'noopener,noreferrer');
+    setSubscriptionSuccess('Checkout Stripe aberto em uma nova aba. Após pagamento confirmado, o status será atualizado no sistema.');
+  };
+
+  useEffect(() => {
+    if (activeSubTab !== 'BILLING') return;
+    if (subscriptionData) return;
+    loadSubscription();
+  }, [activeSubTab]);
+
+  const availablePlans = subscriptionData?.planos_disponiveis || [
+    {
+      codigo: 'MENSAL_39',
+      ciclo_cobranca: 'MONTHLY',
+      titulo: 'Mensal',
+      valor_centavos: 3900,
+      descricao: 'Comece agora sem compromisso e teste na prática.',
+    },
+    {
+      codigo: 'ANUAL_297',
+      ciclo_cobranca: 'YEARLY',
+      titulo: 'Anual',
+      valor_centavos: 29700,
+      descricao: 'Economize e tenha tranquilidade na gestão o ano inteiro.',
+    },
+  ];
+
+  const monthlyPlan = availablePlans.find((plan) => String(plan.ciclo_cobranca).toUpperCase() === 'MONTHLY') || availablePlans[0];
+  const yearlyPlan = availablePlans.find((plan) => String(plan.ciclo_cobranca).toUpperCase() === 'YEARLY') || availablePlans[1] || availablePlans[0];
+  const effectiveStatus = subscriptionData?.assinatura_status_efetivo || subscriptionData?.assinatura_status;
+  const isTrialRunning = String(effectiveStatus || '').toUpperCase() === 'TRIAL';
 
   const toggleDay = (id: number) => {
     setLocalBusinessHours(prev => prev.map(h => h.dayOfWeek === id ? { ...h, open: !h.open } : h));
@@ -5525,54 +5639,92 @@ const SettingsManagement = () => {
               </div>
 
               {activeBillingTab === 'PLAN' && (
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  <div className="md:col-span-2 p-6 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-2xl text-white shadow-lg shadow-blue-100 relative overflow-hidden">
-                    <div className="relative z-10">
-                      <div className="flex justify-between items-start mb-8">
-                        <div>
-                          <p className="text-blue-100 text-xs font-bold uppercase tracking-wider mb-1">Plano Atual</p>
-                          <h4 className="text-2xl font-bold">Profissional Plus</h4>
+                <div className="space-y-5">
+                  {(subscriptionError || subscriptionSuccess) && (
+                    <div className="space-y-2">
+                      {subscriptionError && (
+                        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                          {subscriptionError}
                         </div>
-                        <span className="px-3 py-1 bg-white/20 backdrop-blur-md rounded-full text-[10px] font-bold uppercase">Ativo</span>
-                      </div>
-
-                      <div className="flex items-end gap-2 mb-6">
-                        <span className="text-4xl font-bold">R$ 89,90</span>
-                        <span className="text-blue-200 text-sm mb-1">/ mês</span>
-                      </div>
-
-                      <div className="flex flex-wrap gap-4 pt-4 border-t border-white/10">
-                        <div className="flex items-center gap-2">
-                          <Check size={14} className="text-blue-300" />
-                          <span className="text-xs text-blue-50">Agendamentos ilimitados</span>
+                      )}
+                      {subscriptionSuccess && (
+                        <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
+                          {subscriptionSuccess}
                         </div>
-                        <div className="flex items-center gap-2">
-                          <Check size={14} className="text-blue-300" />
-                          <span className="text-xs text-blue-50">Até 5 profissionais</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Check size={14} className="text-blue-300" />
-                          <span className="text-xs text-blue-50">WhatsApp API inclusa</span>
-                        </div>
-                      </div>
+                      )}
                     </div>
-                    <div className="absolute -right-10 -bottom-10 w-40 h-40 bg-white/10 rounded-full blur-3xl" />
-                    <div className="absolute -left-10 -top-10 w-40 h-40 bg-blue-400/20 rounded-full blur-3xl" />
+                  )}
+
+                  <div className="p-5 bg-white border border-gray-200 rounded-2xl">
+                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                      <div>
+                        <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Assinatura atual</p>
+                        <p className="text-lg font-bold text-gray-800">
+                          {String(subscriptionData?.ciclo_cobranca || 'MONTHLY').toUpperCase() === 'YEARLY' ? 'Anual (R$ 297/ano)' : 'Mensal (R$ 39/mês)'}
+                        </p>
+                        <p className="text-xs text-gray-500 mt-1">
+                          Próxima cobrança: {subscriptionData?.proxima_cobranca_em ? safeDateBr(String(subscriptionData.proxima_cobranca_em).slice(0, 10)) : 'Não definida'}
+                        </p>
+                      </div>
+                      <span className={`px-3 py-1 rounded-full text-xs font-bold w-fit ${formatStatusClass(effectiveStatus)}`}>
+                        {formatStatusLabel(effectiveStatus)}
+                      </span>
+                    </div>
+                    {isTrialRunning && (
+                      <p className="mt-3 text-sm text-blue-700 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
+                        Trial ativo: {subscriptionData?.dias_restantes_trial || 0} dia(s) restante(s).
+                      </p>
+                    )}
                   </div>
 
-                  <div className="p-6 bg-gray-50 rounded-2xl border border-gray-100 flex flex-col justify-between">
-                    <div>
-                      <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Próximo Vencimento</p>
-                      <div className="flex items-center gap-3 mb-2">
-                        <Calendar size={20} className="text-blue-600" />
-                        <span className="text-lg font-bold text-gray-800">15 Abr, 2024</span>
-                      </div>
-                      <p className="text-xs text-gray-500 leading-relaxed">Sua assinatura será renovada automaticamente usando seu método de pagamento padrão.</p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                    <div className="p-6 bg-white border border-gray-200 rounded-2xl shadow-sm">
+                      <p className="text-xs text-gray-500 uppercase tracking-wider font-bold">💰 Escolha como pagar</p>
+                      <h4 className="text-2xl font-bold text-gray-900 mt-1">Mensal</h4>
+                      <p className="text-sm text-gray-600 mt-2">Comece agora sem compromisso e teste na prática.</p>
+                      <p className="text-3xl font-extrabold text-gray-900 mt-4">{formatMoneyFromCents(Number(monthlyPlan?.valor_centavos || 3900))}<span className="text-base font-semibold text-gray-500">/mês</span></p>
+                      <p className="text-sm text-gray-700 mt-3">👉 Ideal para quem quer validar e já organizar a barbearia</p>
+                      <button
+                        onClick={() => handleOpenPaymentLink('MONTHLY')}
+                        disabled={isLoadingSubscription}
+                        className="mt-6 w-full py-2.5 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+                      >
+                        Assinar Mensal no Stripe
+                      </button>
                     </div>
-                    <button className="w-full mt-6 py-2.5 bg-white border border-gray-200 text-gray-700 rounded-xl text-sm font-bold hover:bg-gray-50 transition-all">
-                      Alterar Plano
+
+                    <div className="p-6 bg-white border border-gray-200 rounded-2xl shadow-sm">
+                      <p className="text-xs text-gray-500 uppercase tracking-wider font-bold">💳 Anual (mais vantajoso)</p>
+                      <h4 className="text-2xl font-bold text-gray-900 mt-1">Anual</h4>
+                      <p className="text-sm text-gray-600 mt-2">Economize e tenha tranquilidade na gestão o ano inteiro.</p>
+                      <p className="text-3xl font-extrabold text-gray-900 mt-4">{formatMoneyFromCents(Number(yearlyPlan?.valor_centavos || 29700))}<span className="text-base font-semibold text-gray-500">/ano</span></p>
+                      <p className="text-sm text-gray-500 mt-1">(equivalente a R$ 24/mês)</p>
+                      <p className="text-sm text-gray-700 mt-3">👉 Você economiza e ainda garante estabilidade no seu negócio</p>
+                      <button
+                        onClick={() => handleOpenPaymentLink('YEARLY')}
+                        disabled={isLoadingSubscription}
+                        className="mt-6 w-full py-2.5 bg-gray-900 text-white rounded-xl font-bold hover:bg-black transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+                      >
+                        Assinar Anual no Stripe
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="p-4 rounded-xl border border-blue-100 bg-blue-50">
+                    <p className="text-sm font-bold text-blue-900">🎁 Teste grátis por 7 dias</p>
+                    <p className="text-sm text-blue-800 mt-1">Use todas as funcionalidades, sem cartão e sem compromisso.</p>
+                    <button
+                      onClick={() => handleChoosePlan('MONTHLY')}
+                      disabled={isSavingSubscription || isLoadingSubscription || Boolean(subscriptionData?.trial_usado)}
+                      className="mt-3 px-4 py-2 bg-white border border-blue-200 text-blue-700 rounded-lg text-sm font-bold hover:bg-blue-100 disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      {subscriptionData?.trial_usado ? 'Trial já utilizado' : (isSavingSubscription ? 'Ativando trial...' : 'Ativar trial agora')}
                     </button>
                   </div>
+
+                  {isLoadingSubscription && (
+                    <p className="text-sm text-gray-500">Carregando dados da assinatura...</p>
+                  )}
                 </div>
               )}
 

@@ -1,9 +1,21 @@
+from datetime import datetime, timedelta, timezone
+
 from backend.db import is_db_ready, query_one
 from backend.repositories.base_repository import BaseRepository
 from backend.supabase_client import get_supabase_client, is_supabase_ready
 
 
 class BarbeariaRepository(BaseRepository):
+    _SUBSCRIPTION_PRICES = {
+        "MONTHLY": 3900,
+        "YEARLY": 29700,
+    }
+
+    _SUBSCRIPTION_PLAN_CODE = {
+        "MONTHLY": "MENSAL_39",
+        "YEARLY": "ANUAL_297",
+    }
+
     @staticmethod
     def _is_missing_reports_flag_column_error(exc: Exception) -> bool:
         message = str(exc).lower()
@@ -11,6 +23,142 @@ class BarbeariaRepository(BaseRepository):
             "allow_employee_view_reports" in message
             and ("column" in message or "does not exist" in message or "schema cache" in message)
         )
+
+    @staticmethod
+    def _is_missing_subscription_column_error(exc: Exception) -> bool:
+        message = str(exc).lower()
+        return (
+            "ciclo_cobranca" in message
+            or "valor_plano_centavos" in message
+            or "trial_" in message
+            or "proxima_cobranca_em" in message
+            or "assinatura_inicio_em" in message
+            or "atualizado_assinatura_em" in message
+        ) and ("column" in message or "does not exist" in message or "schema cache" in message)
+
+    @staticmethod
+    def _is_missing_stripe_column_error(exc: Exception) -> bool:
+        message = str(exc).lower()
+        return (
+            "stripe_" in message
+            and ("column" in message or "does not exist" in message or "schema cache" in message)
+        )
+
+    @staticmethod
+    def _normalize_cycle(value: str | None) -> str:
+        raw = str(value or "").strip().upper()
+        if raw == "YEARLY":
+            return "YEARLY"
+        return "MONTHLY"
+
+    @staticmethod
+    def _as_datetime(value):
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _to_iso(value):
+        parsed = BarbeariaRepository._as_datetime(value)
+        return parsed.isoformat() if parsed else None
+
+    @staticmethod
+    def _compute_effective_status(status: str, trial_end_value):
+        normalized = str(status or "ACTIVE").upper()
+        if normalized != "TRIAL":
+            return normalized
+        now = datetime.now(timezone.utc)
+        trial_end = BarbeariaRepository._as_datetime(trial_end_value)
+        if trial_end and now > trial_end:
+            return "PAST_DUE"
+        return "TRIAL"
+
+    @staticmethod
+    def _days_left_for_trial(trial_end_value):
+        trial_end = BarbeariaRepository._as_datetime(trial_end_value)
+        if not trial_end:
+            return 0
+        now = datetime.now(timezone.utc)
+        delta = trial_end - now
+        if delta.total_seconds() <= 0:
+            return 0
+        return int(delta.total_seconds() // 86400) + 1
+
+    @staticmethod
+    def _coalesce_subscription_fields(item: dict | None):
+        if not item:
+            return None
+
+        base = dict(item)
+        cycle = BarbeariaRepository._normalize_cycle(base.get("ciclo_cobranca"))
+        price = int(base.get("valor_plano_centavos") or BarbeariaRepository._SUBSCRIPTION_PRICES[cycle])
+        stored_status = str(base.get("assinatura_status") or "ACTIVE").upper()
+        effective_status = BarbeariaRepository._compute_effective_status(stored_status, base.get("trial_fim_em"))
+
+        trial_end = base.get("trial_fim_em")
+        days_left = BarbeariaRepository._days_left_for_trial(trial_end) if effective_status == "TRIAL" else 0
+
+        base["plano"] = base.get("plano") or BarbeariaRepository._SUBSCRIPTION_PLAN_CODE[cycle]
+        base["ciclo_cobranca"] = cycle
+        base["valor_plano_centavos"] = price
+        base["trial_usado"] = bool(base.get("trial_usado", False))
+        base["assinatura_status"] = stored_status
+        base["assinatura_status_efetivo"] = effective_status
+        base["dias_restantes_trial"] = days_left
+
+        base["trial_inicio_em"] = BarbeariaRepository._to_iso(base.get("trial_inicio_em"))
+        base["trial_fim_em"] = BarbeariaRepository._to_iso(base.get("trial_fim_em"))
+        base["assinatura_inicio_em"] = BarbeariaRepository._to_iso(base.get("assinatura_inicio_em"))
+        base["proxima_cobranca_em"] = BarbeariaRepository._to_iso(base.get("proxima_cobranca_em"))
+        base["atualizado_assinatura_em"] = BarbeariaRepository._to_iso(base.get("atualizado_assinatura_em"))
+        base["stripe_customer_id"] = base.get("stripe_customer_id")
+        base["stripe_subscription_id"] = base.get("stripe_subscription_id")
+        base["stripe_price_id"] = base.get("stripe_price_id")
+        base["stripe_last_event_id"] = base.get("stripe_last_event_id")
+        base["stripe_last_event_type"] = base.get("stripe_last_event_type")
+        base["stripe_last_event_at"] = BarbeariaRepository._to_iso(base.get("stripe_last_event_at"))
+        base["stripe_webhook_updated_at"] = BarbeariaRepository._to_iso(base.get("stripe_webhook_updated_at"))
+
+        return base
+
+    @staticmethod
+    def get_barbearia_id_by_slug(slug: str):
+        normalized = str(slug or "").strip().lower()
+        if not normalized:
+            return None
+
+        if is_db_ready():
+            item = query_one(
+                """
+                SELECT id, slug
+                FROM barbearias
+                WHERE slug = %s
+                """,
+                (normalized,),
+            )
+            if item:
+                return str(item.get("id"))
+
+        if is_supabase_ready():
+            supabase = get_supabase_client()
+            response = (
+                supabase.table("barbearias")
+                .select("id,slug")
+                .eq("slug", normalized)
+                .limit(1)
+                .execute()
+            )
+            data = response.data or []
+            if data:
+                return str(data[0].get("id"))
+
+        return None
 
     @staticmethod
     def _coalesce_identity_fields(item: dict | None):
@@ -310,5 +458,382 @@ class BarbeariaRepository(BaseRepository):
                 )
                 data = response.data or []
                 return BarbeariaRepository._coalesce_identity_fields(data[0] if data else None)
+
+        return None
+
+    @staticmethod
+    def get_subscription(barbearia_id: str):
+        BarbeariaRepository.require_tenant(barbearia_id)
+
+        if is_db_ready():
+            try:
+                item = query_one(
+                    """
+                    SELECT id, nome, plano, assinatura_status,
+                           ciclo_cobranca, valor_plano_centavos,
+                           trial_usado, trial_inicio_em, trial_fim_em,
+                           assinatura_inicio_em, proxima_cobranca_em,
+                           atualizado_assinatura_em,
+                           stripe_customer_id, stripe_subscription_id, stripe_price_id,
+                           stripe_last_event_id, stripe_last_event_type, stripe_last_event_at, stripe_webhook_updated_at
+                    FROM barbearias
+                    WHERE id = %s
+                    """,
+                    (barbearia_id,),
+                )
+                return BarbeariaRepository._coalesce_subscription_fields(item)
+            except Exception as exc:
+                if not (BarbeariaRepository._is_missing_subscription_column_error(exc) or BarbeariaRepository._is_missing_stripe_column_error(exc)):
+                    raise
+
+                item = query_one(
+                    """
+                    SELECT id, nome,
+                           COALESCE(plano, 'MENSAL_39') AS plano,
+                           COALESCE(assinatura_status, 'ACTIVE') AS assinatura_status,
+                           'MONTHLY'::text AS ciclo_cobranca,
+                           3900::int AS valor_plano_centavos,
+                           FALSE AS trial_usado,
+                           NULL::timestamptz AS trial_inicio_em,
+                           NULL::timestamptz AS trial_fim_em,
+                           NULL::timestamptz AS assinatura_inicio_em,
+                           NULL::timestamptz AS proxima_cobranca_em,
+                              NOW()::timestamptz AS atualizado_assinatura_em,
+                              NULL::text AS stripe_customer_id,
+                              NULL::text AS stripe_subscription_id,
+                              NULL::text AS stripe_price_id,
+                              NULL::text AS stripe_last_event_id,
+                              NULL::text AS stripe_last_event_type,
+                              NULL::timestamptz AS stripe_last_event_at,
+                              NULL::timestamptz AS stripe_webhook_updated_at
+                    FROM barbearias
+                    WHERE id = %s
+                    """,
+                    (barbearia_id,),
+                )
+                return BarbeariaRepository._coalesce_subscription_fields(item)
+
+        if is_supabase_ready():
+            supabase = get_supabase_client()
+            try:
+                response = (
+                    supabase.table("barbearias")
+                    .select("id,nome,plano,assinatura_status,ciclo_cobranca,valor_plano_centavos,trial_usado,trial_inicio_em,trial_fim_em,assinatura_inicio_em,proxima_cobranca_em,atualizado_assinatura_em,stripe_customer_id,stripe_subscription_id,stripe_price_id,stripe_last_event_id,stripe_last_event_type,stripe_last_event_at,stripe_webhook_updated_at")
+                    .eq("id", barbearia_id)
+                    .limit(1)
+                    .execute()
+                )
+                data = response.data or []
+                return BarbeariaRepository._coalesce_subscription_fields(data[0] if data else None)
+            except Exception as exc:
+                if not (BarbeariaRepository._is_missing_subscription_column_error(exc) or BarbeariaRepository._is_missing_stripe_column_error(exc)):
+                    raise
+
+                response = (
+                    supabase.table("barbearias")
+                    .select("id,nome,plano,assinatura_status")
+                    .eq("id", barbearia_id)
+                    .limit(1)
+                    .execute()
+                )
+                data = response.data or []
+                return BarbeariaRepository._coalesce_subscription_fields(data[0] if data else None)
+
+        return None
+
+    @staticmethod
+    def apply_subscription_webhook(
+        barbearia_id: str,
+        *,
+        event_id: str,
+        event_type: str,
+        assinatura_status: str,
+        ciclo_cobranca: str | None = None,
+        valor_plano_centavos: int | None = None,
+        proxima_cobranca_em=None,
+        assinatura_inicio_em=None,
+        stripe_customer_id: str | None = None,
+        stripe_subscription_id: str | None = None,
+        stripe_price_id: str | None = None,
+    ):
+        BarbeariaRepository.require_tenant(barbearia_id)
+
+        current = BarbeariaRepository.get_subscription(barbearia_id)
+        if not current:
+            return None
+
+        if str(current.get("stripe_last_event_id") or "") == str(event_id or "") and event_id:
+            return current
+
+        now = datetime.now(timezone.utc)
+        cycle = BarbeariaRepository._normalize_cycle(ciclo_cobranca or current.get("ciclo_cobranca"))
+        price = int(valor_plano_centavos or current.get("valor_plano_centavos") or BarbeariaRepository._SUBSCRIPTION_PRICES[cycle])
+        plan_code = BarbeariaRepository._SUBSCRIPTION_PLAN_CODE[cycle]
+
+        payload = {
+            "plano": plan_code,
+            "assinatura_status": str(assinatura_status or "ACTIVE").upper(),
+            "ciclo_cobranca": cycle,
+            "valor_plano_centavos": int(price),
+            "trial_usado": True,
+            "trial_inicio_em": current.get("trial_inicio_em"),
+            "trial_fim_em": current.get("trial_fim_em"),
+            "assinatura_inicio_em": BarbeariaRepository._to_iso(assinatura_inicio_em) or current.get("assinatura_inicio_em") or BarbeariaRepository._to_iso(now),
+            "proxima_cobranca_em": BarbeariaRepository._to_iso(proxima_cobranca_em) or current.get("proxima_cobranca_em"),
+            "atualizado_assinatura_em": BarbeariaRepository._to_iso(now),
+            "stripe_customer_id": stripe_customer_id or current.get("stripe_customer_id"),
+            "stripe_subscription_id": stripe_subscription_id or current.get("stripe_subscription_id"),
+            "stripe_price_id": stripe_price_id or current.get("stripe_price_id"),
+            "stripe_last_event_id": event_id,
+            "stripe_last_event_type": event_type,
+            "stripe_last_event_at": BarbeariaRepository._to_iso(now),
+            "stripe_webhook_updated_at": BarbeariaRepository._to_iso(now),
+        }
+
+        if is_db_ready():
+            try:
+                item = query_one(
+                    """
+                    UPDATE barbearias
+                    SET plano = %s,
+                        assinatura_status = %s,
+                        ciclo_cobranca = %s,
+                        valor_plano_centavos = %s,
+                        trial_usado = %s,
+                        trial_inicio_em = %s,
+                        trial_fim_em = %s,
+                        assinatura_inicio_em = %s,
+                        proxima_cobranca_em = %s,
+                        atualizado_assinatura_em = %s,
+                        stripe_customer_id = %s,
+                        stripe_subscription_id = %s,
+                        stripe_price_id = %s,
+                        stripe_last_event_id = %s,
+                        stripe_last_event_type = %s,
+                        stripe_last_event_at = %s,
+                        stripe_webhook_updated_at = %s
+                    WHERE id = %s
+                    RETURNING id, nome, plano, assinatura_status,
+                              ciclo_cobranca, valor_plano_centavos,
+                              trial_usado, trial_inicio_em, trial_fim_em,
+                              assinatura_inicio_em, proxima_cobranca_em,
+                              atualizado_assinatura_em,
+                              stripe_customer_id, stripe_subscription_id, stripe_price_id,
+                              stripe_last_event_id, stripe_last_event_type, stripe_last_event_at, stripe_webhook_updated_at
+                    """,
+                    (
+                        payload["plano"],
+                        payload["assinatura_status"],
+                        payload["ciclo_cobranca"],
+                        payload["valor_plano_centavos"],
+                        payload["trial_usado"],
+                        payload["trial_inicio_em"],
+                        payload["trial_fim_em"],
+                        payload["assinatura_inicio_em"],
+                        payload["proxima_cobranca_em"],
+                        payload["atualizado_assinatura_em"],
+                        payload["stripe_customer_id"],
+                        payload["stripe_subscription_id"],
+                        payload["stripe_price_id"],
+                        payload["stripe_last_event_id"],
+                        payload["stripe_last_event_type"],
+                        payload["stripe_last_event_at"],
+                        payload["stripe_webhook_updated_at"],
+                        barbearia_id,
+                    ),
+                )
+                return BarbeariaRepository._coalesce_subscription_fields(item)
+            except Exception as exc:
+                if not (
+                    BarbeariaRepository._is_missing_stripe_column_error(exc)
+                    or BarbeariaRepository._is_missing_subscription_column_error(exc)
+                ):
+                    raise
+
+        if is_supabase_ready():
+            supabase = get_supabase_client()
+            try:
+                response = (
+                    supabase.table("barbearias")
+                    .update(payload)
+                    .eq("id", barbearia_id)
+                    .execute()
+                )
+                data = response.data or []
+                if data:
+                    return BarbeariaRepository._coalesce_subscription_fields(data[0])
+            except Exception as exc:
+                if not (
+                    BarbeariaRepository._is_missing_stripe_column_error(exc)
+                    or BarbeariaRepository._is_missing_subscription_column_error(exc)
+                ):
+                    raise
+
+        return BarbeariaRepository.update_subscription(
+            barbearia_id,
+            ciclo_cobranca=cycle,
+            iniciar_trial=False,
+        )
+
+    @staticmethod
+    def update_subscription(barbearia_id: str, ciclo_cobranca: str, iniciar_trial: bool):
+        BarbeariaRepository.require_tenant(barbearia_id)
+
+        cycle = BarbeariaRepository._normalize_cycle(ciclo_cobranca)
+        price = BarbeariaRepository._SUBSCRIPTION_PRICES[cycle]
+        plan_code = BarbeariaRepository._SUBSCRIPTION_PLAN_CODE[cycle]
+
+        current = BarbeariaRepository.get_subscription(barbearia_id)
+        if not current:
+            return None
+
+        now = datetime.now(timezone.utc)
+        current_trial_used = bool(current.get("trial_usado", False))
+        current_status = str(current.get("assinatura_status") or "ACTIVE").upper()
+        trial_end = BarbeariaRepository._as_datetime(current.get("trial_fim_em"))
+
+        should_start_trial = bool(iniciar_trial and not current_trial_used)
+        trial_used = current_trial_used or should_start_trial
+
+        next_status = current_status
+        trial_start_value = BarbeariaRepository._as_datetime(current.get("trial_inicio_em"))
+        trial_end_value = trial_end
+        assinatura_inicio_value = BarbeariaRepository._as_datetime(current.get("assinatura_inicio_em"))
+        proxima_cobranca_value = BarbeariaRepository._as_datetime(current.get("proxima_cobranca_em"))
+
+        if should_start_trial:
+            next_status = "TRIAL"
+            trial_start_value = now
+            trial_end_value = now + timedelta(days=7)
+            proxima_cobranca_value = trial_end_value
+            assinatura_inicio_value = None
+        elif current_status == "TRIAL" and trial_end and now <= trial_end:
+            next_status = "TRIAL"
+            proxima_cobranca_value = trial_end
+        else:
+            next_status = "ACTIVE"
+            if not assinatura_inicio_value:
+                assinatura_inicio_value = now
+            proxima_cobranca_value = now + (timedelta(days=365) if cycle == "YEARLY" else timedelta(days=30))
+
+        payload = {
+            "plano": plan_code,
+            "assinatura_status": next_status,
+            "ciclo_cobranca": cycle,
+            "valor_plano_centavos": int(price),
+            "trial_usado": bool(trial_used),
+            "trial_inicio_em": BarbeariaRepository._to_iso(trial_start_value),
+            "trial_fim_em": BarbeariaRepository._to_iso(trial_end_value),
+            "assinatura_inicio_em": BarbeariaRepository._to_iso(assinatura_inicio_value),
+            "proxima_cobranca_em": BarbeariaRepository._to_iso(proxima_cobranca_value),
+            "atualizado_assinatura_em": BarbeariaRepository._to_iso(now),
+        }
+
+        if is_db_ready():
+            try:
+                item = query_one(
+                    """
+                    UPDATE barbearias
+                    SET plano = %s,
+                        assinatura_status = %s,
+                        ciclo_cobranca = %s,
+                        valor_plano_centavos = %s,
+                        trial_usado = %s,
+                        trial_inicio_em = %s,
+                        trial_fim_em = %s,
+                        assinatura_inicio_em = %s,
+                        proxima_cobranca_em = %s,
+                        atualizado_assinatura_em = %s
+                    WHERE id = %s
+                    RETURNING id, nome, plano, assinatura_status,
+                              ciclo_cobranca, valor_plano_centavos,
+                              trial_usado, trial_inicio_em, trial_fim_em,
+                              assinatura_inicio_em, proxima_cobranca_em,
+                              atualizado_assinatura_em
+                    """,
+                    (
+                        payload["plano"],
+                        payload["assinatura_status"],
+                        payload["ciclo_cobranca"],
+                        payload["valor_plano_centavos"],
+                        payload["trial_usado"],
+                        payload["trial_inicio_em"],
+                        payload["trial_fim_em"],
+                        payload["assinatura_inicio_em"],
+                        payload["proxima_cobranca_em"],
+                        payload["atualizado_assinatura_em"],
+                        barbearia_id,
+                    ),
+                )
+                return BarbeariaRepository._coalesce_subscription_fields(item)
+            except Exception as exc:
+                if not BarbeariaRepository._is_missing_subscription_column_error(exc):
+                    raise
+
+                item = query_one(
+                    """
+                    UPDATE barbearias
+                    SET plano = %s,
+                        assinatura_status = %s
+                    WHERE id = %s
+                    RETURNING id, nome,
+                              COALESCE(plano, %s) AS plano,
+                              COALESCE(assinatura_status, 'ACTIVE') AS assinatura_status,
+                              %s::text AS ciclo_cobranca,
+                              %s::int AS valor_plano_centavos,
+                              %s::boolean AS trial_usado,
+                              %s::timestamptz AS trial_inicio_em,
+                              %s::timestamptz AS trial_fim_em,
+                              %s::timestamptz AS assinatura_inicio_em,
+                              %s::timestamptz AS proxima_cobranca_em,
+                              NOW()::timestamptz AS atualizado_assinatura_em
+                    """,
+                    (
+                        payload["plano"],
+                        payload["assinatura_status"],
+                        barbearia_id,
+                        payload["plano"],
+                        payload["ciclo_cobranca"],
+                        payload["valor_plano_centavos"],
+                        payload["trial_usado"],
+                        payload["trial_inicio_em"],
+                        payload["trial_fim_em"],
+                        payload["assinatura_inicio_em"],
+                        payload["proxima_cobranca_em"],
+                    ),
+                )
+                return BarbeariaRepository._coalesce_subscription_fields(item)
+
+        if is_supabase_ready():
+            supabase = get_supabase_client()
+            try:
+                response = (
+                    supabase.table("barbearias")
+                    .update(payload)
+                    .eq("id", barbearia_id)
+                    .execute()
+                )
+                data = response.data or []
+                if data:
+                    return BarbeariaRepository._coalesce_subscription_fields(data[0])
+                return BarbeariaRepository.get_subscription(barbearia_id)
+            except Exception as exc:
+                if not BarbeariaRepository._is_missing_subscription_column_error(exc):
+                    raise
+
+                legacy_payload = {
+                    "plano": payload["plano"],
+                    "assinatura_status": payload["assinatura_status"],
+                }
+                response = (
+                    supabase.table("barbearias")
+                    .update(legacy_payload)
+                    .eq("id", barbearia_id)
+                    .execute()
+                )
+                data = response.data or []
+                if data:
+                    return BarbeariaRepository._coalesce_subscription_fields(data[0])
+                return BarbeariaRepository.get_subscription(barbearia_id)
 
         return None
