@@ -2131,6 +2131,32 @@ const CalendarManagement = ({
       return businessHours.find(item => item.dayOfWeek === weekday);
     };
 
+    const getOperatingWindowForDate = (dateStr: string) => {
+      const config = getBusinessHourForDate(dateStr);
+      const isOpen = config ? config.open : true;
+      if (!isOpen) {
+        return {
+          isOpen: false,
+          opening: '00:00',
+          closing: '00:00',
+          startMinutes: 0,
+          endMinutes: 0,
+          slots: [] as string[],
+        };
+      }
+
+      const opening = config?.start || '09:00';
+      const closing = config?.end || '19:00';
+      return {
+        isOpen: true,
+        opening,
+        closing,
+        startMinutes: toMinutes(opening),
+        endMinutes: toMinutes(closing),
+        slots: buildTimeSlots(opening, closing),
+      };
+    };
+
     const buildTimeSlots = (opening: string, closing: string) => {
       const start = toMinutes(opening);
       const end = toMinutes(closing);
@@ -2144,13 +2170,13 @@ const CalendarManagement = ({
       return slots;
     };
 
-    const selectedDateBusinessHour = getBusinessHourForDate(selectedDate);
-    const isSelectedDateOpen = selectedDateBusinessHour ? selectedDateBusinessHour.open : true;
-    const dayOpening = isSelectedDateOpen ? (selectedDateBusinessHour?.start || '09:00') : '00:00';
-    const dayClosing = isSelectedDateOpen ? (selectedDateBusinessHour?.end || '19:00') : '00:00';
-    const TIME_SLOTS = isSelectedDateOpen ? buildTimeSlots(dayOpening, dayClosing) : [];
-    const dayStartMinutes = toMinutes(dayOpening);
-    const dayEndMinutes = toMinutes(dayClosing);
+    const selectedDateWindow = getOperatingWindowForDate(selectedDate);
+    const isSelectedDateOpen = selectedDateWindow.isOpen;
+    const dayOpening = selectedDateWindow.opening;
+    const dayClosing = selectedDateWindow.closing;
+    const TIME_SLOTS = selectedDateWindow.slots;
+    const dayStartMinutes = selectedDateWindow.startMinutes;
+    const dayEndMinutes = selectedDateWindow.endMinutes;
     const defaultStartTime = TIME_SLOTS[0] || '09:00';
     const defaultEndTime = TIME_SLOTS[1] || toHHMM(toMinutes(defaultStartTime) + 30);
 
@@ -2306,8 +2332,9 @@ const CalendarManagement = ({
     };
 
     const getAppointmentRange = (apt: any): { start: number; end: number } => {
+      const aptWindow = getOperatingWindowForDate(String(apt.date || selectedDate));
       if (apt.status === 'BLOCKED' && apt.isAllDay) {
-        return { start: dayStartMinutes, end: dayEndMinutes };
+        return { start: aptWindow.startMinutes, end: aptWindow.endMinutes };
       }
       const start = toMinutes(apt.time || '09:00');
       if (apt.endTime) {
@@ -2335,6 +2362,90 @@ const CalendarManagement = ({
       });
     };
 
+    const canFitServiceWindow = (candidate: {
+      professionalId: string;
+      date: string;
+      start: number;
+      durationMinutes: number;
+      idToIgnore?: string | null;
+    }): boolean => {
+      const window = getOperatingWindowForDate(candidate.date);
+      if (!window.isOpen || window.slots.length === 0) return false;
+
+      const safeDuration = Math.max(Number(candidate.durationMinutes || 0), 15);
+      const end = candidate.start + safeDuration;
+      if (candidate.start < window.startMinutes || end > window.endMinutes) {
+        return false;
+      }
+
+      if (!candidate.professionalId) return true;
+
+      return !hasLocalConflict({
+        professionalId: candidate.professionalId,
+        date: candidate.date,
+        start: candidate.start,
+        end,
+        idToIgnore: candidate.idToIgnore,
+      });
+    };
+
+    const modalDateWindow = useMemo(
+      () => getOperatingWindowForDate(formData.date || selectedDate),
+      [formData.date, selectedDate, businessHours]
+    );
+
+    const modalTimeSlots = modalDateWindow.slots;
+
+    const selectedServiceDuration = useMemo(() => {
+      if (formData.isBlocked) return 30;
+      const service = services.find((item) => item.id === formData.serviceId);
+      return Math.max(Number(service?.durationMinutes || 30), 15);
+    }, [services, formData.serviceId, formData.isBlocked]);
+
+    const availableStartTimes = useMemo(() => {
+      if (formData.isBlocked) return modalTimeSlots;
+      if (!formData.serviceId) return modalTimeSlots;
+
+      return modalTimeSlots.filter((time) => {
+        const start = toMinutes(time);
+        return canFitServiceWindow({
+          professionalId: formData.professionalId,
+          date: formData.date,
+          start,
+          durationMinutes: selectedServiceDuration,
+          idToIgnore: selectedAptId,
+        });
+      });
+    }, [formData.isBlocked, formData.serviceId, formData.professionalId, formData.date, modalTimeSlots, selectedServiceDuration, selectedAptId]);
+
+    const hasNoServiceWindow = !formData.isBlocked && Boolean(formData.serviceId) && Boolean(formData.professionalId) && availableStartTimes.length === 0;
+
+    const formatStartOptionLabel = (startTime: string) => {
+      if (!formData.serviceId || formData.isBlocked) return startTime;
+      const endTime = toHHMM(toMinutes(startTime) + selectedServiceDuration);
+      return `${startTime} (até ${endTime})`;
+    };
+
+    useEffect(() => {
+      if (!isModalOpen || formData.isBlocked) return;
+      if (!formData.serviceId || !formData.professionalId) return;
+
+      if (availableStartTimes.includes(formData.time)) return;
+
+      const fallbackStart = availableStartTimes[0];
+      if (!fallbackStart) return;
+
+      const fallbackEnd = toHHMM(toMinutes(fallbackStart) + selectedServiceDuration);
+      setFormData((prev) => {
+        if (prev.time === fallbackStart && prev.endTime === fallbackEnd) return prev;
+        return {
+          ...prev,
+          time: fallbackStart,
+          endTime: fallbackEnd,
+        };
+      });
+    }, [isModalOpen, formData.isBlocked, formData.serviceId, formData.professionalId, formData.time, availableStartTimes, selectedServiceDuration]);
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
       if (isSavingAppointment) return;
@@ -2350,12 +2461,14 @@ const CalendarManagement = ({
         return;
       }
 
-      if (!isSelectedDateOpen) {
+      const submitWindow = getOperatingWindowForDate(formData.date);
+
+      if (!submitWindow.isOpen) {
         setAppointmentSubmitError('A barbearia está fechada nesta data conforme o horário de funcionamento.');
         return;
       }
 
-      if (TIME_SLOTS.length === 0) {
+      if (submitWindow.slots.length === 0) {
         setAppointmentSubmitError('Não há horários disponíveis para esta data.');
         return;
       }
@@ -2365,12 +2478,31 @@ const CalendarManagement = ({
         return;
       }
 
-        const service = services.find(s => s.id === formData.serviceId);
-        const candidateStart = formData.isAllDay ? dayStartMinutes : toMinutes(formData.time);
+      const service = services.find(s => s.id === formData.serviceId);
+      if (!formData.isBlocked && !service) {
+        setAppointmentSubmitError('Selecione um serviço válido para continuar.');
+        return;
+      }
+
+        const candidateStart = formData.isAllDay ? submitWindow.startMinutes : toMinutes(formData.time);
       const candidateDuration = formData.isBlocked
-          ? (formData.isAllDay ? (dayEndMinutes - dayStartMinutes) : (toMinutes(formData.endTime) - toMinutes(formData.time)))
+          ? (formData.isAllDay ? (submitWindow.endMinutes - submitWindow.startMinutes) : (toMinutes(formData.endTime) - toMinutes(formData.time)))
         : (service?.durationMinutes || 30);
       const candidateEnd = candidateStart + Math.max(candidateDuration, 15);
+
+      if (!formData.isBlocked) {
+        const canFit = canFitServiceWindow({
+          professionalId: formData.professionalId,
+          date: formData.date,
+          start: candidateStart,
+          durationMinutes: candidateDuration,
+          idToIgnore: selectedAptId,
+        });
+        if (!canFit) {
+          setAppointmentSubmitError('Este serviço não cabe na janela de horário selecionada. Escolha outro horário.');
+          return;
+        }
+      }
 
         if (formData.isBlocked && !formData.isAllDay && toMinutes(formData.endTime) <= toMinutes(formData.time)) {
           setAppointmentSubmitError('No bloqueio, o horário de fim deve ser maior que o início.');
@@ -2636,6 +2768,42 @@ const CalendarManagement = ({
         ? professionals 
         : professionals.filter(p => p.id === selectedProfessionalId);
 
+    const openCreateAppointmentModal = (prefill?: { date?: string; time?: string; professionalId?: string; endTime?: string }) => {
+      if (!canEmployeeCreateAppointment) {
+        setAppointmentSubmitError('Seu perfil não possui permissão para criar agendamentos.');
+        return;
+      }
+
+      const date = prefill?.date || selectedDate;
+      const time = prefill?.time || defaultStartTime;
+      const slotMinutes = toMinutes(time);
+      const nextSlot = TIME_SLOTS.find((slot) => toMinutes(slot) > slotMinutes);
+      const endTime = prefill?.endTime || nextSlot || toHHMM(slotMinutes + 30);
+      const professionalId = prefill?.professionalId || (isEmployeeUser ? employeeProfessionalId : '');
+
+      if (isEmployeeUser && professionalId !== employeeProfessionalId) {
+        setAppointmentSubmitError('Você só pode criar agendamentos para seu perfil.');
+        return;
+      }
+
+      setSelectedAptId(null);
+      setAppointmentSubmitError(null);
+      setFormData({
+        clientId: '',
+        serviceId: '',
+        professionalId,
+        date,
+        time,
+        endTime,
+        isBlocked: false,
+        isAllDay: false,
+        blockReason: ''
+      });
+      setClientSearchTerm('');
+      setIsClientSearchOpen(false);
+      setIsModalOpen(true);
+    };
+
     const weekDays = getWeekDays(selectedDate);
     const monthDays = getMonthDays(selectedDate);
 
@@ -2649,27 +2817,7 @@ const CalendarManagement = ({
                         <div className="flex lg:hidden items-center gap-2">
                             <button className="p-1.5 hover:bg-gray-100 rounded-full text-gray-400"><Bell size={18} /></button>
                             <button 
-                                onClick={() => {
-                                    if (!canEmployeeCreateAppointment) {
-                                      setAppointmentSubmitError('Seu perfil não possui permissão para criar agendamentos.');
-                                      return;
-                                    }
-                                    setSelectedAptId(null);
-                                    setFormData({ 
-                                        clientId: '',
-                                        serviceId: '',
-                                        professionalId: isEmployeeUser ? employeeProfessionalId : '',
-                                        date: selectedDate,
-                                        time: defaultStartTime,
-                                      endTime: defaultEndTime,
-                                        isBlocked: false,
-                                      isAllDay: false,
-                                        blockReason: ''
-                                    });
-                                    setClientSearchTerm('');
-                                    setIsClientSearchOpen(false);
-                                    setIsModalOpen(true);
-                                }}
+                                onClick={() => openCreateAppointmentModal()}
                                 className="p-1.5 bg-blue-600 text-white rounded-full shadow-sm"
                             >
                                 <Plus size={20} />
@@ -2760,23 +2908,7 @@ const CalendarManagement = ({
                         </div>
                         {canEmployeeCreateAppointment && (
                           <button 
-                              onClick={() => {
-                                  setSelectedAptId(null);
-                                  setFormData({ 
-                                      clientId: '',
-                                      serviceId: '',
-                                      professionalId: isEmployeeUser ? employeeProfessionalId : '',
-                                      date: selectedDate,
-                                      time: defaultStartTime,
-                                    endTime: defaultEndTime,
-                                      isBlocked: false,
-                                    isAllDay: false,
-                                      blockReason: ''
-                                  });
-                                  setClientSearchTerm('');
-                                  setIsClientSearchOpen(false);
-                                  setIsModalOpen(true);
-                              }}
+                              onClick={() => openCreateAppointmentModal()}
                               className="hidden sm:flex items-center gap-1 bg-blue-600 text-white px-4 py-2 rounded-lg font-bold text-xs hover:bg-blue-700 transition-colors shadow-md uppercase tracking-wider whitespace-nowrap"
                           >
                               <Plus size={16} /> Adicionar
@@ -2821,7 +2953,17 @@ const CalendarManagement = ({
                                 {filteredProfessionals.map(prof => (
                                     <div key={prof.id} className="w-[150px] flex-shrink-0 border-r relative bg-grid-pattern">
                                         {TIME_SLOTS.map(time => (
-                                            <div key={time} className="h-[80px] border-b border-gray-100"></div>
+                                            <button
+                                              key={time}
+                                              type="button"
+                                              onClick={() => openCreateAppointmentModal({
+                                                date: selectedDate,
+                                                time,
+                                                professionalId: prof.id,
+                                              })}
+                                              className="h-[80px] w-full border-b border-gray-100 hover:bg-blue-50/30 transition-colors cursor-pointer"
+                                              aria-label={`Novo agendamento ${safeFirstName(prof.name)} às ${time}`}
+                                            ></button>
                                         ))}
 
                                         {visibleAgendaAppointments
@@ -3104,7 +3246,7 @@ const CalendarManagement = ({
                                             <select 
                                                 required
                                                 value={formData.serviceId}
-                                                onChange={e => setFormData({...formData, serviceId: e.target.value})}
+                                            onChange={e => setFormData({...formData, serviceId: e.target.value})}
                                                 className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
                                             >
                                                 <option value="">Selecionar Serviço</option>
@@ -3157,18 +3299,21 @@ const CalendarManagement = ({
                                             <label className="block text-sm font-medium text-gray-700 mb-1">Horário</label>
                                             <select 
                                               required
-                                              disabled={TIME_SLOTS.length === 0}
+                                              disabled={availableStartTimes.length === 0}
                                               value={formData.time}
-                                              onChange={e => setFormData({...formData, time: e.target.value})}
+                                              onChange={e => setFormData({...formData, time: e.target.value, endTime: toHHMM(toMinutes(e.target.value) + selectedServiceDuration)})}
                                               className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
                                             >
-                                              {TIME_SLOTS.length === 0 && (
-                                                <option value="">Fechado</option>
+                                              {availableStartTimes.length === 0 && (
+                                                <option value="">Sem horário compatível</option>
                                               )}
-                                              {TIME_SLOTS.map(time => (
-                                                <option key={time} value={time}>{time}</option>
+                                              {availableStartTimes.map(time => (
+                                                <option key={time} value={time}>{formatStartOptionLabel(time)}</option>
                                               ))}
                                             </select>
+                                            {hasNoServiceWindow && (
+                                              <p className="mt-1 text-xs text-amber-700">Nenhuma janela disponível para a duração deste serviço neste profissional/data.</p>
+                                            )}
                                           </div>
                                         ) : (
                                           <div className="grid grid-cols-2 gap-4 col-span-1 sm:col-span-1">
@@ -3176,15 +3321,15 @@ const CalendarManagement = ({
                                               <label className="block text-sm font-medium text-gray-700 mb-1">Início</label>
                                               <select 
                                                 required
-                                                disabled={formData.isAllDay || TIME_SLOTS.length === 0}
+                                                disabled={formData.isAllDay || modalTimeSlots.length === 0}
                                                 value={formData.time}
                                                 onChange={e => setFormData({...formData, time: e.target.value})}
                                                 className={`w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none ${formData.isAllDay ? 'bg-gray-50 text-gray-400' : ''}`}
                                               >
-                                                {TIME_SLOTS.length === 0 && (
+                                                {modalTimeSlots.length === 0 && (
                                                   <option value="">Fechado</option>
                                                 )}
-                                                {TIME_SLOTS.map(time => (
+                                                {modalTimeSlots.map(time => (
                                                   <option key={time} value={time}>{time}</option>
                                                 ))}
                                               </select>
@@ -3193,15 +3338,15 @@ const CalendarManagement = ({
                                               <label className="block text-sm font-medium text-gray-700 mb-1">Fim</label>
                                               <select 
                                                 required
-                                                disabled={formData.isAllDay || TIME_SLOTS.length === 0}
+                                                disabled={formData.isAllDay || modalTimeSlots.length === 0}
                                                 value={formData.endTime}
                                                 onChange={e => setFormData({...formData, endTime: e.target.value})}
                                                 className={`w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none ${formData.isAllDay ? 'bg-gray-50 text-gray-400' : ''}`}
                                               >
-                                                {TIME_SLOTS.length === 0 && (
+                                                {modalTimeSlots.length === 0 && (
                                                   <option value="">Fechado</option>
                                                 )}
-                                                {TIME_SLOTS.map(time => (
+                                                {modalTimeSlots.map(time => (
                                                   <option key={time} value={time}>{time}</option>
                                                 ))}
                                               </select>
@@ -7451,7 +7596,7 @@ type ReportData = {
 };
 
 const ReportsManagement = () => {
-  const { appointments, professionals, services, clients } = useAppContext();
+  const { appointments, professionals, services, clients, brandIdentity } = useAppContext();
   const [selectedReport, setSelectedReport] = useState<ReportKey>('FINANCIAL');
   const [sortBy, setSortBy] = useState<string>('');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
@@ -7694,6 +7839,7 @@ const ReportsManagement = () => {
         .map((client) => {
           const items = filteredAppointments.filter((appointment) => appointment.clientId === client.id);
           const concluded = items.filter((appointment) => completedStatuses.has(normalizeAppointmentStatus(appointment.status)));
+          const cancelled = items.filter((appointment) => normalizeAppointmentStatus(appointment.status) === 'CANCELLED').length;
           const spent = concluded.reduce((sum, appointment) => sum + Number(appointment.totalValue || 0), 0);
           const lastVisit = concluded
             .map((appointment) => String(appointment.date || '').slice(0, 10))
@@ -7710,6 +7856,7 @@ const ReportsManagement = () => {
           return {
             Cliente: client.name,
             Visitas: concluded.length,
+            Cancelamentos: cancelled,
             'Total Gasto': Number(spent.toFixed(2)),
             'Última Visita': lastVisit ? safeDateBr(lastVisit) : 'N/A',
             'Dias sem retorno': churnDays,
@@ -7724,6 +7871,7 @@ const ReportsManagement = () => {
         columns: [
           { key: 'Cliente', label: 'Cliente' },
           { key: 'Visitas', label: 'Visitas' },
+          { key: 'Cancelamentos', label: 'Cancelamentos' },
           { key: 'Total Gasto', label: 'Total Gasto (R$)' },
           { key: 'Última Visita', label: 'Última Visita' },
           { key: 'Dias sem retorno', label: 'Dias sem retorno' },
@@ -7731,6 +7879,7 @@ const ReportsManagement = () => {
         rows,
         cards: [
           { label: 'Clientes ativos', value: `${rows.length}` },
+          { label: 'Cancelamentos no período', value: `${rows.reduce((sum, row) => sum + Number(row.Cancelamentos || 0), 0)}` },
           { label: 'Total gasto', value: `R$ ${safeMoney(rows.reduce((sum, row) => sum + Number(row['Total Gasto'] || 0), 0))}` },
           { label: 'Clientes em risco (45+ dias)', value: `${rows.filter((row) => Number(row['Dias sem retorno'] || 0) >= 45).length}` },
         ],
@@ -7772,7 +7921,17 @@ const ReportsManagement = () => {
     const firstColumn = reportData.columns[0]?.key || '';
     setSortBy(firstColumn);
     setSortDirection('desc');
-  }, [selectedReport, reportData.columns]);
+  }, [selectedReport]);
+
+  useEffect(() => {
+    if (!sortBy) return;
+    const hasCurrentColumn = reportData.columns.some((column) => column.key === sortBy);
+    if (hasCurrentColumn) return;
+
+    const fallbackColumn = reportData.columns[0]?.key || '';
+    setSortBy(fallbackColumn);
+    setSortDirection('desc');
+  }, [reportData.columns, sortBy]);
 
   const parseSortableValue = (value: string | number | undefined) => {
     if (typeof value === 'number') return value;
@@ -7835,47 +7994,257 @@ const ReportsManagement = () => {
     XLSX.writeFile(workbook, fileName);
   };
 
-  const exportToPdf = () => {
+  const exportToPdf = async () => {
     const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
-    const margin = 40;
-    const lineHeight = 14;
-    let y = margin;
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const margin = 28;
+    const footerHeight = 24;
+    const tableBottomLimit = pageHeight - footerHeight - 8;
 
-    doc.setFontSize(16);
-    doc.text(reportData.title, margin, y);
-    y += 18;
+    const moneyLikeRegex = /(R\$|Faturamento|Ticket|Comissão|Total Gasto|Preço Médio|Valor|Receita)/i;
+    const percentLikeRegex = /%|Taxa/i;
+    const brandLogoUrl = brandIdentity.logoUrl || brandIdentity.loginLogoUrl || '';
+    const brandName = brandIdentity.name || 'AgendaFácil';
 
-    doc.setFontSize(10);
-    doc.text(`${reportData.description}`, margin, y);
-    y += 14;
-    doc.text(`Período: ${safeDateBr(dateRange.startDate)} até ${safeDateBr(dateRange.endDate)}`, margin, y);
-    y += 20;
+    const loadLogoDataUrl = async (url: string): Promise<string | null> => {
+      if (!url) return null;
 
-    const header = reportData.columns.map((column) => column.label).join(' | ');
-    doc.setFontSize(9);
-    const headerLines = doc.splitTextToSize(header, 760);
-    headerLines.forEach((line: string) => {
-      doc.text(line, margin, y);
-      y += lineHeight;
-    });
-    y += 4;
+      try {
+        const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+          const element = new Image();
+          element.crossOrigin = 'anonymous';
+          element.onload = () => resolve(element);
+          element.onerror = () => reject(new Error('Falha ao carregar logo.'));
+          element.src = url;
+        });
 
-    sortedRows.forEach((row) => {
-      const text = reportData.columns
-        .map((column) => `${column.label}: ${String(row[column.key] ?? '')}`)
-        .join('   |   ');
+        const canvas = document.createElement('canvas');
+        canvas.width = image.naturalWidth || 1;
+        canvas.height = image.naturalHeight || 1;
+        const context = canvas.getContext('2d');
+        if (!context) return null;
 
-      const wrapped = doc.splitTextToSize(text, 760);
-      wrapped.forEach((line: string) => {
-        if (y > 560) {
-          doc.addPage();
-          y = margin;
-        }
-        doc.text(line, margin, y);
-        y += lineHeight;
+        context.drawImage(image, 0, 0);
+        return canvas.toDataURL('image/png');
+      } catch {
+        return null;
+      }
+    };
+
+    const logoDataUrl = await loadLogoDataUrl(brandLogoUrl);
+
+    const formatCellValue = (columnLabel: string, value: string | number | undefined) => {
+      if (value === null || value === undefined || value === '') return '-';
+      if (typeof value === 'number') {
+        if (percentLikeRegex.test(columnLabel)) return value.toFixed(1);
+        if (moneyLikeRegex.test(columnLabel)) return `R$ ${safeMoney(value)}`;
+        if (Number.isInteger(value)) return String(value);
+        return value.toFixed(2);
+      }
+      return String(value);
+    };
+
+    const isNumericColumn = (columnKey: string, columnLabel: string) => {
+      if (moneyLikeRegex.test(columnLabel) || percentLikeRegex.test(columnLabel)) return true;
+      return sortedRows.some((row) => typeof row[columnKey] === 'number');
+    };
+
+    const drawHeaderBlock = () => {
+      const headerHeight = 64;
+      doc.setFillColor(37, 99, 235);
+      doc.rect(0, 0, pageWidth, headerHeight, 'F');
+
+      doc.setTextColor(255, 255, 255);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(15);
+      doc.text(reportData.title, margin, 26);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(10);
+      doc.text(reportData.description, margin, 42, { maxWidth: pageWidth - margin * 2 });
+      doc.text(`Período: ${safeDateBr(dateRange.startDate)} até ${safeDateBr(dateRange.endDate)}`, margin, 56);
+
+      const logoBoxSize = 44;
+      const logoBoxX = pageWidth - margin - logoBoxSize;
+      const logoBoxY = 10;
+
+      if (logoDataUrl) {
+        doc.setFillColor(255, 255, 255);
+        doc.roundedRect(logoBoxX, logoBoxY, logoBoxSize, logoBoxSize, 6, 6, 'F');
+        doc.addImage(logoDataUrl, 'PNG', logoBoxX + 3, logoBoxY + 3, logoBoxSize - 6, logoBoxSize - 6);
+      }
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(10);
+      doc.text(brandName, pageWidth - margin - (logoDataUrl ? logoBoxSize + 8 : 0), 24, { align: 'right' });
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9);
+      doc.text(`Gerado em ${safeDateBr(new Date().toISOString().slice(0, 10))}`, pageWidth - margin - (logoDataUrl ? logoBoxSize + 8 : 0), 39, { align: 'right' });
+
+      doc.setTextColor(31, 41, 55);
+      return headerHeight + 14;
+    };
+
+    const drawCards = (startY: number) => {
+      if (!reportData.cards.length) return startY;
+
+      const cardsPerRow = 3;
+      const gap = 10;
+      const cardHeight = 46;
+      const cardWidth = (pageWidth - margin * 2 - gap * (cardsPerRow - 1)) / cardsPerRow;
+      let y = startY;
+
+      reportData.cards.forEach((card, index) => {
+        const col = index % cardsPerRow;
+        const row = Math.floor(index / cardsPerRow);
+        const x = margin + col * (cardWidth + gap);
+        y = startY + row * (cardHeight + gap);
+
+        doc.setFillColor(248, 250, 252);
+        doc.setDrawColor(226, 232, 240);
+        doc.roundedRect(x, y, cardWidth, cardHeight, 6, 6, 'FD');
+
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(100, 116, 139);
+        doc.setFontSize(8);
+        doc.text(card.label, x + 8, y + 14, { maxWidth: cardWidth - 16 });
+
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(30, 41, 59);
+        doc.setFontSize(11);
+        doc.text(card.value, x + 8, y + 31, { maxWidth: cardWidth - 16 });
       });
-      y += 2;
+
+      const rowsUsed = Math.ceil(reportData.cards.length / cardsPerRow);
+      return startY + rowsUsed * (cardHeight + gap) + 8;
+    };
+
+    const tableHeaders = reportData.columns.map((column) => column.label);
+    const tableBody = sortedRows.map((row) =>
+      reportData.columns.map((column) => formatCellValue(column.label, row[column.key]))
+    );
+
+    const colCount = Math.max(reportData.columns.length, 1);
+    const tableWidth = pageWidth - margin * 2;
+    const baseWidth = tableWidth / colCount;
+    const colWidths = reportData.columns.map((column) => {
+      if (isNumericColumn(column.key, column.label)) return Math.max(baseWidth * 0.9, 86);
+      return Math.max(baseWidth * 1.05, 110);
     });
+
+    const totalRawWidth = colWidths.reduce((sum, value) => sum + value, 0);
+    const scale = totalRawWidth > 0 ? tableWidth / totalRawWidth : 1;
+    const normalizedWidths = colWidths.map((width) => width * scale);
+
+    let y = drawHeaderBlock();
+    y = drawCards(y);
+
+    const drawTableHeader = () => {
+      const headerHeight = 24;
+      doc.setFillColor(241, 245, 249);
+      doc.setDrawColor(203, 213, 225);
+      doc.rect(margin, y, tableWidth, headerHeight, 'FD');
+
+      let x = margin;
+      reportData.columns.forEach((column, index) => {
+        const width = normalizedWidths[index] || baseWidth;
+        if (index > 0) {
+          doc.setDrawColor(226, 232, 240);
+          doc.line(x, y, x, y + headerHeight);
+        }
+
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(51, 65, 85);
+        doc.setFontSize(9);
+        const headerText = doc.splitTextToSize(column.label, width - 10);
+        doc.text(headerText, x + 5, y + 15, { maxWidth: width - 10 });
+        x += width;
+      });
+
+      y += headerHeight;
+    };
+
+    const drawFooter = () => {
+      const pages = doc.getNumberOfPages();
+      for (let page = 1; page <= pages; page += 1) {
+        doc.setPage(page);
+        doc.setDrawColor(226, 232, 240);
+        doc.line(margin, pageHeight - footerHeight, pageWidth - margin, pageHeight - footerHeight);
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(8);
+        doc.setTextColor(100, 116, 139);
+        doc.text(`Relatório ${reportData.title}`, margin, pageHeight - 9);
+        doc.text(`Página ${page} de ${pages}`, pageWidth - margin, pageHeight - 9, { align: 'right' });
+      }
+    };
+
+    drawTableHeader();
+
+    tableBody.forEach((row, rowIndex) => {
+      const lineHeights = row.map((cellText, cellIndex) => {
+        const width = normalizedWidths[cellIndex] || baseWidth;
+        const wrapped = doc.splitTextToSize(cellText, width - 10);
+        return Math.max(1, wrapped.length);
+      });
+      const rowHeight = Math.max(...lineHeights) * 12 + 8;
+
+      if (y + rowHeight > tableBottomLimit) {
+        doc.addPage();
+        y = drawHeaderBlock();
+        drawTableHeader();
+      }
+
+      if (rowIndex % 2 === 0) {
+        doc.setFillColor(250, 252, 255);
+        doc.rect(margin, y, tableWidth, rowHeight, 'F');
+      }
+
+      doc.setDrawColor(226, 232, 240);
+      doc.rect(margin, y, tableWidth, rowHeight);
+
+      let x = margin;
+      row.forEach((cellText, colIndex) => {
+        const width = normalizedWidths[colIndex] || baseWidth;
+        if (colIndex > 0) {
+          doc.setDrawColor(241, 245, 249);
+          doc.line(x, y, x, y + rowHeight);
+        }
+
+        const isNumeric = isNumericColumn(reportData.columns[colIndex]?.key || '', reportData.columns[colIndex]?.label || '');
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(51, 65, 85);
+        doc.setFontSize(9);
+        const wrapped = doc.splitTextToSize(cellText, width - 10);
+        if (isNumeric) {
+          doc.text(wrapped, x + width - 6, y + 14, { align: 'right', maxWidth: width - 10 });
+        } else {
+          doc.text(wrapped, x + 5, y + 14, { maxWidth: width - 10 });
+        }
+
+        x += width;
+      });
+
+      y += rowHeight;
+    });
+
+    if (tableBody.length === 0) {
+      const emptyHeight = 34;
+      if (y + emptyHeight > tableBottomLimit) {
+        doc.addPage();
+        y = drawHeaderBlock();
+        drawTableHeader();
+      }
+      doc.setDrawColor(226, 232, 240);
+      doc.rect(margin, y, tableWidth, emptyHeight);
+      doc.setFont('helvetica', 'italic');
+      doc.setFontSize(10);
+      doc.setTextColor(100, 116, 139);
+      doc.text('Nenhum dado encontrado para os filtros selecionados.', margin + tableWidth / 2, y + 22, { align: 'center' });
+      y += emptyHeight;
+    }
+
+    drawFooter();
 
     const fileName = `relatorio_${selectedReport.toLowerCase()}_${dateRange.startDate}_${dateRange.endDate}.pdf`;
     doc.save(fileName);

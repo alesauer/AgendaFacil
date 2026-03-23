@@ -86,6 +86,7 @@ def create_app():
     _normalize_runtime_network(app.config)
     allowed_origins = [
         "http://localhost:3000",
+        "http://172.18.80.1:3000",
         "http://127.0.0.1:3000",
     ]
 
