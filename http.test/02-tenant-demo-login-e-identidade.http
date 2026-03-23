@@ -1,0 +1,20 @@
+@baseUrl = http://127.0.0.1:5000
+@tenantSlug = demo
+@adminPhone = 11999999999
+@adminPassword = admin123
+
+### Login admin demo
+# @name loginBeta
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+X-Barbearia-Slug: {{tenantSlug}}
+
+{
+  "telefone": "{{adminPhone}}",
+  "senha": "{{adminPassword}}"
+}
+
+### Identidade do tenant demo (usa token do login acima)
+GET {{baseUrl}}/barbearia/identidade
+Authorization: Bearer {{loginBeta.response.body.data.token}}
+X-Barbearia-Slug: {{tenantSlug}}

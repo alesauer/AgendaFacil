@@ -718,6 +718,13 @@ const DashboardHome = ({ onViewAllRecent }: { onViewAllRecent: () => void }) => 
   );
 };
 
+type AgendaNavigationPayload = {
+  date: string;
+  viewMode: 'DAY' | 'WEEK' | 'MONTH';
+  appointmentId?: string;
+  openDetails?: boolean;
+};
+
 const ServicesManagement = () => {
   const { services, deleteService, addService, updateService, categories } = useAppContext();
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -2050,7 +2057,7 @@ const ClientsManagement = () => {
 const CalendarManagement = ({
   navigationRequest,
 }: {
-  navigationRequest?: { date: string; viewMode: 'DAY' | 'WEEK' | 'MONTH'; nonce: number } | null;
+  navigationRequest?: (AgendaNavigationPayload & { nonce: number }) | null;
 }) => {
   const { user, appointments, services, professionals, clients, addAppointment, updateAppointment, transitionAppointmentStatus, deleteAppointment, businessHours, brandIdentity } = useAppContext();
     const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
@@ -2084,7 +2091,9 @@ const CalendarManagement = ({
     });
       const dayViewScrollRef = useRef<HTMLDivElement | null>(null);
 
-    const selectedApt = appointments.find(a => a.id === selectedAptId);
+    const isCancelledAppointment = (apt: Appointment) => normalizeAppointmentStatus(apt.status) === 'CANCELLED';
+    const visibleAgendaAppointments = appointments.filter(apt => !isCancelledAppointment(apt));
+    const selectedApt = visibleAgendaAppointments.find(a => a.id === selectedAptId);
     const isEmployeeUser = user?.role === 'EMPLOYEE';
     const allowEmployeeConfirmAppointment = Boolean(brandIdentity.allowEmployeeConfirmAppointment);
     const allowEmployeeCreateAppointment = brandIdentity.allowEmployeeCreateAppointment === undefined ? true : Boolean(brandIdentity.allowEmployeeCreateAppointment);
@@ -2168,8 +2177,8 @@ const CalendarManagement = ({
       setSelectedDate(navigationRequest.date);
       setViewMode(navigationRequest.viewMode);
       setIsModalOpen(false);
-      setIsDetailsModalOpen(false);
-      setSelectedAptId(null);
+      setSelectedAptId(navigationRequest.appointmentId || null);
+      setIsDetailsModalOpen(Boolean(navigationRequest.openDetails && navigationRequest.appointmentId));
     }, [navigationRequest]);
 
     useEffect(() => {
@@ -2319,7 +2328,7 @@ const CalendarManagement = ({
     }): boolean => {
       return appointments.some(apt => {
         if (apt.professionalId !== candidate.professionalId || apt.date !== candidate.date) return false;
-        if (apt.status === 'CANCELLED') return false;
+        if (isCancelledAppointment(apt)) return false;
         if (candidate.idToIgnore && apt.id === candidate.idToIgnore) return false;
         const range = getAppointmentRange(apt);
         return candidate.start < range.end && range.start < candidate.end;
@@ -2815,7 +2824,7 @@ const CalendarManagement = ({
                                             <div key={time} className="h-[80px] border-b border-gray-100"></div>
                                         ))}
 
-                                        {appointments
+                                        {visibleAgendaAppointments
                                             .filter(apt => apt.date === selectedDate && apt.professionalId === prof.id)
                                             .map(apt => {
                                                 const service = services.find(s => s.id === apt.serviceId);
@@ -2897,7 +2906,7 @@ const CalendarManagement = ({
                                             <div key={time} className="h-[80px] border-b border-gray-100"></div>
                                         ))}
 
-                                        {appointments
+                                        {visibleAgendaAppointments
                                             .filter(apt => apt.date === day && (selectedProfessionalId === 'ALL' || apt.professionalId === selectedProfessionalId))
                                             .map(apt => {
                                                 const service = services.find(s => s.id === apt.serviceId);
@@ -2949,7 +2958,7 @@ const CalendarManagement = ({
                                 const d = new Date(day + 'T12:00:00');
                                 const isCurrentMonth = d.getMonth() === new Date(selectedDate + 'T12:00:00').getMonth();
                                 const isToday = day === new Date().toISOString().split('T')[0];
-                                const dayAppointments = appointments.filter(apt => apt.date === day);
+                                const dayAppointments = visibleAgendaAppointments.filter(apt => apt.date === day);
                                 
                                 return (
                                     <div
@@ -6858,6 +6867,500 @@ const FinanceManagement = () => {
   );
 };
 
+type AppointmentCenterPeriod = 'TODAY' | 'LAST_7_DAYS' | 'LAST_30_DAYS' | 'THIS_MONTH' | 'CUSTOM';
+
+const AppointmentCenterManagement = ({
+  onOpenAgenda,
+}: {
+  onOpenAgenda: (payload: AgendaNavigationPayload) => void;
+}) => {
+  const { user, appointments, professionals, services, clients, transitionAppointmentStatus, brandIdentity } = useAppContext();
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState<string>('ALL');
+  const [professionalFilter, setProfessionalFilter] = useState<string>('ALL');
+  const [period, setPeriod] = useState<AppointmentCenterPeriod>('LAST_30_DAYS');
+  const [customStartDate, setCustomStartDate] = useState('');
+  const [customEndDate, setCustomEndDate] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [isTransitioning, setIsTransitioning] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const PAGE_SIZE = 12;
+
+  const todayIso = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const isEmployeeUser = user?.role === 'EMPLOYEE';
+  const allowEmployeeConfirmAppointment = Boolean(brandIdentity.allowEmployeeConfirmAppointment);
+
+  useEffect(() => {
+    if (!customEndDate) {
+      setCustomEndDate(todayIso);
+    }
+    if (!customStartDate) {
+      const d = new Date();
+      d.setDate(d.getDate() - 29);
+      setCustomStartDate(d.toISOString().slice(0, 10));
+    }
+  }, [customEndDate, customStartDate, todayIso]);
+
+  const dateRange = useMemo(() => {
+    const end = new Date();
+    end.setHours(0, 0, 0, 0);
+    const start = new Date(end);
+
+    if (period === 'TODAY') {
+      const same = end.toISOString().slice(0, 10);
+      return { startDate: same, endDate: same };
+    }
+
+    if (period === 'LAST_7_DAYS') {
+      start.setDate(start.getDate() - 6);
+      return { startDate: start.toISOString().slice(0, 10), endDate: end.toISOString().slice(0, 10) };
+    }
+
+    if (period === 'LAST_30_DAYS') {
+      start.setDate(start.getDate() - 29);
+      return { startDate: start.toISOString().slice(0, 10), endDate: end.toISOString().slice(0, 10) };
+    }
+
+    if (period === 'THIS_MONTH') {
+      const monthStart = new Date(end.getFullYear(), end.getMonth(), 1);
+      return { startDate: monthStart.toISOString().slice(0, 10), endDate: end.toISOString().slice(0, 10) };
+    }
+
+    return {
+      startDate: customStartDate || end.toISOString().slice(0, 10),
+      endDate: customEndDate || end.toISOString().slice(0, 10),
+    };
+  }, [period, customStartDate, customEndDate]);
+
+  const professionalsById = useMemo(() => {
+    const byId = new Map<string, string>();
+    professionals.forEach((professional) => byId.set(professional.id, professional.name));
+    return byId;
+  }, [professionals]);
+
+  const servicesById = useMemo(() => {
+    const byId = new Map<string, string>();
+    services.forEach((service) => byId.set(service.id, service.title));
+    return byId;
+  }, [services]);
+
+  const clientsById = useMemo(() => {
+    const byId = new Map<string, { name: string; phone: string }>();
+    clients.forEach((client) => byId.set(client.id, { name: client.name, phone: client.phone }));
+    return byId;
+  }, [clients]);
+
+  const canTransitionStatus = (currentStatus: string, targetStatus: Appointment['status']) => {
+    const normalizedCurrent = normalizeAppointmentStatus(currentStatus);
+    const transitions: Record<string, Appointment['status'][]> = {
+      PENDING_PAYMENT: ['CONFIRMED', 'CANCELLED', 'NO_SHOW', 'COMPLETED_FIN'],
+      CONFIRMED: ['IN_PROGRESS', 'CANCELLED', 'REOPENED', 'NO_SHOW', 'COMPLETED_FIN'],
+      IN_PROGRESS: ['COMPLETED_OP', 'CANCELLED', 'NO_SHOW', 'COMPLETED_FIN'],
+      COMPLETED_OP: ['COMPLETED_FIN', 'REOPENED'],
+      COMPLETED_FIN: ['REOPENED'],
+      REOPENED: ['IN_PROGRESS', 'CANCELLED', 'NO_SHOW', 'COMPLETED_FIN'],
+      NO_SHOW: ['REOPENED'],
+    };
+    return (transitions[normalizedCurrent] || []).includes(targetStatus);
+  };
+
+  const filteredAppointments = useMemo(() => {
+    const query = searchTerm.trim().toLowerCase();
+
+    const rows = appointments.filter((appointment) => {
+      if (isEmployeeUser && appointment.professionalId !== user?.id) {
+        return false;
+      }
+
+      const date = String(appointment.date || '').slice(0, 10);
+      if (date < dateRange.startDate || date > dateRange.endDate) {
+        return false;
+      }
+
+      const normalizedStatus = normalizeAppointmentStatus(appointment.status);
+      if (statusFilter !== 'ALL' && normalizedStatus !== statusFilter) {
+        return false;
+      }
+
+      if (professionalFilter !== 'ALL' && appointment.professionalId !== professionalFilter) {
+        return false;
+      }
+
+      if (!query) return true;
+
+      const client = clientsById.get(appointment.clientId);
+      const professionalName = professionalsById.get(appointment.professionalId) || '';
+      const serviceName = servicesById.get(appointment.serviceId) || '';
+      const statusLabel = getAppointmentStatusLabel(appointment.status);
+      const dateBr = safeDateBr(appointment.date);
+      const haystack = [
+        client?.name || '',
+        client?.phone || '',
+        professionalName,
+        serviceName,
+        statusLabel,
+        appointment.date || '',
+        dateBr,
+        appointment.time || '',
+      ].join(' ').toLowerCase();
+
+      return haystack.includes(query);
+    });
+
+    rows.sort((left, right) => {
+      const leftKey = `${left.date || ''}T${left.time || '00:00'}`;
+      const rightKey = `${right.date || ''}T${right.time || '00:00'}`;
+      return rightKey.localeCompare(leftKey);
+    });
+
+    return rows;
+  }, [appointments, searchTerm, statusFilter, professionalFilter, dateRange, isEmployeeUser, user?.id, clientsById, professionalsById, servicesById]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredAppointments.length / PAGE_SIZE));
+  const paginatedAppointments = useMemo(() => {
+    const start = (currentPage - 1) * PAGE_SIZE;
+    return filteredAppointments.slice(start, start + PAGE_SIZE);
+  }, [filteredAppointments, currentPage]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, statusFilter, professionalFilter, period, customStartDate, customEndDate]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
+
+  const handleTransition = async (appointment: Appointment, target: Appointment['status']) => {
+    if (isTransitioning) return;
+    setActionError(null);
+
+    if (isEmployeeUser && appointment.professionalId !== user?.id) {
+      setActionError('Você só pode gerenciar seus próprios agendamentos.');
+      return;
+    }
+
+    if (!canTransitionStatus(appointment.status, target)) {
+      setActionError('Transição de status inválida para este agendamento.');
+      return;
+    }
+
+    if (target === 'COMPLETED_FIN' && isEmployeeUser && !allowEmployeeConfirmAppointment) {
+      setActionError('Seu perfil não possui permissão para concluir financeiro.');
+      return;
+    }
+
+    const needsConfirm = target === 'CANCELLED' || target === 'REOPENED' || target === 'COMPLETED_FIN';
+    if (needsConfirm && !window.confirm(`Confirmar ação: ${getAppointmentStatusLabel(target)}?`)) {
+      return;
+    }
+
+    const options = target === 'COMPLETED_FIN'
+      ? {
+          paymentMethod: appointment.paymentMethod || 'PIX',
+          totalValue: Number(appointment.totalValue || 0),
+          observation: 'Concluído pela Central de Agendamentos',
+        }
+      : target === 'CANCELLED'
+        ? { reason: 'Cancelado pela Central de Agendamentos' }
+        : target === 'REOPENED'
+          ? { reason: 'Reaberto pela Central de Agendamentos' }
+          : {};
+
+    setIsTransitioning(true);
+    const result = await transitionAppointmentStatus(appointment.id, target, options);
+    setIsTransitioning(false);
+
+    if (!result.success) {
+      setActionError(result.error || 'Não foi possível atualizar o status.');
+    }
+  };
+
+  const openInAgenda = (appointment: Appointment, openDetails = false) => {
+    onOpenAgenda({
+      date: appointment.date,
+      viewMode: 'DAY',
+      appointmentId: appointment.id,
+      openDetails,
+    });
+  };
+
+  const statusOptions = [
+    'ALL',
+    'PENDING_PAYMENT',
+    'CONFIRMED',
+    'IN_PROGRESS',
+    'COMPLETED_OP',
+    'COMPLETED_FIN',
+    'REOPENED',
+    'NO_SHOW',
+    'CANCELLED',
+    'BLOCKED',
+  ];
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-2xl font-bold text-gray-800">Central de Agendamentos</h2>
+        <p className="text-sm text-gray-500">Busca, filtros avançados e ações operacionais em uma única tela.</p>
+      </div>
+
+      <div className="bg-white rounded-xl shadow-sm p-4 md:p-5 border border-gray-100 space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+          <div className="xl:col-span-2">
+            <label className="block text-xs font-semibold text-gray-600 mb-1">Buscar</label>
+            <div className="relative">
+              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={(event) => setSearchTerm(event.target.value)}
+                placeholder="Cliente, telefone, profissional, serviço, data ou horário"
+                className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1">Status</label>
+            <select
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value)}
+              className="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm"
+            >
+              {statusOptions.map((status) => (
+                <option key={status} value={status}>{status === 'ALL' ? 'Todos' : getAppointmentStatusLabel(status)}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1">Profissional</label>
+            <select
+              value={professionalFilter}
+              onChange={(event) => setProfessionalFilter(event.target.value)}
+              className="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm"
+            >
+              <option value="ALL">Todos</option>
+              {professionals
+                .filter((professional) => !isEmployeeUser || professional.id === user?.id)
+                .map((professional) => (
+                  <option key={professional.id} value={professional.id}>{professional.name}</option>
+                ))}
+            </select>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1">Período</label>
+            <select
+              value={period}
+              onChange={(event) => setPeriod(event.target.value as AppointmentCenterPeriod)}
+              className="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm"
+            >
+              <option value="TODAY">Hoje</option>
+              <option value="LAST_7_DAYS">Últimos 7 dias</option>
+              <option value="LAST_30_DAYS">Últimos 30 dias</option>
+              <option value="THIS_MONTH">Este mês</option>
+              <option value="CUSTOM">Personalizado</option>
+            </select>
+          </div>
+          {period === 'CUSTOM' && (
+            <>
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Data inicial</label>
+                <input
+                  type="date"
+                  value={customStartDate}
+                  onChange={(event) => setCustomStartDate(event.target.value)}
+                  max={customEndDate || undefined}
+                  className="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Data final</label>
+                <input
+                  type="date"
+                  value={customEndDate}
+                  onChange={(event) => setCustomEndDate(event.target.value)}
+                  min={customStartDate || undefined}
+                  className="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm"
+                />
+              </div>
+            </>
+          )}
+        </div>
+
+        {actionError && (
+          <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            {actionError}
+          </div>
+        )}
+      </div>
+
+      <div className="bg-white rounded-xl shadow-sm overflow-hidden border border-gray-100">
+        <div className="px-6 py-4 border-b bg-gray-50/60 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+          <h3 className="font-bold text-gray-800">Agendamentos</h3>
+          <span className="text-sm text-gray-500">{filteredAppointments.length} registro(s)</span>
+        </div>
+
+        <div className="hidden md:block overflow-x-auto">
+          <table className="w-full text-sm text-left">
+            <thead className="bg-gray-50 text-gray-600 font-medium">
+              <tr>
+                <th className="px-6 py-3">Data / Hora</th>
+                <th className="px-6 py-3">Cliente</th>
+                <th className="px-6 py-3">Serviço</th>
+                <th className="px-6 py-3">Profissional</th>
+                <th className="px-6 py-3">Status</th>
+                <th className="px-6 py-3">Valor</th>
+                <th className="px-6 py-3 text-right">Ações</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {paginatedAppointments.map((appointment) => {
+                const status = normalizeAppointmentStatus(appointment.status);
+                const canCompleteFin = canTransitionStatus(status, 'COMPLETED_FIN') && (!isEmployeeUser || allowEmployeeConfirmAppointment);
+                const canCancel = canTransitionStatus(status, 'CANCELLED');
+                const canReopen = canTransitionStatus(status, 'REOPENED') && !isEmployeeUser;
+                const clientInfo = clientsById.get(appointment.clientId);
+
+                return (
+                  <tr key={appointment.id} className="hover:bg-gray-50">
+                    <td className="px-6 py-3 whitespace-nowrap">
+                      <div className="font-medium text-gray-800">{safeDateBr(appointment.date)}</div>
+                      <div className="text-xs text-gray-500">{appointment.time}{appointment.endTime ? ` - ${appointment.endTime}` : ''}</div>
+                    </td>
+                    <td className="px-6 py-3">
+                      <div className="font-medium text-gray-800">{status === 'BLOCKED' ? 'Horário bloqueado' : (clientInfo?.name || 'Cliente removido')}</div>
+                      <div className="text-xs text-gray-500">{status === 'BLOCKED' ? (appointment.blockReason || 'Indisponível para clientes') : (clientInfo?.phone || '')}</div>
+                    </td>
+                    <td className="px-6 py-3">{status === 'BLOCKED' ? 'Bloqueio de agenda' : (servicesById.get(appointment.serviceId) || 'Serviço removido')}</td>
+                    <td className="px-6 py-3">{professionalsById.get(appointment.professionalId) || 'Profissional removido'}</td>
+                    <td className="px-6 py-3">
+                      <span className={`text-xs px-2 py-1 rounded-full ${getAppointmentStatusChipClass(status)}`}>
+                        {getAppointmentStatusLabel(status)}
+                      </span>
+                    </td>
+                    <td className="px-6 py-3">R$ {safeMoney(appointment.totalValue)}</td>
+                    <td className="px-6 py-3">
+                      <div className="flex justify-end gap-2">
+                        <button
+                          onClick={() => openInAgenda(appointment, true)}
+                          className="px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs hover:bg-gray-50"
+                        >
+                          Editar
+                        </button>
+                        <button
+                          onClick={() => openInAgenda(appointment, false)}
+                          className="px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs hover:bg-gray-50"
+                        >
+                          Agenda
+                        </button>
+                        <button
+                          onClick={() => handleTransition(appointment, 'COMPLETED_FIN')}
+                          disabled={!canCompleteFin || isTransitioning}
+                          className="px-2.5 py-1.5 bg-green-600 text-white rounded-lg text-xs hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          Confirmar
+                        </button>
+                        <button
+                          onClick={() => handleTransition(appointment, 'CANCELLED')}
+                          disabled={!canCancel || isTransitioning}
+                          className="px-2.5 py-1.5 bg-red-600 text-white rounded-lg text-xs hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          Cancelar
+                        </button>
+                        <button
+                          onClick={() => handleTransition(appointment, 'REOPENED')}
+                          disabled={!canReopen || isTransitioning}
+                          className="px-2.5 py-1.5 bg-orange-500 text-white rounded-lg text-xs hover:bg-orange-600 disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          Reabrir
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+
+              {paginatedAppointments.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="px-6 py-8 text-center text-gray-500">Nenhum agendamento encontrado.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="md:hidden divide-y">
+          {paginatedAppointments.map((appointment) => {
+            const status = normalizeAppointmentStatus(appointment.status);
+            const canCompleteFin = canTransitionStatus(status, 'COMPLETED_FIN') && (!isEmployeeUser || allowEmployeeConfirmAppointment);
+            const canCancel = canTransitionStatus(status, 'CANCELLED');
+            const canReopen = canTransitionStatus(status, 'REOPENED') && !isEmployeeUser;
+            const clientInfo = clientsById.get(appointment.clientId);
+
+            return (
+              <div key={appointment.id} className="p-4 space-y-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <p className="font-semibold text-gray-800">{status === 'BLOCKED' ? 'Horário bloqueado' : (clientInfo?.name || 'Cliente removido')}</p>
+                    <p className="text-xs text-gray-500">{safeDateBr(appointment.date)} • {appointment.time}</p>
+                  </div>
+                  <span className={`text-xs px-2 py-1 rounded-full ${getAppointmentStatusChipClass(status)}`}>
+                    {getAppointmentStatusLabel(status)}
+                  </span>
+                </div>
+                <div className="text-xs text-gray-600 space-y-1">
+                  <p><span className="font-medium">Profissional:</span> {professionalsById.get(appointment.professionalId) || 'Profissional removido'}</p>
+                  <p><span className="font-medium">Serviço:</span> {status === 'BLOCKED' ? 'Bloqueio de agenda' : (servicesById.get(appointment.serviceId) || 'Serviço removido')}</p>
+                  <p><span className="font-medium">Valor:</span> R$ {safeMoney(appointment.totalValue)}</p>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <button onClick={() => openInAgenda(appointment, true)} className="px-3 py-2 border border-gray-200 rounded-lg text-xs">Editar</button>
+                  <button onClick={() => openInAgenda(appointment, false)} className="px-3 py-2 border border-gray-200 rounded-lg text-xs">Agenda</button>
+                  <button onClick={() => handleTransition(appointment, 'COMPLETED_FIN')} disabled={!canCompleteFin || isTransitioning} className="px-3 py-2 bg-green-600 text-white rounded-lg text-xs disabled:opacity-40">Confirmar</button>
+                  <button onClick={() => handleTransition(appointment, 'CANCELLED')} disabled={!canCancel || isTransitioning} className="px-3 py-2 bg-red-600 text-white rounded-lg text-xs disabled:opacity-40">Cancelar</button>
+                  <button onClick={() => handleTransition(appointment, 'REOPENED')} disabled={!canReopen || isTransitioning} className="px-3 py-2 bg-orange-500 text-white rounded-lg text-xs disabled:opacity-40 col-span-2">Reabrir</button>
+                </div>
+              </div>
+            );
+          })}
+
+          {paginatedAppointments.length === 0 && (
+            <div className="px-6 py-8 text-center text-gray-500 text-sm">Nenhum agendamento encontrado.</div>
+          )}
+        </div>
+
+        {filteredAppointments.length > 0 && (
+          <div className="px-6 py-4 border-t bg-gray-50/60 flex flex-col md:flex-row items-center justify-between gap-3">
+            <span className="text-sm text-gray-600">Página {currentPage} de {totalPages}</span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                disabled={currentPage === 1}
+                className="px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Anterior
+              </button>
+              <button
+                onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                disabled={currentPage === totalPages}
+                className="px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Próxima
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 const CategoryModal = ({ isOpen, onClose, onSave, categoryToEdit }: { isOpen: boolean, onClose: () => void, onSave: (data: any) => void, categoryToEdit?: any }) => {
   const [formData, setFormData] = useState({
     name: '',
@@ -7548,18 +8051,14 @@ export const AdminDashboard: React.FC = () => {
   const canEmployeeViewReports = user?.role === 'EMPLOYEE' && Boolean(brandIdentity.allowEmployeeViewReports);
   const canAccessFinanceTab = isAdminUser || canEmployeeViewFinance;
   const canAccessReportsTab = isAdminUser || canEmployeeViewReports;
-  const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'USERS' | 'AGENDA' | 'FINANCE' | 'REPORTS' | 'SETTINGS'>(isAdminUser ? 'DASHBOARD' : 'AGENDA');
+  const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'USERS' | 'AGENDA' | 'APPOINTMENT_CENTER' | 'FINANCE' | 'REPORTS' | 'SETTINGS'>(isAdminUser ? 'DASHBOARD' : 'AGENDA');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [agendaNavigationRequest, setAgendaNavigationRequest] = useState<{
-    date: string;
-    viewMode: 'DAY' | 'WEEK' | 'MONTH';
-    nonce: number;
-  } | null>(null);
+  const [agendaNavigationRequest, setAgendaNavigationRequest] = useState<(AgendaNavigationPayload & { nonce: number }) | null>(null);
 
   const toggleMobileMenu = () => setIsMobileMenuOpen(!isMobileMenuOpen);
 
   useEffect(() => {
-    if (!isAdminUser && activeTab !== 'AGENDA' && activeTab !== 'FINANCE' && activeTab !== 'REPORTS') {
+    if (!isAdminUser && activeTab !== 'AGENDA' && activeTab !== 'APPOINTMENT_CENTER' && activeTab !== 'FINANCE' && activeTab !== 'REPORTS') {
       setActiveTab('AGENDA');
     }
     if (!canAccessFinanceTab && activeTab === 'FINANCE') {
@@ -7570,23 +8069,29 @@ export const AdminDashboard: React.FC = () => {
     }
   }, [isAdminUser, canAccessFinanceTab, canAccessReportsTab, activeTab]);
 
-  const handleTabChange = (tab: 'DASHBOARD' | 'USERS' | 'AGENDA' | 'FINANCE' | 'REPORTS' | 'SETTINGS') => {
-    if (!isAdminUser && tab !== 'AGENDA' && !(tab === 'FINANCE' && canEmployeeViewFinance) && !(tab === 'REPORTS' && canEmployeeViewReports)) {
+  const handleTabChange = (tab: 'DASHBOARD' | 'USERS' | 'AGENDA' | 'APPOINTMENT_CENTER' | 'FINANCE' | 'REPORTS' | 'SETTINGS') => {
+    if (!isAdminUser && tab !== 'AGENDA' && tab !== 'APPOINTMENT_CENTER' && !(tab === 'FINANCE' && canEmployeeViewFinance) && !(tab === 'REPORTS' && canEmployeeViewReports)) {
       return;
     }
     setActiveTab(tab);
     setIsMobileMenuOpen(false);
   };
 
-  const handleViewAllRecent = () => {
-    const today = new Date().toISOString().split('T')[0];
+  const handleOpenAppointmentInAgenda = (payload: AgendaNavigationPayload) => {
     setAgendaNavigationRequest({
-      date: today,
-      viewMode: 'DAY',
+      ...payload,
       nonce: Date.now(),
     });
     setActiveTab('AGENDA');
     setIsMobileMenuOpen(false);
+  };
+
+  const handleViewAllRecent = () => {
+    const today = new Date().toISOString().split('T')[0];
+    handleOpenAppointmentInAgenda({
+      date: today,
+      viewMode: 'DAY',
+    });
   };
 
   return (
@@ -7631,6 +8136,12 @@ export const AdminDashboard: React.FC = () => {
              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'AGENDA' ? 'bg-blue-50 text-blue-600 font-medium' : 'text-gray-600 hover:bg-gray-50'}`}
           >
             <Calendar size={20} /> Agenda
+          </button>
+          <button
+             onClick={() => handleTabChange('APPOINTMENT_CENTER')}
+             className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'APPOINTMENT_CENTER' ? 'bg-blue-50 text-blue-600 font-medium' : 'text-gray-600 hover:bg-gray-50'}`}
+          >
+            <List size={20} /> Central de Agend.
           </button>
           {canAccessFinanceTab && (
             <button
@@ -7701,6 +8212,7 @@ export const AdminDashboard: React.FC = () => {
           {activeTab === 'REPORTS' && canAccessReportsTab && <ReportsManagement />}
           {activeTab === 'USERS' && isAdminUser && <ClientsManagement />}
             {activeTab === 'AGENDA' && <CalendarManagement navigationRequest={agendaNavigationRequest} />}
+          {activeTab === 'APPOINTMENT_CENTER' && <AppointmentCenterManagement onOpenAgenda={handleOpenAppointmentInAgenda} />}
           {activeTab === 'SETTINGS' && isAdminUser && <SettingsManagement />}
          </div>
       </main>

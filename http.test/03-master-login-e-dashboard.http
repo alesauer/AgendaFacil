@@ -1,0 +1,21 @@
+@baseUrl = http://127.0.0.1:5000
+@masterLogin = master
+@masterPassword = admin123
+
+### Login MASTER
+# @name loginMaster
+POST {{baseUrl}}/auth/master/login
+Content-Type: application/json
+
+{
+  "login": "{{masterLogin}}",
+  "senha": "{{masterPassword}}"
+}
+
+### Overview MASTER
+GET {{baseUrl}}/master/overview
+Authorization: Bearer {{loginMaster.response.body.data.token}}
+
+### Lista de tenants MASTER
+GET {{baseUrl}}/master/tenants
+Authorization: Bearer {{loginMaster.response.body.data.token}}

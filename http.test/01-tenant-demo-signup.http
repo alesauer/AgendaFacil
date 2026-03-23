@@ -1,0 +1,14 @@
+@baseUrl = http://127.0.0.1:5000
+@tenantSlug = demo
+
+### Signup admin da barbearia demo
+POST {{baseUrl}}/auth/signup
+Content-Type: application/json
+X-Barbearia-Slug: {{tenantSlug}}
+
+{
+  "nome": "demo",
+  "telefone": "11999999999",
+  "senha": "admin123",
+  "role": "ADMIN"
+}
