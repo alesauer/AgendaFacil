@@ -39,4 +39,3 @@ backend/venv/
 
 # Environment files (secrets)
 .env
-!backend/.env
