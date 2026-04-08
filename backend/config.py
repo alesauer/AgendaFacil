@@ -39,6 +39,11 @@ class Config:
     STRIPE_WEBHOOK_BARBEARIA_SLUG = ""
     STRIPE_PAYMENT_LINK_MONTHLY = ""
     STRIPE_PAYMENT_LINK_YEARLY = ""
+    SUSPENSION_WHATSAPP_URL = ""
+    SUSPENSION_PORTAL_URL = ""
+    SUSPENSION_BILLING_EMAIL = ""
+    MASTER_CONFIG_ENCRYPTION_KEY = ""
+    MASTER_RUNTIME_CONFIG_CACHE_SECONDS = 30
 
 
 class DevelopmentConfig(Config):
@@ -87,6 +92,11 @@ def _hydrate_from_env(config_cls):
     config_cls.STRIPE_WEBHOOK_BARBEARIA_SLUG = os.getenv("STRIPE_WEBHOOK_BARBEARIA_SLUG", "").strip()
     config_cls.STRIPE_PAYMENT_LINK_MONTHLY = os.getenv("STRIPE_PAYMENT_LINK_MONTHLY", "").strip()
     config_cls.STRIPE_PAYMENT_LINK_YEARLY = os.getenv("STRIPE_PAYMENT_LINK_YEARLY", "").strip()
+    config_cls.SUSPENSION_WHATSAPP_URL = os.getenv("SUSPENSION_WHATSAPP_URL", "").strip()
+    config_cls.SUSPENSION_PORTAL_URL = os.getenv("SUSPENSION_PORTAL_URL", "").strip()
+    config_cls.SUSPENSION_BILLING_EMAIL = os.getenv("SUSPENSION_BILLING_EMAIL", "").strip()
+    config_cls.MASTER_CONFIG_ENCRYPTION_KEY = os.getenv("MASTER_CONFIG_ENCRYPTION_KEY", "").strip()
+    config_cls.MASTER_RUNTIME_CONFIG_CACHE_SECONDS = int(os.getenv("MASTER_RUNTIME_CONFIG_CACHE_SECONDS", "30"))
     return config_cls
 
 

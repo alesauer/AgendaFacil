@@ -6,16 +6,46 @@ type ApiSuccess<T> = {
 type ApiError = {
   success: false;
   error: string;
+  code?: string;
+  details?: Record<string, unknown>;
+  status?: number;
 };
 
 export type ApiResponse<T> = ApiSuccess<T> | ApiError;
 
 const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://127.0.0.1:5000';
 
+const RESERVED_HASH_ROUTES = new Set(['login', 'admin', 'client', 'master', 'onboarding']);
+
+const normalizeSlug = (value?: string | null): string | null => {
+  const clean = String(value || '').trim().toLowerCase();
+  if (!clean) return null;
+  if (!/^[a-z0-9-]+$/.test(clean)) return null;
+  return clean;
+};
+
+const getTenantFromPath = (): string | null => {
+  const segment = window.location.pathname.split('/').filter(Boolean)[0];
+  return normalizeSlug(segment);
+};
+
+const getTenantFromHash = (): string | null => {
+  const hashPath = (window.location.hash || '').replace(/^#\/?/, '');
+  const first = hashPath.split('/').filter(Boolean)[0];
+  const normalized = normalizeSlug(first);
+  if (!normalized) return null;
+  if (RESERVED_HASH_ROUTES.has(normalized)) return null;
+  return normalized;
+};
+
 const getTenantSlug = (): string => {
-  const explicitTenant = (import.meta as any).env?.VITE_TENANT_SLUG || localStorage.getItem('tenant_slug');
+  const explicitTenant =
+    getTenantFromPath() ||
+    getTenantFromHash() ||
+    localStorage.getItem('tenant_slug') ||
+    (import.meta as any).env?.VITE_TENANT_SLUG;
   if (explicitTenant) {
-    return explicitTenant;
+    return String(explicitTenant).toLowerCase();
   }
 
   const host = window.location.hostname;
@@ -58,6 +88,10 @@ const getFriendlyHttpError = (
 
   if (status === 409) {
     return message || 'Operação bloqueada por vínculo de dados.';
+  }
+
+  if (status === 423) {
+    return message || 'Acesso temporariamente indisponível para esta barbearia.';
   }
 
   if (status >= 500 && normalizedMethod === 'DELETE') {
@@ -127,6 +161,9 @@ export async function apiRequest<T>(
       return {
         success: false,
         error: getFriendlyHttpError(response.status, path, requestMethod, apiMessage),
+        code: parsedBody?.code as string | undefined,
+        details: parsedBody?.details as Record<string, unknown> | undefined,
+        status: response.status,
       };
     }
 

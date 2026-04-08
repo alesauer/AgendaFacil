@@ -12,3 +12,4 @@ supabase==2.7.4
 requests==2.31.0
 resend
 stripe==11.6.0
+cryptography==43.0.1

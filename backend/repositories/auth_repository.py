@@ -5,6 +5,63 @@ from backend.supabase_client import get_supabase_client, is_supabase_ready
 
 class AuthRepository(BaseRepository):
     @staticmethod
+    def find_tenant_by_id(barbearia_id: str):
+        AuthRepository.require_tenant(barbearia_id)
+        if is_db_ready():
+            try:
+                return query_one(
+                    """
+                    SELECT id, nome, slug, COALESCE(assinatura_status, 'ACTIVE') AS assinatura_status
+                    FROM barbearias
+                    WHERE id = %s
+                    """,
+                    (barbearia_id,),
+                )
+            except Exception as exc:
+                message = str(exc).lower()
+                if "assinatura_status" in message and ("column" in message or "does not exist" in message):
+                    return query_one(
+                        """
+                        SELECT id, nome, slug, 'ACTIVE' AS assinatura_status
+                        FROM barbearias
+                        WHERE id = %s
+                        """,
+                        (barbearia_id,),
+                    )
+
+        if is_supabase_ready():
+            supabase = get_supabase_client()
+            try:
+                response = (
+                    supabase.table("barbearias")
+                    .select("id,nome,slug,assinatura_status")
+                    .eq("id", barbearia_id)
+                    .limit(1)
+                    .execute()
+                )
+                data = response.data or []
+                if data:
+                    return {
+                        **data[0],
+                        "assinatura_status": data[0].get("assinatura_status") or "ACTIVE",
+                    }
+            except Exception as exc:
+                message = str(exc).lower()
+                if "assinatura_status" in message and ("column" in message or "schema cache" in message):
+                    response = (
+                        supabase.table("barbearias")
+                        .select("id,nome,slug")
+                        .eq("id", barbearia_id)
+                        .limit(1)
+                        .execute()
+                    )
+                    data = response.data or []
+                    if data:
+                        return {**data[0], "assinatura_status": "ACTIVE"}
+
+        return None
+
+    @staticmethod
     def find_user_by_phone(barbearia_id: str, phone: str):
         AuthRepository.require_tenant(barbearia_id)
         if is_db_ready():

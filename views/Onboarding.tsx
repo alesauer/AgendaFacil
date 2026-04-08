@@ -1,6 +1,11 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
+import { createCategoriaApi, listCategoriasApi, updateCategoriaApi } from '../services/categoriasApi';
+import { listHorariosFuncionamentoApi, saveHorariosFuncionamentoApi } from '../services/horariosApi';
+import { getIdentidadeApi, saveIdentidadeApi } from '../services/identidadeApi';
+import { createProfissionalApi, listProfissionaisApi, updateProfissionalApi } from '../services/profissionaisApi';
+import { createServicoApi, listServicosApi, updateServicoApi } from '../services/servicosApi';
 import { 
   Store, Users, Scissors, Clock, MessageSquare, 
   CheckCircle, ChevronRight, ChevronLeft, Plus, 
@@ -50,12 +55,427 @@ const StepIndicator = ({ currentStep, totalSteps }: { currentStep: number, total
 export const Onboarding: React.FC = () => {
   const navigate = useNavigate();
   const [step, setStep] = useState(0);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [isLoadingInitial, setIsLoadingInitial] = useState(true);
+
+  const getCurrentTenantSlug = () => {
+    const pathSegment = window.location.pathname.split('/').filter(Boolean)[0];
+    if (pathSegment && /^[a-z0-9-]+$/i.test(pathSegment)) {
+      return pathSegment.toLowerCase();
+    }
+
+    const hashPath = (window.location.hash || '').replace(/^#\/?/, '');
+    const hashSegment = hashPath.split('/').filter(Boolean)[0];
+    if (hashSegment && /^[a-z0-9-]+$/i.test(hashSegment) && !['login', 'admin', 'client', 'master', 'onboarding'].includes(hashSegment.toLowerCase())) {
+      return hashSegment.toLowerCase();
+    }
+
+    const localTenant = localStorage.getItem('tenant_slug');
+    if (localTenant && localTenant.trim()) {
+      return localTenant.trim().toLowerCase();
+    }
+
+    return ((import.meta as any).env?.VITE_DEFAULT_TENANT_SLUG || 'demo').toLowerCase();
+  };
 
   const finishOnboarding = () => {
-    localStorage.setItem('onboarding_completed', 'true');
-    localStorage.setItem('onboarding_completed_at', new Date().toISOString());
+    const tenantSlug = getCurrentTenantSlug();
+    localStorage.setItem(`onboarding_completed:${tenantSlug}`, 'true');
+    localStorage.setItem(`onboarding_completed_at:${tenantSlug}`, new Date().toISOString());
+    if (tenantSlug === 'demo') {
+      localStorage.setItem('onboarding_completed', 'true');
+      localStorage.setItem('onboarding_completed_at', new Date().toISOString());
+    }
     localStorage.removeItem('manual_onboarding_request');
-    navigate('/admin', { replace: true });
+
+    const adminUrl = `${window.location.pathname}${window.location.search}#/admin`;
+    window.location.replace(adminUrl);
+  };
+
+  const dayToWeekdayMap: Record<string, number> = {
+    domingo: 0,
+    segunda: 1,
+    'segunda-feira': 1,
+    terça: 2,
+    terca: 2,
+    'terça-feira': 2,
+    'terca-feira': 2,
+    quarta: 3,
+    'quarta-feira': 3,
+    quinta: 4,
+    'quinta-feira': 4,
+    sexta: 5,
+    'sexta-feira': 5,
+    sábado: 6,
+    sabado: 6,
+  };
+
+  const weekDayLabels: Record<number, string> = {
+    0: 'Domingo',
+    1: 'Segunda',
+    2: 'Terça',
+    3: 'Quarta',
+    4: 'Quinta',
+    5: 'Sexta',
+    6: 'Sábado',
+  };
+
+  const defaultHoursByDay: Record<number, { aberto: boolean; hora_inicio: string; hora_fim: string }> = {
+    0: { aberto: false, hora_inicio: '00:00', hora_fim: '00:00' },
+    1: { aberto: true, hora_inicio: '09:00', hora_fim: '18:00' },
+    2: { aberto: true, hora_inicio: '09:00', hora_fim: '18:00' },
+    3: { aberto: true, hora_inicio: '09:00', hora_fim: '18:00' },
+    4: { aberto: true, hora_inicio: '09:00', hora_fim: '18:00' },
+    5: { aberto: true, hora_inicio: '09:00', hora_fim: '18:00' },
+    6: { aberto: true, hora_inicio: '09:00', hora_fim: '14:00' },
+  };
+
+  const normalizeText = (value: string) => value.trim().replace(/\s+/g, ' ');
+  const normalizePhone = (value: string) => value.replace(/\D/g, '');
+  const normalizeNameKey = (value: string) => normalizeText(value).toLowerCase();
+
+  const getApiError = (result: { success: boolean; error?: string }, fallback: string) => {
+    if ('error' in result && result.error) return result.error;
+    return fallback;
+  };
+
+  const persistOnboardingData = async (): Promise<{ success: boolean; error?: string }> => {
+    const businessName = normalizeText(barberData.name);
+    if (!businessName) {
+      return { success: false, error: 'Informe o nome da barbearia para concluir o onboarding.' };
+    }
+
+    const identidadeResult = await saveIdentidadeApi({
+      nome: businessName,
+      telefone: normalizeText(barberData.phone) || null,
+      cidade: normalizeText(barberData.city) || null,
+      logo_url: barberData.logo || null,
+    });
+
+    if (!identidadeResult.success) {
+      return { success: false, error: getApiError(identidadeResult, 'Não foi possível salvar a identidade da barbearia.') };
+    }
+
+    const [existingProsResult, existingCatsResult, existingServicesResult] = await Promise.all([
+      listProfissionaisApi(),
+      listCategoriasApi(),
+      listServicosApi(),
+    ]);
+
+    if (!existingProsResult.success) {
+      return { success: false, error: getApiError(existingProsResult, 'Não foi possível carregar os profissionais atuais.') };
+    }
+    if (!existingCatsResult.success) {
+      return { success: false, error: getApiError(existingCatsResult, 'Não foi possível carregar as categorias atuais.') };
+    }
+    if (!existingServicesResult.success) {
+      return { success: false, error: getApiError(existingServicesResult, 'Não foi possível carregar os serviços atuais.') };
+    }
+
+    const existingProfessionalsByPhone = new Map(
+      existingProsResult.data
+        .filter((item) => normalizePhone(String(item.telefone || '')).length > 0)
+        .map((item) => [normalizePhone(String(item.telefone || '')), item] as const)
+    );
+    const existingProfessionalsByName = new Map(
+      existingProsResult.data
+        .filter((item) => normalizeNameKey(item.nome).length > 0)
+        .map((item) => [normalizeNameKey(item.nome), item] as const)
+    );
+
+    const professionalsByKey = new Map<string, Professional>();
+    for (const professional of professionals) {
+      const name = normalizeText(professional.name);
+      if (!name) continue;
+      const phone = normalizePhone(professional.phone);
+      const key = phone ? `phone:${phone}` : `name:${normalizeNameKey(name)}`;
+      professionalsByKey.set(key, { ...professional, name, phone });
+    }
+
+    for (const professional of professionalsByKey.values()) {
+      const professionalPhone = normalizePhone(professional.phone);
+      const existing = professionalPhone
+        ? existingProfessionalsByPhone.get(professionalPhone)
+        : existingProfessionalsByName.get(normalizeNameKey(professional.name));
+
+      const payload = {
+        nome: professional.name,
+        cargo: normalizeText(professional.role) || 'Barbeiro',
+        telefone: professionalPhone || undefined,
+        foto_url: existing?.foto_url || null,
+        comissao_percentual: Number(existing?.comissao_percentual || 0),
+        ativo: true,
+      };
+
+      const proResult = existing
+        ? await updateProfissionalApi(existing.id, payload)
+        : await createProfissionalApi(payload);
+
+      if (!proResult.success) {
+        const errorMessage = getApiError(proResult, `Não foi possível salvar o profissional ${professional.name}.`);
+        return { success: false, error: errorMessage };
+      }
+    }
+
+    const categoryIds = new Map<string, string>(
+      existingCatsResult.data.map((category) => [normalizeNameKey(category.nome), category.id] as const)
+    );
+
+    const uniqueCategoryNames = Array.from(new Set(
+      services
+        .map((service) => normalizeText(service.category))
+        .filter(Boolean)
+        .map((name) => normalizeNameKey(name))
+    ));
+
+    for (const categoryNameLower of uniqueCategoryNames) {
+      if (categoryIds.has(categoryNameLower)) continue;
+
+      const originalName = services.find((service) => normalizeNameKey(service.category) === categoryNameLower)?.category.trim() || categoryNameLower;
+      const createCategoryResult = await createCategoriaApi({ nome: originalName });
+
+      if (createCategoryResult.success) {
+        categoryIds.set(categoryNameLower, createCategoryResult.data.id);
+        continue;
+      }
+
+      const categoriesResult = await listCategoriasApi();
+      if (!categoriesResult.success) {
+        const errorMessage = getApiError(categoriesResult, `Não foi possível salvar a categoria ${originalName}.`);
+        return { success: false, error: errorMessage };
+      }
+
+      const existingCategory = categoriesResult.data.find(
+        (category) => normalizeNameKey(category.nome) === categoryNameLower
+      );
+
+      if (!existingCategory) {
+        return { success: false, error: `Não foi possível salvar a categoria ${originalName}.` };
+      }
+
+      const updateCategoryResult = await updateCategoriaApi(existingCategory.id, {
+        nome: originalName,
+        descricao: existingCategory.descricao || null,
+      });
+      if (!updateCategoryResult.success) {
+        return { success: false, error: getApiError(updateCategoryResult, `Não foi possível atualizar a categoria ${originalName}.`) };
+      }
+
+      categoryIds.set(categoryNameLower, existingCategory.id);
+    }
+
+    const existingServicesByName = new Map(
+      existingServicesResult.data.map((service) => [normalizeNameKey(service.nome), service] as const)
+    );
+
+    const servicesByKey = new Map<string, Service>();
+    for (const service of services) {
+      const name = normalizeText(service.name);
+      if (!name) continue;
+      servicesByKey.set(normalizeNameKey(name), {
+        ...service,
+        name,
+        category: normalizeText(service.category) || 'Cabelo',
+      });
+    }
+
+    for (const service of servicesByKey.values()) {
+      const rawPrice = Number.parseFloat(String(service.price).replace(',', '.'));
+      const parsedPrice = Number.isFinite(rawPrice) ? rawPrice : 0;
+      const rawDuration = Number.parseInt(service.duration, 10);
+      const parsedDuration = Number.isFinite(rawDuration) && rawDuration > 0 ? rawDuration : 30;
+      const categoryId = categoryIds.get(normalizeNameKey(service.category)) || null;
+
+      const existingService = existingServicesByName.get(normalizeNameKey(service.name));
+      const payload = {
+        nome: service.name,
+        categoria_id: categoryId,
+        preco: parsedPrice,
+        duracao_min: parsedDuration,
+      };
+
+      const serviceResult = existingService
+        ? await updateServicoApi(existingService.id, payload)
+        : await createServicoApi(payload);
+
+      if (!serviceResult.success) {
+        const errorMessage = getApiError(serviceResult, `Não foi possível salvar o serviço ${service.name}.`);
+        return { success: false, error: errorMessage };
+      }
+    }
+
+    const horariosByDay = new Map<number, { dia_semana: number; aberto: boolean; hora_inicio: string; hora_fim: string }>();
+    for (const hour of hours) {
+      const normalizedDay = hour.day.trim().toLowerCase();
+      const diaSemana = dayToWeekdayMap[normalizedDay];
+      if (diaSemana === undefined) continue;
+      horariosByDay.set(diaSemana, {
+        dia_semana: diaSemana,
+        aberto: Boolean(hour.open),
+        hora_inicio: hour.start,
+        hora_fim: hour.end,
+      });
+    }
+
+    for (let day = 0; day <= 6; day += 1) {
+      if (!horariosByDay.has(day)) {
+        const fallback = defaultHoursByDay[day];
+        horariosByDay.set(day, {
+          dia_semana: day,
+          aberto: fallback.aberto,
+          hora_inicio: fallback.hora_inicio,
+          hora_fim: fallback.hora_fim,
+        });
+      }
+    }
+
+    const horariosPayload = Array.from(horariosByDay.values()).sort((a, b) => a.dia_semana - b.dia_semana);
+
+    const horariosResult = await saveHorariosFuncionamentoApi(horariosPayload);
+    if (!horariosResult.success) {
+      const errorMessage = getApiError(horariosResult, 'Não foi possível salvar os horários de funcionamento.');
+      return { success: false, error: errorMessage };
+    }
+
+    return { success: true };
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadOnboardingData = async () => {
+      setIsLoadingInitial(true);
+      setSubmitError(null);
+
+      const [identidadeResult, initialProfessionalsResult, categoriesResult, servicesResult, horariosResult] = await Promise.all([
+        getIdentidadeApi(),
+        listProfissionaisApi(),
+        listCategoriasApi(),
+        listServicosApi(),
+        listHorariosFuncionamentoApi(),
+      ]);
+
+      const professionalsResult = initialProfessionalsResult.success
+        ? initialProfessionalsResult
+        : await listProfissionaisApi();
+
+      if (cancelled) return;
+
+      if (identidadeResult.success) {
+        setBarberData((prev) => ({
+          ...prev,
+          name: identidadeResult.data.nome || prev.name,
+          phone: identidadeResult.data.telefone || '',
+          city: identidadeResult.data.cidade || '',
+          logo: identidadeResult.data.logo_url || null,
+        }));
+      }
+
+      if (professionalsResult.success) {
+        setProfessionals(
+          professionalsResult.data.map((professional) => ({
+            name: professional.nome || '',
+            role: professional.cargo || 'Barbeiro',
+            phone: professional.telefone || '',
+          }))
+        );
+      }
+
+      const categoryById = new Map<string, string>();
+      if (categoriesResult.success) {
+        categoriesResult.data.forEach((category) => {
+          categoryById.set(category.id, category.nome || 'Geral');
+        });
+      }
+
+      if (servicesResult.success) {
+        setServices(
+          servicesResult.data.map((service) => ({
+            name: service.nome || '',
+            category: (service.categoria_id && categoryById.get(service.categoria_id)) || 'Cabelo',
+            price: String(Number(service.preco || 0)),
+            duration: String(Number(service.duracao_min || 30)),
+          }))
+        );
+      }
+
+      if (horariosResult.success && horariosResult.data.length > 0) {
+        const byDay = new Map<number, { aberto: boolean; hora_inicio: string; hora_fim: string }>();
+        horariosResult.data.forEach((item) => {
+          byDay.set(Number(item.dia_semana), {
+            aberto: Boolean(item.aberto),
+            hora_inicio: String(item.hora_inicio || '00:00').slice(0, 5),
+            hora_fim: String(item.hora_fim || '00:00').slice(0, 5),
+          });
+        });
+
+        const orderedDays = [1, 2, 3, 4, 5, 6, 0];
+        setHours(
+          orderedDays.map((day) => {
+            const fallback = defaultHoursByDay[day];
+            const current = byDay.get(day) || fallback;
+            return {
+              day: weekDayLabels[day],
+              open: Boolean(current.aberto),
+              start: String(current.hora_inicio || '00:00').slice(0, 5),
+              end: String(current.hora_fim || '00:00').slice(0, 5),
+            };
+          })
+        );
+      }
+
+      const tenantSlug = getCurrentTenantSlug();
+      setIsWhatsAppConnected(localStorage.getItem(`onboarding_whatsapp_connected:${tenantSlug}`) === 'true');
+
+      const hardLoadErrors: string[] = [];
+      if (!identidadeResult.success) hardLoadErrors.push('identidade');
+
+      const allEndpointsFailed = [
+        identidadeResult.success,
+        professionalsResult.success,
+        categoriesResult.success,
+        servicesResult.success,
+        horariosResult.success,
+      ].every((status) => !status);
+
+      if (allEndpointsFailed) {
+        hardLoadErrors.push('conectividade com API');
+      }
+
+      if (hardLoadErrors.length > 0) {
+        setSubmitError(`Não foi possível carregar dados existentes: ${hardLoadErrors.join(', ')}.`);
+      }
+
+      setIsLoadingInitial(false);
+    };
+
+    loadOnboardingData();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleCompleteOnboarding = async () => {
+    if (isSubmitting || isLoadingInitial) return;
+    setSubmitError(null);
+    setIsSubmitting(true);
+
+    try {
+      const result = await persistOnboardingData();
+
+      if (!result.success) {
+        setSubmitError(result.error || 'Falha ao concluir configuração.');
+        return;
+      }
+
+      finishOnboarding();
+    } catch {
+      setSubmitError('Falha inesperada ao concluir configuração. Tente novamente.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
   
   // Form States
@@ -83,6 +503,17 @@ export const Onboarding: React.FC = () => {
   ]);
 
   const [isWhatsAppConnected, setIsWhatsAppConnected] = useState(false);
+
+  const setWhatsAppConnected = (connected: boolean) => {
+    const tenantSlug = getCurrentTenantSlug();
+    const storageKey = `onboarding_whatsapp_connected:${tenantSlug}`;
+    if (connected) {
+      localStorage.setItem(storageKey, 'true');
+    } else {
+      localStorage.removeItem(storageKey);
+    }
+    setIsWhatsAppConnected(connected);
+  };
 
   // Handlers
   const nextStep = () => setStep(s => s + 1);
@@ -451,7 +882,7 @@ export const Onboarding: React.FC = () => {
                     </div>
                     <div className="absolute inset-0 bg-white/80 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                       <button 
-                        onClick={() => setIsWhatsAppConnected(true)}
+                        onClick={() => setWhatsAppConnected(true)}
                         className="bg-green-600 text-white px-4 py-2 rounded-xl font-bold text-xs shadow-lg"
                       >
                         Simular Conexão
@@ -463,7 +894,7 @@ export const Onboarding: React.FC = () => {
                     <p className="text-sm text-gray-500 max-w-xs mx-auto">Abra o WhatsApp no seu celular, vá em Aparelhos Conectados e aponte a câmera.</p>
                   </div>
                   <button 
-                    onClick={() => setIsWhatsAppConnected(true)}
+                    onClick={() => setWhatsAppConnected(true)}
                     className="w-full bg-green-600 text-white py-4 rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-green-700 transition-all shadow-lg shadow-green-100"
                   >
                     <MessageSquare size={20} /> Conectar WhatsApp
@@ -477,7 +908,7 @@ export const Onboarding: React.FC = () => {
                   <h3 className="text-xl font-bold text-gray-800">WhatsApp Conectado!</h3>
                   <p className="text-sm text-gray-500">Seu sistema já está pronto para enviar notificações.</p>
                   <button 
-                    onClick={() => setIsWhatsAppConnected(false)}
+                    onClick={() => setWhatsAppConnected(false)}
                     className="text-xs text-red-500 font-bold hover:underline"
                   >
                     Desconectar aparelho
@@ -516,10 +947,11 @@ export const Onboarding: React.FC = () => {
 
             <div className="max-w-xs mx-auto space-y-4">
               <button 
-                onClick={finishOnboarding}
+                onClick={handleCompleteOnboarding}
+                disabled={isSubmitting}
                 className="w-full bg-blue-600 text-white py-4 rounded-2xl font-bold text-lg hover:bg-blue-700 transition-all shadow-xl shadow-blue-100 flex items-center justify-center gap-2"
               >
-                Ir para o painel <ChevronRight size={20} />
+                {isSubmitting ? 'Salvando...' : 'Ir para o painel'} <ChevronRight size={20} />
               </button>
               <p className="text-xs text-gray-400">Você poderá alterar essas configurações a qualquer momento no painel administrativo.</p>
             </div>
@@ -543,7 +975,8 @@ export const Onboarding: React.FC = () => {
               <h1 className="text-xl font-black text-gray-900 tracking-tight">AgendeFácil</h1>
             </div>
             <button 
-              onClick={() => navigate('/admin')}
+              onClick={finishOnboarding}
+              disabled={isSubmitting || isLoadingInitial}
               className="text-sm font-bold text-gray-400 hover:text-gray-600 transition-colors"
             >
               Pular configuração
@@ -562,9 +995,19 @@ export const Onboarding: React.FC = () => {
             </div>
           )}
 
-          <AnimatePresence mode="wait">
-            {renderStep()}
-          </AnimatePresence>
+          {isLoadingInitial ? (
+            <div className="py-16 text-center text-sm text-gray-500">Carregando dados já cadastrados...</div>
+          ) : (
+            <AnimatePresence mode="wait">
+              {renderStep()}
+            </AnimatePresence>
+          )}
+
+          {submitError && (
+            <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {submitError}
+            </div>
+          )}
 
           {/* Footer Actions */}
           {step < 5 && (
@@ -580,10 +1023,11 @@ export const Onboarding: React.FC = () => {
               </button>
               
               <button 
-                onClick={nextStep}
+                onClick={step === 4 ? handleCompleteOnboarding : nextStep}
+                disabled={isSubmitting || isLoadingInitial}
                 className="bg-gray-900 text-white px-8 py-4 rounded-2xl font-bold flex items-center gap-2 hover:bg-black transition-all shadow-xl shadow-gray-200"
               >
-                {step === 4 ? 'Finalizar' : 'Próximo'} <ChevronRight size={18} />
+                {step === 4 ? (isSubmitting ? 'Salvando...' : 'Salvar e concluir') : 'Próximo'} <ChevronRight size={18} />
               </button>
             </div>
           )}

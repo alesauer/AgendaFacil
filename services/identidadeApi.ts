@@ -21,6 +21,8 @@ export type IdentidadeApi = {
 
 export type IdentidadePayload = {
   nome: string;
+  telefone?: string | null;
+  cidade?: string | null;
   logo_url?: string | null;
   login_logo_url?: string | null;
   login_background_url?: string | null;

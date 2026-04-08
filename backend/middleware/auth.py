@@ -7,7 +7,7 @@ from flask import current_app, g, request
 from backend.utils.http import error
 
 
-def create_access_token(user_id: str, barbearia_id: str, role: str):
+def create_access_token(user_id: str, barbearia_id: str, role: str, extra_claims: dict | None = None):
     exp = datetime.now(tz=timezone.utc) + timedelta(
         minutes=current_app.config["JWT_EXPIRES_MINUTES"]
     )
@@ -18,6 +18,8 @@ def create_access_token(user_id: str, barbearia_id: str, role: str):
         "scope": "TENANT",
         "exp": exp,
     }
+    if extra_claims:
+        payload.update(extra_claims)
     return jwt.encode(payload, current_app.config["SECRET_KEY"], algorithm="HS256")
 
 

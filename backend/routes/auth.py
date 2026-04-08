@@ -138,6 +138,25 @@ def login():
     if (not telefone and not email) or not senha:
         return error("telefone ou email e senha são obrigatórios", 400)
 
+    tenant = AuthRepository.find_tenant_by_id(g.barbearia_id)
+    tenant_status = str((tenant or {}).get("assinatura_status") or "ACTIVE").upper()
+    if tenant_status == "SUSPENDED":
+        tenant_name = (tenant or {}).get("nome") or "sua barbearia"
+        whatsapp_url = str(current_app.config.get("SUSPENSION_WHATSAPP_URL") or "").strip()
+        portal_url = str(current_app.config.get("SUSPENSION_PORTAL_URL") or "").strip()
+        billing_email = str(current_app.config.get("SUSPENSION_BILLING_EMAIL") or "").strip()
+        return error(
+            f"A barbearia {tenant_name} foi suspensa temporariamente.",
+            423,
+            code="TENANT_SUSPENDED",
+            details={
+                "tenant_name": tenant_name,
+                "whatsapp_url": whatsapp_url or None,
+                "portal_url": portal_url or None,
+                "billing_email": billing_email or None,
+            },
+        )
+
     user = AuthRepository.find_user_by_email(g.barbearia_id, email) if email else AuthRepository.find_user_by_phone(g.barbearia_id, telefone)
     if not user or not check_password_hash(user["senha_hash"], senha):
         return error("Credenciais inválidas", 401)

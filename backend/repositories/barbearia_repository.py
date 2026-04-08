@@ -278,6 +278,8 @@ class BarbeariaRepository(BaseRepository):
     def update_identity(
         barbearia_id: str,
         nome: str,
+        telefone: str | None,
+        cidade: str | None,
         logo_url: str | None,
         login_logo_url: str | None,
         login_background_url: str | None,
@@ -297,6 +299,8 @@ class BarbeariaRepository(BaseRepository):
                     """
                     UPDATE barbearias
                     SET nome = %s,
+                        telefone = %s,
+                        cidade = %s,
                         logo_url = %s,
                         login_logo_url = %s,
                         login_background_url = %s,
@@ -320,6 +324,8 @@ class BarbeariaRepository(BaseRepository):
                     """,
                     (
                         nome,
+                        telefone,
+                        cidade,
                         logo_url,
                         login_logo_url,
                         login_background_url,
@@ -341,6 +347,8 @@ class BarbeariaRepository(BaseRepository):
                         """
                         UPDATE barbearias
                         SET nome = %s,
+                            telefone = %s,
+                            cidade = %s,
                             logo_url = %s,
                             login_logo_url = %s,
                             login_background_url = %s,
@@ -362,6 +370,8 @@ class BarbeariaRepository(BaseRepository):
                         """,
                         (
                             nome,
+                            telefone,
+                            cidade,
                             logo_url,
                             login_logo_url,
                             login_background_url,
@@ -380,7 +390,9 @@ class BarbeariaRepository(BaseRepository):
                 item = query_one(
                     """
                     UPDATE barbearias
-                    SET nome = %s
+                    SET nome = %s,
+                        telefone = %s,
+                        cidade = %s
                     WHERE id = %s
                     RETURNING id, nome, slug, telefone, cidade,
                               NULL::text AS logo_url,
@@ -395,7 +407,7 @@ class BarbeariaRepository(BaseRepository):
                               NULL::text AS cor_primaria,
                               NULL::text AS cor_secundaria
                     """,
-                    (nome, barbearia_id),
+                    (nome, telefone, cidade, barbearia_id),
                 )
                 return BarbeariaRepository._coalesce_identity_fields(item)
 
@@ -407,6 +419,8 @@ class BarbeariaRepository(BaseRepository):
                     .update(
                         {
                             "nome": nome,
+                            "telefone": telefone,
+                            "cidade": cidade,
                             "logo_url": logo_url,
                             "login_logo_url": login_logo_url,
                             "login_background_url": login_background_url,
@@ -432,6 +446,8 @@ class BarbeariaRepository(BaseRepository):
                         .update(
                             {
                                 "nome": nome,
+                                "telefone": telefone,
+                                "cidade": cidade,
                                 "logo_url": logo_url,
                                 "login_logo_url": login_logo_url,
                                 "login_background_url": login_background_url,
@@ -452,7 +468,7 @@ class BarbeariaRepository(BaseRepository):
 
                 response = (
                     supabase.table("barbearias")
-                    .update({"nome": nome})
+                    .update({"nome": nome, "telefone": telefone, "cidade": cidade})
                     .eq("id", barbearia_id)
                     .execute()
                 )

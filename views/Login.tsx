@@ -1,6 +1,13 @@
 import React, { useState } from 'react';
 import { useAppContext } from '../App';
-import { User as UserIcon, Lock, Phone, ArrowRight, X, Mail, CheckCircle } from 'lucide-react';
+import { User as UserIcon, Lock, Phone, ArrowRight, X, Mail, CheckCircle, AlertTriangle, ExternalLink, MessageCircle } from 'lucide-react';
+
+type SuspensionDetails = {
+  tenant_name?: string;
+  whatsapp_url?: string;
+  portal_url?: string;
+  billing_email?: string;
+};
 
 export const Login: React.FC = () => {
   const { login, brandIdentity } = useAppContext();
@@ -13,6 +20,8 @@ export const Login: React.FC = () => {
   const [recoveryEmail, setRecoveryEmail] = useState('');
   const [isRecovering, setIsRecovering] = useState(false);
   const [recoverySuccess, setRecoverySuccess] = useState(false);
+  const [isSuspendedModalOpen, setIsSuspendedModalOpen] = useState(false);
+  const [suspensionDetails, setSuspensionDetails] = useState<SuspensionDetails | null>(null);
 
   const safeImageUrl = (value?: string | null, maxLength = 300000) => {
     if (!value || typeof value !== 'string') return undefined;
@@ -47,10 +56,20 @@ export const Login: React.FC = () => {
 
       await login(phone, isClient ? 'CLIENT' : 'ADMIN', password);
     } catch (err: any) {
-      setError(err?.message || 'Não foi possível entrar');
+      if (String(err?.code || '').toUpperCase() === 'TENANT_SUSPENDED') {
+        setSuspensionDetails((err?.details || null) as SuspensionDetails | null);
+        setIsSuspendedModalOpen(true);
+        setError('');
+      } else {
+        setError(err?.message || 'Não foi possível entrar');
+      }
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const openSuspensionAction = (target: string) => {
+    window.open(target, '_blank', 'noopener,noreferrer');
   };
 
   const handleRecoverySubmit = (e: React.FormEvent) => {
@@ -255,6 +274,83 @@ export const Login: React.FC = () => {
                   </button>
                 </form>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isSuspendedModalOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="p-6 border-b flex justify-between items-center bg-red-50">
+              <div className="flex items-center gap-3 text-red-700">
+                <AlertTriangle size={22} />
+                <h3 className="text-xl font-bold">Barbearia suspensa</h3>
+              </div>
+              <button
+                onClick={() => setIsSuspendedModalOpen(false)}
+                className="p-2 hover:bg-red-100 rounded-full transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-gray-700">
+                O acesso da unidade <strong>{suspensionDetails?.tenant_name || brandIdentity.name || 'selecionada'}</strong> foi suspenso temporariamente.
+              </p>
+              <p className="text-sm text-gray-500">
+                Regularize a assinatura para liberar o login da equipe e voltar a usar o sistema normalmente.
+              </p>
+
+              <div className="flex flex-col gap-3 pt-2">
+                {suspensionDetails?.portal_url && (
+                  <button
+                    type="button"
+                    onClick={() => openSuspensionAction(suspensionDetails.portal_url as string)}
+                    className="w-full inline-flex items-center justify-center gap-2 py-3 px-4 rounded-lg text-white font-medium"
+                    style={{ backgroundColor: brandIdentity.primaryColor || '#2563eb' }}
+                  >
+                    Regularizar assinatura <ExternalLink size={16} />
+                  </button>
+                )}
+
+                {suspensionDetails?.whatsapp_url && (
+                  <button
+                    type="button"
+                    onClick={() => openSuspensionAction(suspensionDetails.whatsapp_url as string)}
+                    className="w-full inline-flex items-center justify-center gap-2 py-3 px-4 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
+                  >
+                    Falar no WhatsApp <MessageCircle size={16} />
+                  </button>
+                )}
+
+                {suspensionDetails?.billing_email && (
+                  <button
+                    type="button"
+                    onClick={() => openSuspensionAction(`mailto:${String(suspensionDetails.billing_email)}?subject=Regulariza%C3%A7%C3%A3o%20de%20assinatura`)}
+                    className="w-full inline-flex items-center justify-center gap-2 py-3 px-4 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
+                  >
+                    Enviar e-mail financeiro <Mail size={16} />
+                  </button>
+                )}
+
+                {!suspensionDetails?.portal_url && !suspensionDetails?.whatsapp_url && !suspensionDetails?.billing_email && (
+                  <div className="bg-amber-50 border border-amber-100 text-amber-700 text-sm rounded-lg p-3">
+                    Nenhum canal de regularização foi configurado. Contate o suporte da plataforma.
+                  </div>
+                )}
+              </div>
+
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsSuspendedModalOpen(false)}
+                  className="w-full py-3 px-4 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
+                >
+                  Fechar
+                </button>
+              </div>
             </div>
           </div>
         </div>

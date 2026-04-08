@@ -107,6 +107,16 @@ def update_identidade():
     if len(nome) > 120:
         return error("nome deve ter no máximo 120 caracteres", 400)
 
+    if "telefone" in payload:
+        telefone = str(payload.get("telefone") or "").strip() or None
+    else:
+        telefone = current_item.get("telefone")
+
+    if "cidade" in payload:
+        cidade = str(payload.get("cidade") or "").strip() or None
+    else:
+        cidade = current_item.get("cidade")
+
     icone_marca_raw = payload.get("icone_marca")
     icone_marca = str(icone_marca_raw).strip().lower() if icone_marca_raw is not None else None
     if icone_marca and icone_marca not in ALLOWED_ICONES:
@@ -171,6 +181,8 @@ def update_identidade():
     item = BarbeariaRepository.update_identity(
         g.barbearia_id,
         nome,
+        telefone,
+        cidade,
         logo_url,
         login_logo_url,
         login_background_url,

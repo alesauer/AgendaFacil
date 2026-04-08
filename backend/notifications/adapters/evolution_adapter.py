@@ -6,6 +6,7 @@ import requests
 from flask import current_app
 
 from backend.notifications.models import Channel, DispatchResult, DispatchStatus, NotificationCommand
+from backend.services.master_runtime_config_service import MasterRuntimeConfigService
 
 
 class EvolutionWhatsAppAdapter:
@@ -15,14 +16,14 @@ class EvolutionWhatsAppAdapter:
         return channel == Channel.WHATSAPP
 
     def health_check(self) -> bool:
-        base_url = str(current_app.config.get("EVOLUTION_API_BASE_URL") or "").strip()
-        instance = str(current_app.config.get("EVOLUTION_INSTANCE") or "").strip()
+        base_url = str(MasterRuntimeConfigService.get_runtime_value("EVOLUTION_API_BASE_URL", "") or "").strip()
+        instance = str(MasterRuntimeConfigService.get_runtime_value("EVOLUTION_INSTANCE", "") or "").strip()
         return bool(base_url and instance)
 
     def _build_url(self) -> str:
-        base_url = str(current_app.config.get("EVOLUTION_API_BASE_URL") or "").strip().rstrip("/")
-        instance = str(current_app.config.get("EVOLUTION_INSTANCE") or "").strip()
-        send_path = str(current_app.config.get("EVOLUTION_SEND_TEXT_PATH") or "").strip()
+        base_url = str(MasterRuntimeConfigService.get_runtime_value("EVOLUTION_API_BASE_URL", "") or "").strip().rstrip("/")
+        instance = str(MasterRuntimeConfigService.get_runtime_value("EVOLUTION_INSTANCE", "") or "").strip()
+        send_path = str(MasterRuntimeConfigService.get_runtime_value("EVOLUTION_SEND_TEXT_PATH", "") or "").strip()
 
         if not base_url or not instance:
             raise RuntimeError("EVOLUTION_API_BASE_URL/EVOLUTION_INSTANCE não configurados")
@@ -46,8 +47,8 @@ class EvolutionWhatsAppAdapter:
         return f"[{command.template_key}] {ordered}".strip()
 
     def _headers(self) -> dict[str, str]:
-        api_key = str(current_app.config.get("EVOLUTION_API_KEY") or "").strip()
-        header_name = str(current_app.config.get("EVOLUTION_API_KEY_HEADER") or "apikey").strip()
+        api_key = str(MasterRuntimeConfigService.get_runtime_value("EVOLUTION_API_KEY", "") or "").strip()
+        header_name = str(MasterRuntimeConfigService.get_runtime_value("EVOLUTION_API_KEY_HEADER", "apikey") or "apikey").strip()
 
         headers = {
             "Content-Type": "application/json",

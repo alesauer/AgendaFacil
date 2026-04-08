@@ -147,6 +147,7 @@ const App: React.FC = () => {
   const [clients, setClients] = useState<Client[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const isBackofficeSyncingRef = useRef(false);
+  const [adminBootstrapChecked, setAdminBootstrapChecked] = useState(false);
   const [businessHours, setBusinessHours] = useState<BusinessHour[]>(defaultBusinessHours);
   const [brandIdentity, setBrandIdentity] = useState<BrandIdentity>(() => {
     try {
@@ -401,6 +402,29 @@ const App: React.FC = () => {
       setAppointments(agendamentosResult.data.map(item => mapAgendamento(item, servicosMapeados)));
     }
 
+    const tenantSlug = getCurrentTenantSlug();
+    const tenantCompletedKey = `onboarding_completed:${tenantSlug}`;
+    const alreadyCompleted =
+      localStorage.getItem(tenantCompletedKey) === 'true' ||
+      (tenantSlug === 'demo' && localStorage.getItem('onboarding_completed') === 'true');
+
+    const hasExistingSetup = Boolean(
+      (servicosResult.success && servicosResult.data.length > 0) ||
+      (profissionaisResult.success && profissionaisResult.data.length > 0) ||
+      (clientesResult.success && clientesResult.data.length > 0) ||
+      (agendamentosResult.success && agendamentosResult.data.length > 0)
+    );
+
+    if (!alreadyCompleted && hasExistingSetup) {
+      const nowIso = new Date().toISOString();
+      localStorage.setItem(tenantCompletedKey, 'true');
+      localStorage.setItem(`onboarding_completed_at:${tenantSlug}`, nowIso);
+      if (tenantSlug === 'demo') {
+        localStorage.setItem('onboarding_completed', 'true');
+        localStorage.setItem('onboarding_completed_at', nowIso);
+      }
+    }
+
     const errors: string[] = [];
     if (!categoriasResult.success) errors.push('categorias');
     if (!servicosResult.success) errors.push('serviços');
@@ -501,10 +525,12 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (!authInitialized || !isBackofficeApiSession()) {
+      setAdminBootstrapChecked(false);
       return;
     }
 
     let cancelled = false;
+    setAdminBootstrapChecked(false);
 
     const sync = async () => {
       try {
@@ -512,6 +538,10 @@ const App: React.FC = () => {
       } catch {
         if (!cancelled) {
           pushErrorNotification('Erro ao carregar dados do painel. Mantendo dados locais como fallback.');
+        }
+      } finally {
+        if (!cancelled) {
+          setAdminBootstrapChecked(true);
         }
       }
     };
@@ -675,7 +705,13 @@ const App: React.FC = () => {
       });
 
       if (!result.success) {
-        throw new Error(('error' in result && result.error) ? result.error : 'Falha na autenticação');
+        const message = ('error' in result && result.error) ? result.error : 'Falha na autenticação';
+        throw {
+          message,
+          code: (result as any).code,
+          details: (result as any).details,
+          status: (result as any).status,
+        };
       }
 
       const authenticatedUser: User = {
@@ -722,6 +758,10 @@ const App: React.FC = () => {
     setUser(null);
     localStorage.removeItem('auth_token');
     localStorage.removeItem('app_user');
+    localStorage.removeItem('impersonation_master_token');
+    localStorage.removeItem('impersonation_master_user');
+    localStorage.removeItem('impersonation_tenant_name');
+    localStorage.removeItem('impersonation_tenant_slug');
   };
 
   const markNotificationRead = (id: string) => {
@@ -1430,15 +1470,99 @@ const App: React.FC = () => {
   };
 
   const isStripeSubscriptionActive = () => localStorage.getItem('stripe_subscription_active') === 'true';
-  const isOnboardingCompleted = () => localStorage.getItem('onboarding_completed') === 'true';
-  const isManualOnboardingRequested = () => localStorage.getItem('manual_onboarding_request') === 'true';
+  const getCurrentTenantSlug = () => {
+    const pathSegment = window.location.pathname.split('/').filter(Boolean)[0];
+    if (pathSegment && /^[a-z0-9-]+$/i.test(pathSegment)) {
+      return pathSegment.toLowerCase();
+    }
+
+    const hashPath = (window.location.hash || '').replace(/^#\/?/, '');
+    const hashSegment = hashPath.split('/').filter(Boolean)[0];
+    if (hashSegment && /^[a-z0-9-]+$/i.test(hashSegment) && !['login', 'admin', 'client', 'master', 'onboarding'].includes(hashSegment.toLowerCase())) {
+      return hashSegment.toLowerCase();
+    }
+
+    const localTenant = localStorage.getItem('tenant_slug');
+    if (localTenant && localTenant.trim()) {
+      return localTenant.trim().toLowerCase();
+    }
+
+    return ((import.meta as any).env?.VITE_DEFAULT_TENANT_SLUG || 'demo').toLowerCase();
+  };
+
+  const isOnboardingCompleted = () => {
+    const tenantSlug = getCurrentTenantSlug();
+    const tenantScoped = localStorage.getItem(`onboarding_completed:${tenantSlug}`) === 'true';
+    const legacyDefault = tenantSlug === 'demo' && localStorage.getItem('onboarding_completed') === 'true';
+    return tenantScoped || legacyDefault;
+  };
 
   const shouldOpenOnboarding = Boolean(
     user &&
     user.role === 'ADMIN' &&
-    isStripeSubscriptionActive() &&
+    adminBootstrapChecked &&
     !isOnboardingCompleted()
   );
+
+  const OnboardingAccessGuard: React.FC = () => {
+    const [confirmedRestart, setConfirmedRestart] = useState(false);
+    const [cancelledRestart, setCancelledRestart] = useState(false);
+
+    if (!(user && user.role === 'ADMIN')) {
+      return <Navigate to="/login" />;
+    }
+
+    if (cancelledRestart) {
+      return <Navigate to="/admin" />;
+    }
+
+    if (!isOnboardingCompleted() || confirmedRestart) {
+      return <Onboarding />;
+    }
+
+    const handleConfirmRestart = () => {
+      const tenantSlug = getCurrentTenantSlug();
+      localStorage.setItem('manual_onboarding_request', 'true');
+      localStorage.setItem(`onboarding_completed:${tenantSlug}`, 'false');
+      localStorage.removeItem(`onboarding_completed_at:${tenantSlug}`);
+
+      if (tenantSlug === 'demo') {
+        localStorage.setItem('onboarding_completed', 'false');
+        localStorage.removeItem('onboarding_completed_at');
+      }
+
+      setConfirmedRestart(true);
+    };
+
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+        <div className="w-full max-w-lg bg-white rounded-2xl shadow-xl border border-gray-100 overflow-hidden">
+          <div className="px-6 py-5 border-b border-gray-100">
+            <h2 className="text-lg font-bold text-gray-900">Refazer onboarding?</h2>
+            <p className="text-sm text-gray-600 mt-2">
+              Refazer o onboarding pode zerar configurações da barbearia e afetar a operação.
+            </p>
+          </div>
+          <div className="px-6 py-4 bg-gray-50 flex items-center justify-end gap-3">
+            <button
+              type="button"
+              onClick={() => setCancelledRestart(true)}
+              className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-white"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirmRestart}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700"
+            >
+              Confirmar e iniciar
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   if (!authInitialized) {
     return <div className="min-h-screen bg-gray-50" />;
@@ -1477,11 +1601,7 @@ const App: React.FC = () => {
             } />
 
             <Route path="/onboarding" element={
-              user && user.role === 'ADMIN'
-                ? ((isStripeSubscriptionActive() || isManualOnboardingRequested())
-                    ? (isOnboardingCompleted() ? <Navigate to="/admin" /> : <Onboarding />)
-                    : <Navigate to="/admin" />)
-                : <Navigate to="/login" />
+              <OnboardingAccessGuard />
             } />
 
             <Route path="/" element={<Navigate to="/login" />} />

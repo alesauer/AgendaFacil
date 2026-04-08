@@ -6,6 +6,7 @@ from psycopg.errors import UniqueViolation
 from backend.middleware.auth import auth_required
 from backend.repositories.agendamentos_repository import AgendamentosRepository
 from backend.repositories.barbearia_repository import BarbeariaRepository
+from backend.repositories.clientes_assinaturas_repository import ClientesAssinaturasRepository
 from backend.repositories.clientes_repository import ClientesRepository
 from backend.repositories.financeiro_repository import FinanceiroRepository
 from backend.repositories.horarios_repository import HorariosFuncionamentoRepository
@@ -646,13 +647,30 @@ def transition_agendamento_status(agendamento_id: str):
     if _is_employee() and new_status == "COMPLETED_FIN" and not _employee_can_complete_financial():
         return error("Somente administradores podem concluir financeiro", 403)
 
-    if new_status == "COMPLETED_FIN" and not forma_pagamento:
+    assinatura_usage = None
+    if new_status == "COMPLETED_FIN":
+        try:
+            assinatura_usage = ClientesAssinaturasRepository.apply_usage_for_appointment(
+                g.barbearia_id,
+                existing,
+            )
+        except Exception as exc:
+            assinatura_usage = {
+                "aplicado": False,
+                "motivo": f"falha ao aplicar assinatura: {str(exc)}",
+            }
+
+    if new_status == "COMPLETED_FIN" and not (assinatura_usage or {}).get("aplicado") and not forma_pagamento:
         return error("forma_pagamento é obrigatória para conclusão financeira", 400)
 
     if new_status == "REOPENED" and not motivo:
         return error("motivo é obrigatório para reabertura", 400)
 
-    if new_status == "COMPLETED_FIN":
+    if new_status == "COMPLETED_FIN" and (assinatura_usage or {}).get("aplicado"):
+        forma_pagamento = forma_pagamento or "ASSINATURA"
+        valor_final = 0.0
+
+    if new_status == "COMPLETED_FIN" and not (assinatura_usage or {}).get("aplicado"):
         try:
             receivable = FinanceiroRepository.ensure_receivable_for_agendamento(
                 g.barbearia_id, agendamento_id
@@ -696,6 +714,15 @@ def transition_agendamento_status(agendamento_id: str):
         valor_final,
     )
     if not updated:
+        if new_status == "COMPLETED_FIN" and (assinatura_usage or {}).get("aplicado"):
+            try:
+                ClientesAssinaturasRepository.reverse_usage_for_appointment(
+                    g.barbearia_id,
+                    agendamento_id,
+                    "Reversão por falha na transição para COMPLETED_FIN",
+                )
+            except Exception:
+                pass
         return error("Agendamento não encontrado", 404)
 
     AgendamentosRepository.add_status_audit(
@@ -716,10 +743,20 @@ def transition_agendamento_status(agendamento_id: str):
             FinanceiroRepository.mark_receivable_cancelled_if_unpaid(
                 g.barbearia_id, agendamento_id
             )
+            ClientesAssinaturasRepository.reverse_usage_for_appointment(
+                g.barbearia_id,
+                agendamento_id,
+                f"Reversão por status {new_status}",
+            )
 
         if new_status == "REOPENED":
             FinanceiroRepository.reopen_cancelled_receivable_if_unpaid(
                 g.barbearia_id, agendamento_id
+            )
+            ClientesAssinaturasRepository.reverse_usage_for_appointment(
+                g.barbearia_id,
+                agendamento_id,
+                "Reversão por reabertura do atendimento",
             )
     except Exception as exc:
         finance_warning = str(exc)
@@ -730,6 +767,9 @@ def transition_agendamento_status(agendamento_id: str):
     metrics_warning = _refresh_cliente_metrics(str(existing.get("cliente_id") or ""))
     if metrics_warning:
         updated["client_metrics_warning"] = metrics_warning
+
+    if new_status == "COMPLETED_FIN" and assinatura_usage:
+        updated["assinatura_consumo"] = assinatura_usage
 
     if new_status == "CANCELLED":
         notification_warning = None

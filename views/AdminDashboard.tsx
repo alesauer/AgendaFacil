@@ -16,6 +16,23 @@ import {
 } from '../services/financeiroApi';
 import { DashboardInsightsApi, getDashboardInsightsApi } from '../services/dashboardApi';
 import { AssinaturaApi, getAssinaturaApi, saveAssinaturaApi } from '../services/assinaturaApi';
+import {
+  cancelAssinaturaClienteApi,
+  ClienteComAssinaturaApi,
+  AssinaturaClientePlanoApi,
+  AssinaturaClienteResumoApi,
+  AssinaturaClientePagamentoApi,
+  createPagamentoAssinaturaClienteApi,
+  createPlanoAssinaturaClienteApi,
+  deletePlanoAssinaturaClienteApi,
+  getAssinaturaClienteApi,
+  listClientesComAssinaturaApi,
+  listPagamentosAssinaturaClienteApi,
+  listPlanosAssinaturaClienteApi,
+  updateStatusAssinaturaClienteApi,
+  updatePlanoAssinaturaClienteApi,
+  upsertAssinaturaClienteApi,
+} from '../services/clientesApi';
 
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042'];
 
@@ -2064,6 +2081,7 @@ const CalendarManagement = ({
     const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
     const [selectedProfessionalId, setSelectedProfessionalId] = useState<string | 'ALL'>('ALL');
     const [viewMode, setViewMode] = useState<'DAY' | 'WEEK' | 'MONTH'>('DAY');
+    const [dayMobileLayout, setDayMobileLayout] = useState<'LIST' | 'GRID'>('LIST');
     const [isProfessionalDropdownOpen, setIsProfessionalDropdownOpen] = useState(false);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
@@ -2078,6 +2096,9 @@ const CalendarManagement = ({
     const [transitionTotalValue, setTransitionTotalValue] = useState('');
     const [clientSearchTerm, setClientSearchTerm] = useState('');
     const [isClientSearchOpen, setIsClientSearchOpen] = useState(false);
+    const [appointmentSubscriptionPreview, setAppointmentSubscriptionPreview] = useState<AssinaturaClienteResumoApi | null>(null);
+    const [isLoadingAppointmentSubscriptionPreview, setIsLoadingAppointmentSubscriptionPreview] = useState(false);
+    const [appointmentSubscriptionPreviewError, setAppointmentSubscriptionPreviewError] = useState<string | null>(null);
     const [selectedAptId, setSelectedAptId] = useState<string | null>(null);
     const [formData, setFormData] = useState({
         clientId: '',
@@ -2109,6 +2130,97 @@ const CalendarManagement = ({
         return client.name.toLowerCase().includes(search) || client.phone.toLowerCase().includes(search);
       })
       .slice(0, 8);
+
+    useEffect(() => {
+      if (!isModalOpen || formData.isBlocked || !formData.clientId) {
+        setAppointmentSubscriptionPreview(null);
+        setAppointmentSubscriptionPreviewError(null);
+        setIsLoadingAppointmentSubscriptionPreview(false);
+        return;
+      }
+
+      let cancelled = false;
+      const run = async () => {
+        setIsLoadingAppointmentSubscriptionPreview(true);
+        setAppointmentSubscriptionPreviewError(null);
+
+        const result = await getAssinaturaClienteApi(formData.clientId);
+        if (cancelled) return;
+
+        if (!result.success) {
+          setAppointmentSubscriptionPreview(null);
+          setAppointmentSubscriptionPreviewError(('error' in result && result.error) || 'Falha ao carregar assinatura do cliente.');
+          setIsLoadingAppointmentSubscriptionPreview(false);
+          return;
+        }
+
+        setAppointmentSubscriptionPreview(result.data || null);
+        setIsLoadingAppointmentSubscriptionPreview(false);
+      };
+
+      run();
+      return () => {
+        cancelled = true;
+      };
+    }, [formData.clientId, formData.isBlocked, isModalOpen]);
+
+    const selectedServiceForPreview = useMemo(
+      () => services.find((service) => service.id === formData.serviceId) || null,
+      [services, formData.serviceId],
+    );
+
+    const appointmentCoveragePreview = useMemo(() => {
+      if (formData.isBlocked || !formData.clientId || !selectedServiceForPreview) return null;
+
+      if (!appointmentSubscriptionPreview) {
+        return {
+          type: 'AVULSO' as const,
+          message: 'Cliente sem assinatura ativa para este agendamento.',
+        };
+      }
+
+      const status = String(appointmentSubscriptionPreview.subscription?.status || '').toUpperCase();
+      if (!['ACTIVE', 'GRACE'].includes(status)) {
+        const statusLabelMap: Record<string, string> = {
+          ACTIVE: 'Ativa',
+          GRACE: 'Em carência',
+          PAST_DUE: 'Inadimplente',
+          PAUSED: 'Pausada',
+          CANCELLED: 'Cancelada',
+        };
+        return {
+          type: 'INELEGIVEL' as const,
+          message: `Assinatura em status ${statusLabelMap[status] || status}: atendimento seguirá como avulso.`,
+        };
+      }
+
+      const benefit = appointmentSubscriptionPreview.beneficios.find(
+        (item) => String(item.servico_id) === String(selectedServiceForPreview.id)
+      );
+
+      if (!benefit) {
+        return {
+          type: 'AVULSO' as const,
+          message: 'Serviço não coberto pelo plano deste cliente.',
+        };
+      }
+
+      const restante = Number(benefit.quantidade_restante || 0);
+      const consumida = Number(benefit.quantidade_consumida || 0);
+      const incluida = Number(benefit.quantidade_incluida || 0);
+
+      if (restante > 0) {
+        return {
+          type: 'COBERTO' as const,
+          message: `Coberto pela assinatura. Uso do ciclo: ${consumida}/${incluida} (restante ${restante}).`,
+        };
+      }
+
+      return {
+        type: 'ESGOTADO' as const,
+        message: `Franquia esgotada para este serviço (${consumida}/${incluida}). Atendimento será avulso.`,
+      };
+    }, [appointmentSubscriptionPreview, formData.clientId, formData.isBlocked, selectedServiceForPreview]);
 
     const toMinutes = (time: string): number => {
       const normalized = typeof time === 'string' && time.includes(':') ? time : '09:00';
@@ -2922,88 +3034,256 @@ const CalendarManagement = ({
             {/* Grid Container */}
             <div ref={dayViewScrollRef} className="flex-1 overflow-auto relative touch-pan-x touch-pan-y rounded-b-xl">
                 {viewMode === 'DAY' && (
-                    <div style={{ width: `${60 + (filteredProfessionals.length * 150)}px` }} className="min-w-full">
-                        {/* Professionals Header */}
-                        <div className="sticky top-0 z-20 bg-white border-b flex">
-                            <div className="w-14 md:w-20 flex-shrink-0 border-r bg-gray-50"></div>
-                            {filteredProfessionals.map(prof => (
-                                <div key={prof.id} className="w-[150px] p-2 md:p-4 border-r flex items-center gap-2 md:gap-3 flex-shrink-0">
-                                    <div className="w-8 h-8 md:w-10 md:h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold overflow-hidden flex-shrink-0">
+                    <>
+                      <div className="md:hidden sticky top-0 z-30 bg-white border-b px-3 py-2 flex items-center justify-between">
+                        <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">Visualização</span>
+                        <div className="bg-gray-100 rounded-lg p-1 flex">
+                          <button
+                            onClick={() => setDayMobileLayout('LIST')}
+                            className={`px-3 py-1 text-xs font-bold rounded transition-all ${dayMobileLayout === 'LIST' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500'}`}
+                          >
+                            Lista
+                          </button>
+                          <button
+                            onClick={() => setDayMobileLayout('GRID')}
+                            className={`px-3 py-1 text-xs font-bold rounded transition-all ${dayMobileLayout === 'GRID' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500'}`}
+                          >
+                            Colunas
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="md:hidden">
+                        {dayMobileLayout === 'LIST' ? (
+                          <div className="p-2 space-y-2">
+                            {filteredProfessionals.map((prof) => {
+                              const professionalAppointments = visibleAgendaAppointments
+                                .filter(apt => apt.date === selectedDate && apt.professionalId === prof.id)
+                                .sort((a, b) => toMinutes(a.time || '00:00') - toMinutes(b.time || '00:00'));
+
+                              return (
+                                <div key={prof.id} className="rounded-lg border border-gray-200 bg-white overflow-hidden">
+                                  <div className="px-3 py-2 border-b bg-gray-50 flex items-center justify-between gap-2">
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold overflow-hidden flex-shrink-0">
                                         {prof.avatar ? (
-                                            <img src={prof.avatar} alt={prof.name} className="w-full h-full object-cover" />
+                                          <img src={prof.avatar} alt={prof.name} className="w-full h-full object-cover" />
                                         ) : (
                                           safeInitial(prof.name)
                                         )}
+                                      </div>
+                                      <span className="text-sm font-bold text-gray-800 truncate">{prof.name}</span>
                                     </div>
-                                      <span className="font-bold text-gray-800 text-xs md:text-base truncate">{safeFirstName(prof.name)}</span>
-                                </div>
-                            ))}
-                        </div>
+                                    {canEmployeeCreateAppointment && (
+                                      <button
+                                        type="button"
+                                        onClick={() => openCreateAppointmentModal({ date: selectedDate, professionalId: prof.id })}
+                                        className="px-2 py-1 text-[11px] rounded-md bg-blue-600 text-white font-bold"
+                                      >
+                                        + Novo
+                                      </button>
+                                    )}
+                                  </div>
 
-                        {/* Time Grid */}
-                        <div className="relative flex">
-                            <div className="w-14 md:w-20 flex-shrink-0 bg-gray-50 border-r">
+                                  <div className="p-2 space-y-2">
+                                    {professionalAppointments.length === 0 && (
+                                      <div className="text-xs text-gray-500 px-1 py-2">Sem agendamentos neste dia.</div>
+                                    )}
+
+                                    {professionalAppointments.map((apt) => {
+                                      const service = services.find(s => s.id === apt.serviceId);
+                                      const client = clients.find(c => c.id === apt.clientId);
+                                      return (
+                                        <button
+                                          key={apt.id}
+                                          type="button"
+                                          onClick={() => {
+                                            setSelectedAptId(apt.id);
+                                            setIsDetailsModalOpen(true);
+                                          }}
+                                          className={`w-full text-left rounded-lg border-l-4 px-2 py-2 ${getStatusColor(apt.status)}`}
+                                        >
+                                          <div className="flex items-center justify-between gap-2">
+                                            <span className="text-xs font-bold">{apt.isAllDay ? 'DIA TODO' : `${apt.time}${apt.endTime ? ` - ${apt.endTime}` : ''}`}</span>
+                                            <span className="text-[10px] opacity-70">{getAppointmentStatusLabel(apt.status)}</span>
+                                          </div>
+                                          <p className="text-xs font-bold truncate mt-0.5">
+                                            {apt.status === 'BLOCKED' ? (apt.isAllDay ? 'DIA BLOQUEADO' : 'HORÁRIO BLOQUEADO') : (client?.name || 'Cliente')}
+                                          </p>
+                                          <p className="text-[11px] opacity-80 truncate">
+                                            {apt.status === 'BLOCKED' ? 'Indisponível para clientes' : service?.title}
+                                          </p>
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <div style={{ width: `${56 + (filteredProfessionals.length * 120)}px` }} className="min-w-full">
+                            <div className="sticky top-0 z-20 bg-white border-b flex">
+                              <div className="w-14 flex-shrink-0 border-r bg-gray-50"></div>
+                              {filteredProfessionals.map(prof => (
+                                <div key={prof.id} className="w-[120px] p-2 border-r flex items-center gap-2 flex-shrink-0">
+                                  <div className="w-7 h-7 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold overflow-hidden flex-shrink-0">
+                                    {prof.avatar ? (
+                                      <img src={prof.avatar} alt={prof.name} className="w-full h-full object-cover" />
+                                    ) : (
+                                      safeInitial(prof.name)
+                                    )}
+                                  </div>
+                                  <span className="font-bold text-gray-800 text-xs truncate">{safeFirstName(prof.name)}</span>
+                                </div>
+                              ))}
+                            </div>
+
+                            <div className="relative flex">
+                              <div className="w-14 flex-shrink-0 bg-gray-50 border-r">
                                 {TIME_SLOTS.map(time => (
-                                    <div key={time} className="h-[80px] border-b border-gray-100 flex items-start justify-center pt-2">
-                                        <span className="text-[10px] md:text-[11px] font-bold text-gray-400">{time}</span>
-                                    </div>
+                                  <div key={time} className="h-[64px] border-b border-gray-100 flex items-start justify-center pt-2">
+                                    <span className="text-[10px] font-bold text-gray-400">{time}</span>
+                                  </div>
                                 ))}
+                              </div>
+
+                              <div className="flex-1 flex relative">
+                                {filteredProfessionals.map(prof => (
+                                  <div key={prof.id} className="w-[120px] flex-shrink-0 border-r relative bg-grid-pattern">
+                                    {TIME_SLOTS.map(time => (
+                                      <button
+                                        key={time}
+                                        type="button"
+                                        onClick={() => openCreateAppointmentModal({
+                                          date: selectedDate,
+                                          time,
+                                          professionalId: prof.id,
+                                        })}
+                                        className="h-[64px] w-full border-b border-gray-100 hover:bg-blue-50/30 transition-colors cursor-pointer"
+                                      ></button>
+                                    ))}
+
+                                    {visibleAgendaAppointments
+                                      .filter(apt => apt.date === selectedDate && apt.professionalId === prof.id)
+                                      .map(apt => {
+                                        const service = services.find(s => s.id === apt.serviceId);
+                                        const client = clients.find(c => c.id === apt.clientId);
+                                        const style = getAppointmentStyle(apt, service?.durationMinutes || 30);
+
+                                        return (
+                                          <div
+                                            key={apt.id}
+                                            style={style}
+                                            onClick={() => {
+                                              setSelectedAptId(apt.id);
+                                              setIsDetailsModalOpen(true);
+                                            }}
+                                            className={`absolute left-1 right-1 rounded-lg border-l-4 p-2 shadow-sm z-10 overflow-hidden transition-all hover:shadow-md cursor-pointer ${getStatusColor(apt.status)}`}
+                                          >
+                                            <div className="flex justify-between items-start mb-1">
+                                              <span className="text-[9px] font-bold opacity-70">{apt.isAllDay ? 'DIA TODO' : apt.time}</span>
+                                              {apt.status === 'BLOCKED' && <Lock size={10} className="opacity-50" />}
+                                            </div>
+                                            <p className="text-[10px] font-bold truncate">
+                                              {apt.status === 'BLOCKED' ? (apt.isAllDay ? 'DIA BLOQ.' : 'BLOQ.') : (client?.name || 'Cliente')}
+                                            </p>
+                                          </div>
+                                        );
+                                      })}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="hidden md:block">
+                        <div style={{ width: `${60 + (filteredProfessionals.length * 150)}px` }} className="min-w-full">
+                          {/* Professionals Header */}
+                          <div className="sticky top-0 z-20 bg-white border-b flex">
+                            <div className="w-14 md:w-20 flex-shrink-0 border-r bg-gray-50"></div>
+                            {filteredProfessionals.map(prof => (
+                              <div key={prof.id} className="w-[150px] p-2 md:p-4 border-r flex items-center gap-2 md:gap-3 flex-shrink-0">
+                                <div className="w-8 h-8 md:w-10 md:h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold overflow-hidden flex-shrink-0">
+                                  {prof.avatar ? (
+                                    <img src={prof.avatar} alt={prof.name} className="w-full h-full object-cover" />
+                                  ) : (
+                                    safeInitial(prof.name)
+                                  )}
+                                </div>
+                                <span className="font-bold text-gray-800 text-xs md:text-base truncate">{safeFirstName(prof.name)}</span>
+                              </div>
+                            ))}
+                          </div>
+
+                          {/* Time Grid */}
+                          <div className="relative flex">
+                            <div className="w-14 md:w-20 flex-shrink-0 bg-gray-50 border-r">
+                              {TIME_SLOTS.map(time => (
+                                <div key={time} className="h-[80px] border-b border-gray-100 flex items-start justify-center pt-2">
+                                  <span className="text-[10px] md:text-[11px] font-bold text-gray-400">{time}</span>
+                                </div>
+                              ))}
                             </div>
 
                             <div className="flex-1 flex relative">
-                                {filteredProfessionals.map(prof => (
-                                    <div key={prof.id} className="w-[150px] flex-shrink-0 border-r relative bg-grid-pattern">
-                                        {TIME_SLOTS.map(time => (
-                                            <button
-                                              key={time}
-                                              type="button"
-                                              onClick={() => openCreateAppointmentModal({
-                                                date: selectedDate,
-                                                time,
-                                                professionalId: prof.id,
-                                              })}
-                                              className="h-[80px] w-full border-b border-gray-100 hover:bg-blue-50/30 transition-colors cursor-pointer"
-                                              aria-label={`Novo agendamento ${safeFirstName(prof.name)} às ${time}`}
-                                            ></button>
-                                        ))}
+                              {filteredProfessionals.map(prof => (
+                                <div key={prof.id} className="w-[150px] flex-shrink-0 border-r relative bg-grid-pattern">
+                                  {TIME_SLOTS.map(time => (
+                                    <button
+                                      key={time}
+                                      type="button"
+                                      onClick={() => openCreateAppointmentModal({
+                                        date: selectedDate,
+                                        time,
+                                        professionalId: prof.id,
+                                      })}
+                                      className="h-[80px] w-full border-b border-gray-100 hover:bg-blue-50/30 transition-colors cursor-pointer"
+                                      aria-label={`Novo agendamento ${safeFirstName(prof.name)} às ${time}`}
+                                    ></button>
+                                  ))}
 
-                                        {visibleAgendaAppointments
-                                            .filter(apt => apt.date === selectedDate && apt.professionalId === prof.id)
-                                            .map(apt => {
-                                                const service = services.find(s => s.id === apt.serviceId);
-                                                const client = clients.find(c => c.id === apt.clientId);
-                                                const style = getAppointmentStyle(apt, service?.durationMinutes || 30);
-                                                
-                                                return (
-                                                    <div 
-                                                        key={apt.id}
-                                                        style={style}
-                                                        onClick={() => {
-                                                            setSelectedAptId(apt.id);
-                                                            setIsDetailsModalOpen(true);
-                                                        }}
-                                                        className={`absolute left-1 right-1 rounded-lg border-l-4 p-2 md:p-3 shadow-sm z-10 overflow-hidden transition-all hover:shadow-md cursor-pointer ${getStatusColor(apt.status)}`}
-                                                    >
-                                                        <div className="flex justify-between items-start mb-1">
-                                                            <span className="text-[9px] md:text-[10px] font-bold opacity-70">{apt.isAllDay ? 'DIA TODO' : apt.time}</span>
-                                                            {apt.status === 'CONFIRMED' && <MessageSquare size={10} className="opacity-50" />}
-                                                            {apt.status === 'BLOCKED' && <Lock size={10} className="opacity-50" />}
-                                                        </div>
-                                                        <p className="text-[10px] md:text-xs font-bold truncate">
-                                                            {apt.status === 'BLOCKED' ? (apt.isAllDay ? 'DIA DE FOLGA / BLOQUEADO' : 'HORÁRIO BLOQUEADO') : (client?.name || 'Cliente')}
-                                                        </p>
-                                                        <p className="text-[9px] md:text-[10px] opacity-80 truncate">
-                                                            {apt.status === 'BLOCKED' ? 'Indisponível para clientes' : service?.title}
-                                                        </p>
-                                                    </div>
-                                                );
-                                            })
-                                        }
-                                    </div>
-                                ))}
+                                  {visibleAgendaAppointments
+                                    .filter(apt => apt.date === selectedDate && apt.professionalId === prof.id)
+                                    .map(apt => {
+                                      const service = services.find(s => s.id === apt.serviceId);
+                                      const client = clients.find(c => c.id === apt.clientId);
+                                      const style = getAppointmentStyle(apt, service?.durationMinutes || 30);
+
+                                      return (
+                                        <div
+                                          key={apt.id}
+                                          style={style}
+                                          onClick={() => {
+                                            setSelectedAptId(apt.id);
+                                            setIsDetailsModalOpen(true);
+                                          }}
+                                          className={`absolute left-1 right-1 rounded-lg border-l-4 p-2 md:p-3 shadow-sm z-10 overflow-hidden transition-all hover:shadow-md cursor-pointer ${getStatusColor(apt.status)}`}
+                                        >
+                                          <div className="flex justify-between items-start mb-1">
+                                            <span className="text-[9px] md:text-[10px] font-bold opacity-70">{apt.isAllDay ? 'DIA TODO' : apt.time}</span>
+                                            {apt.status === 'CONFIRMED' && <MessageSquare size={10} className="opacity-50" />}
+                                            {apt.status === 'BLOCKED' && <Lock size={10} className="opacity-50" />}
+                                          </div>
+                                          <p className="text-[10px] md:text-xs font-bold truncate">
+                                            {apt.status === 'BLOCKED' ? (apt.isAllDay ? 'DIA DE FOLGA / BLOQUEADO' : 'HORÁRIO BLOQUEADO') : (client?.name || 'Cliente')}
+                                          </p>
+                                          <p className="text-[9px] md:text-[10px] opacity-80 truncate">
+                                            {apt.status === 'BLOCKED' ? 'Indisponível para clientes' : service?.title}
+                                          </p>
+                                        </div>
+                                      );
+                                    })
+                                  }
+                                </div>
+                              ))}
                             </div>
+                          </div>
                         </div>
-                    </div>
+                      </div>
+                    </>
                 )}
 
                 {viewMode === 'WEEK' && (
@@ -3255,6 +3535,28 @@ const CalendarManagement = ({
                                                     <option key={s.id} value={s.id}>{s.title || 'Serviço'} - R$ {Number(s.price || 0).toFixed(2)}</option>
                                                 ))}
                                             </select>
+
+                                            {isLoadingAppointmentSubscriptionPreview && formData.clientId && (
+                                              <p className="mt-2 text-xs text-gray-500">Verificando cobertura da assinatura...</p>
+                                            )}
+
+                                            {appointmentSubscriptionPreviewError && formData.clientId && (
+                                              <p className="mt-2 text-xs text-amber-700">{appointmentSubscriptionPreviewError}</p>
+                                            )}
+
+                                            {appointmentCoveragePreview && (
+                                              <div className={`mt-2 rounded-lg border px-3 py-2 text-xs ${
+                                                appointmentCoveragePreview.type === 'COBERTO'
+                                                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                                  : appointmentCoveragePreview.type === 'INELEGIVEL'
+                                                    ? 'border-amber-200 bg-amber-50 text-amber-700'
+                                                    : appointmentCoveragePreview.type === 'ESGOTADO'
+                                                      ? 'border-orange-200 bg-orange-50 text-orange-700'
+                                                      : 'border-slate-200 bg-slate-50 text-slate-700'
+                                              }`}>
+                                                {appointmentCoveragePreview.message}
+                                              </div>
+                                            )}
                                         </div>
                                     </>
                                 ) : (
@@ -4346,12 +4648,20 @@ const EmailIntegration = () => {
 
 const SettingsManagement = () => {
   const navigate = useNavigate();
-  const { users, professionals, addUser, updateUser, deleteUser, categories, addCategory, updateCategory, deleteCategory, businessHours, saveBusinessHours, brandIdentity, saveBrandIdentity } = useAppContext();
-  const [activeSubTab, setActiveSubTab] = useState<'PROFESSIONALS' | 'SERVICES' | 'ALERTS' | 'PROFILES' | 'HOURS' | 'INTEGRATIONS' | 'OTHER' | 'ONBOARDING' | 'BILLING' | 'CONTACT'>('PROFESSIONALS');
+  const { users, professionals, clients, services, addUser, updateUser, deleteUser, categories, addCategory, updateCategory, deleteCategory, businessHours, saveBusinessHours, brandIdentity, saveBrandIdentity } = useAppContext();
+  const [activeSubTab, setActiveSubTab] = useState<'PROFESSIONALS' | 'SERVICES' | 'ALERTS' | 'PROFILES' | 'HOURS' | 'INTEGRATIONS' | 'OTHER' | 'ONBOARDING' | 'BILLING' | 'SUBSCRIPTIONS' | 'CONTACT'>('PROFESSIONALS');
   const [activeServiceTab, setActiveServiceTab] = useState<'SERVICES' | 'CATEGORIES'>('SERVICES');
   const [activeIntegrationTab, setActiveIntegrationTab] = useState<'WHATSAPP' | 'EMAIL'>('WHATSAPP');
-  const [activeBillingTab, setActiveBillingTab] = useState<'PLAN' | 'UTILIZATION' | 'PAYMENT' | 'INVOICING'>('PLAN');
-  const [activeIdentityTab, setActiveIdentityTab] = useState<'LOGO' | 'COLORS' | 'OTHER_PREFERENCES'>('LOGO');
+  const [activeBillingTab, setActiveBillingTab] = useState<'PLAN' | 'UTILIZATION' | 'PAYMENT' | 'INVOICING' | 'B2C'>('PLAN');
+  const [activeSubscriptionsTab, setActiveSubscriptionsTab] = useState<'CREATE_PLANS' | 'LINK_PLANS' | 'CLIENTS_LIST'>('CREATE_PLANS');
+  const [activeIdentityTab, setActiveIdentityTab] = useState<'LOGO' | 'COLORS' | 'OTHER_PREFERENCES' | 'DISCLOSURE'>('LOGO');
+  const [isHelpCenterOpen, setIsHelpCenterOpen] = useState(false);
+  const [helpCenterSearchTerm, setHelpCenterSearchTerm] = useState('');
+  const [selectedHelpArticleId, setSelectedHelpArticleId] = useState('');
+  const [isHelpArticleOpen, setIsHelpArticleOpen] = useState(false);
+  const [isGeneratingDisclosurePdf, setIsGeneratingDisclosurePdf] = useState(false);
+  const [disclosureError, setDisclosureError] = useState<string | null>(null);
+  const [disclosureSuccess, setDisclosureSuccess] = useState<string | null>(null);
 
   const [isProfessionalModalOpen, setIsProfessionalModalOpen] = useState(false);
   const [selectedProfessional, setSelectedProfessional] = useState<any>(null);
@@ -4394,6 +4704,51 @@ const SettingsManagement = () => {
   const [isSavingSubscription, setIsSavingSubscription] = useState(false);
   const [subscriptionError, setSubscriptionError] = useState<string | null>(null);
   const [subscriptionSuccess, setSubscriptionSuccess] = useState<string | null>(null);
+  const [b2cPlans, setB2cPlans] = useState<AssinaturaClientePlanoApi[]>([]);
+  const [isLoadingB2cPlans, setIsLoadingB2cPlans] = useState(false);
+  const [b2cMessage, setB2cMessage] = useState<string | null>(null);
+  const [b2cError, setB2cError] = useState<string | null>(null);
+  const [b2cPlanName, setB2cPlanName] = useState('Plano Mensal');
+  const [b2cPlanDescription, setB2cPlanDescription] = useState('');
+  const [b2cPlanPriceReais, setB2cPlanPriceReais] = useState('99,00');
+  const [b2cPlanGraceDays, setB2cPlanGraceDays] = useState('7');
+  const [b2cPlanServiceId, setB2cPlanServiceId] = useState('');
+  const [b2cPlanServiceQty, setB2cPlanServiceQty] = useState('1');
+  const [b2cPlanBenefits, setB2cPlanBenefits] = useState<Array<{ servico_id: string; quantidade_mensal: number }>>([]);
+  const [editingB2cPlanId, setEditingB2cPlanId] = useState<string | null>(null);
+  const [b2cPlanSearchTerm, setB2cPlanSearchTerm] = useState('');
+  const [b2cPlanSortField, setB2cPlanSortField] = useState<'NOME' | 'VALOR' | 'CARENCIA' | 'SERVICOS' | 'CLIENTES' | 'STATUS'>('NOME');
+  const [b2cPlanSortDirection, setB2cPlanSortDirection] = useState<'ASC' | 'DESC'>('ASC');
+  const [b2cPlanPriorityId, setB2cPlanPriorityId] = useState('');
+  const [isB2cPlanModalOpen, setIsB2cPlanModalOpen] = useState(false);
+  const [isB2cDeleteModalOpen, setIsB2cDeleteModalOpen] = useState(false);
+  const [b2cPlanToDelete, setB2cPlanToDelete] = useState<AssinaturaClientePlanoApi | null>(null);
+  const [selectedB2cClientId, setSelectedB2cClientId] = useState('');
+  const [b2cClientSearchText, setB2cClientSearchText] = useState('');
+  const [isB2cClientSearchOpen, setIsB2cClientSearchOpen] = useState(false);
+  const [selectedB2cPlanId, setSelectedB2cPlanId] = useState('');
+  const [selectedClientSubscription, setSelectedClientSubscription] = useState<AssinaturaClienteResumoApi | null>(null);
+  const [selectedClientPayments, setSelectedClientPayments] = useState<AssinaturaClientePagamentoApi[]>([]);
+  const [b2cSubscribedClients, setB2cSubscribedClients] = useState<ClienteComAssinaturaApi[]>([]);
+  const [b2cSubscribedClientSearchTerm, setB2cSubscribedClientSearchTerm] = useState('');
+  const [b2cSubscribedClientStatusFilter, setB2cSubscribedClientStatusFilter] = useState<'ALL' | 'ACTIVE' | 'GRACE' | 'PAST_DUE' | 'PAUSED' | 'CANCELLED'>('ALL');
+  const [b2cSubscribedClientPlanFilter, setB2cSubscribedClientPlanFilter] = useState('ALL');
+  const [b2cSubscribedClientSortField, setB2cSubscribedClientSortField] = useState<'CLIENTE' | 'PLANO' | 'STATUS' | 'CICLO' | 'UTILIZACAO'>('CLIENTE');
+  const [b2cSubscribedClientSortDirection, setB2cSubscribedClientSortDirection] = useState<'ASC' | 'DESC'>('ASC');
+  const [isLoadingB2cSubscribedClients, setIsLoadingB2cSubscribedClients] = useState(false);
+  const [isSavingB2c, setIsSavingB2c] = useState(false);
+  const [manualPaymentMethod, setManualPaymentMethod] = useState('DINHEIRO');
+  const [manualPaymentAmountReais, setManualPaymentAmountReais] = useState('');
+  const [manualPaymentNote, setManualPaymentNote] = useState('');
+  const [isB2cEditSubscriptionModalOpen, setIsB2cEditSubscriptionModalOpen] = useState(false);
+  const [isB2cPaymentModalOpen, setIsB2cPaymentModalOpen] = useState(false);
+  const [isB2cCancelSubscriptionModalOpen, setIsB2cCancelSubscriptionModalOpen] = useState(false);
+  const [isB2cFlowHelpModalOpen, setIsB2cFlowHelpModalOpen] = useState(false);
+  const [b2cSubscriptionToCancel, setB2cSubscriptionToCancel] = useState<ClienteComAssinaturaApi | null>(null);
+  const [editingB2cClientSubscription, setEditingB2cClientSubscription] = useState<ClienteComAssinaturaApi | null>(null);
+  const [editingB2cSubscriptionPlanId, setEditingB2cSubscriptionPlanId] = useState('');
+  const [editingB2cSubscriptionStatus, setEditingB2cSubscriptionStatus] = useState<'ACTIVE' | 'PAUSED' | 'CANCELLED'>('ACTIVE');
+  const [editingB2cSubscriptionReason, setEditingB2cSubscriptionReason] = useState('');
   const logoInputRef = useRef<HTMLInputElement | null>(null);
   const loginLogoInputRef = useRef<HTMLInputElement | null>(null);
   const loginBackgroundInputRef = useRef<HTMLInputElement | null>(null);
@@ -4406,6 +4761,17 @@ const SettingsManagement = () => {
     { name: 'Royal Purple', primary: '#7c3aed', secondary: '#f5f3ff', label: 'Criativo' },
     { name: 'Warm Terracotta', primary: '#c2410c', secondary: '#fff7ed', label: 'Acolhedor' },
   ];
+
+  const disclosurePublicUrl = useMemo(() => {
+    if (typeof window === 'undefined') return '';
+    const base = `${window.location.origin}${window.location.pathname}`;
+    return base.endsWith('/') ? base.slice(0, -1) : base;
+  }, []);
+
+  const disclosureQrCodeUrl = useMemo(() => {
+    if (!disclosurePublicUrl) return '';
+    return `https://api.qrserver.com/v1/create-qr-code/?size=512x512&data=${encodeURIComponent(disclosurePublicUrl)}`;
+  }, [disclosurePublicUrl]);
 
   useEffect(() => {
     setLocalBusinessHours(businessHours);
@@ -4444,6 +4810,187 @@ const SettingsManagement = () => {
     return (safe / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
   };
 
+  const parseReaisToCents = (value: string) => {
+    const normalized = String(value || '').trim().replace(/\./g, '').replace(',', '.');
+    const parsed = Number(normalized);
+    if (!Number.isFinite(parsed) || parsed <= 0) return null;
+    return Math.round(parsed * 100);
+  };
+
+  const formatCentsToReaisInput = (value: number) => {
+    const safe = Number.isFinite(Number(value)) ? Number(value) : 0;
+    return (safe / 100).toFixed(2).replace('.', ',');
+  };
+
+  const resetB2cPlanForm = () => {
+    setEditingB2cPlanId(null);
+    setB2cPlanName('Plano Mensal');
+    setB2cPlanDescription('');
+    setB2cPlanPriceReais('99,00');
+    setB2cPlanGraceDays('7');
+    setB2cPlanServiceId('');
+    setB2cPlanServiceQty('1');
+    setB2cPlanBenefits([]);
+  };
+
+  const filteredB2cPlans = useMemo(() => {
+    const search = String(b2cPlanSearchTerm || '').trim().toLowerCase();
+    const filtered = !search
+      ? [...b2cPlans]
+      : b2cPlans.filter((plan) => {
+      const nome = String(plan.nome || '').toLowerCase();
+      const descricao = String(plan.descricao || '').toLowerCase();
+      return nome.includes(search) || descricao.includes(search);
+    });
+
+    const sorted = [...filtered].sort((left, right) => {
+      let comparison = 0;
+      if (b2cPlanSortField === 'VALOR') {
+        comparison = Number(left.valor_mensal_centavos || 0) - Number(right.valor_mensal_centavos || 0);
+      } else if (b2cPlanSortField === 'CARENCIA') {
+        comparison = Number(left.dias_carencia || 0) - Number(right.dias_carencia || 0);
+      } else if (b2cPlanSortField === 'SERVICOS') {
+        comparison = Number(left.servicos?.length || 0) - Number(right.servicos?.length || 0);
+      } else if (b2cPlanSortField === 'CLIENTES') {
+        comparison = Number(left.clientes_ativos_count || 0) - Number(right.clientes_ativos_count || 0);
+      } else if (b2cPlanSortField === 'STATUS') {
+        comparison = Number(left.ativo ? 1 : 0) - Number(right.ativo ? 1 : 0);
+      } else {
+        comparison = String(left.nome || '').localeCompare(String(right.nome || ''), 'pt-BR');
+      }
+
+      if (comparison === 0) {
+        comparison = String(left.nome || '').localeCompare(String(right.nome || ''), 'pt-BR');
+      }
+
+      return b2cPlanSortDirection === 'ASC' ? comparison : -comparison;
+    });
+
+    if (!b2cPlanPriorityId) return sorted;
+
+    return [...sorted].sort((left, right) => {
+      const leftPriority = String(left.id || '') === b2cPlanPriorityId ? 1 : 0;
+      const rightPriority = String(right.id || '') === b2cPlanPriorityId ? 1 : 0;
+      if (leftPriority !== rightPriority) return rightPriority - leftPriority;
+      return 0;
+    });
+  }, [b2cPlans, b2cPlanPriorityId, b2cPlanSearchTerm, b2cPlanSortDirection, b2cPlanSortField]);
+
+  const b2cClientOptions = useMemo(() => {
+    return [...clients]
+      .map((client) => ({
+        id: client.id,
+        name: client.name,
+        phone: client.phone,
+        label: client.phone ? `${client.name} (${client.phone})` : client.name,
+      }))
+      .sort((left, right) => String(left.name || '').localeCompare(String(right.name || ''), 'pt-BR'));
+  }, [clients]);
+
+  const b2cLinkableClientOptions = useMemo(() => {
+    const subscribedClientIds = new Set(
+      b2cSubscribedClients.map((item) => String(item.cliente_id || ''))
+    );
+    return b2cClientOptions.filter((item) => !subscribedClientIds.has(String(item.id || '')));
+  }, [b2cClientOptions, b2cSubscribedClients]);
+
+  const b2cSubscribedPlanOptions = useMemo(() => {
+    const uniqueNames: string[] = Array.from(
+      new Set(
+        b2cSubscribedClients
+          .map((item) => String(item.plano_nome || '').trim())
+          .filter((name) => name.length > 0)
+      )
+    );
+    return uniqueNames.sort((left, right) => left.localeCompare(right, 'pt-BR'));
+  }, [b2cSubscribedClients]);
+
+  const filteredB2cLinkableClients = useMemo(() => {
+    const search = String(b2cClientSearchText || '').trim().toLowerCase();
+    if (!search) return b2cLinkableClientOptions.slice(0, 8);
+    return b2cLinkableClientOptions
+      .filter((item) => {
+        const name = String(item.name || '').toLowerCase();
+        const phone = String(item.phone || '').toLowerCase();
+        return name.includes(search) || phone.includes(search);
+      })
+      .slice(0, 8);
+  }, [b2cClientSearchText, b2cLinkableClientOptions]);
+
+  const filteredB2cSubscribedClients = useMemo(() => {
+    const search = String(b2cSubscribedClientSearchTerm || '').trim().toLowerCase();
+
+    const filtered = b2cSubscribedClients.filter((row) => {
+      const normalizedStatus = String(row.status || '').toUpperCase();
+      if (b2cSubscribedClientStatusFilter !== 'ALL' && normalizedStatus !== b2cSubscribedClientStatusFilter) {
+        return false;
+      }
+
+      const planName = String(row.plano_nome || '').trim();
+      if (b2cSubscribedClientPlanFilter !== 'ALL' && planName !== b2cSubscribedClientPlanFilter) {
+        return false;
+      }
+
+      if (!search) return true;
+      const clienteNome = String(row.cliente_nome || '').toLowerCase();
+      const clienteTelefone = String(row.cliente_telefone || '').toLowerCase();
+      const planoNome = String(row.plano_nome || '').toLowerCase();
+      return (
+        clienteNome.includes(search)
+        || clienteTelefone.includes(search)
+        || planoNome.includes(search)
+      );
+    });
+
+    return [...filtered].sort((left, right) => {
+      let comparison = 0;
+      if (b2cSubscribedClientSortField === 'PLANO') {
+        comparison = String(left.plano_nome || '').localeCompare(String(right.plano_nome || ''), 'pt-BR');
+      } else if (b2cSubscribedClientSortField === 'STATUS') {
+        comparison = String(left.status || '').localeCompare(String(right.status || ''), 'pt-BR');
+      } else if (b2cSubscribedClientSortField === 'CICLO') {
+        comparison = String(left.current_cycle_start || '').localeCompare(String(right.current_cycle_start || ''));
+      } else if (b2cSubscribedClientSortField === 'UTILIZACAO') {
+        comparison = Number(left.franquia_utilizacao_percent || 0) - Number(right.franquia_utilizacao_percent || 0);
+      } else {
+        comparison = String(left.cliente_nome || '').localeCompare(String(right.cliente_nome || ''), 'pt-BR');
+      }
+
+      if (comparison === 0) {
+        comparison = String(left.cliente_nome || '').localeCompare(String(right.cliente_nome || ''), 'pt-BR');
+      }
+
+      return b2cSubscribedClientSortDirection === 'ASC' ? comparison : -comparison;
+    });
+  }, [
+    b2cSubscribedClients,
+    b2cSubscribedClientPlanFilter,
+    b2cSubscribedClientSearchTerm,
+    b2cSubscribedClientSortDirection,
+    b2cSubscribedClientSortField,
+    b2cSubscribedClientStatusFilter,
+  ]);
+
+  const handleB2cClientSearchChange = (value: string) => {
+    setB2cClientSearchText(String(value || ''));
+    setSelectedB2cClientId('');
+    setIsB2cClientSearchOpen(true);
+  };
+
+  useEffect(() => {
+    if (!selectedB2cClientId) {
+      setB2cClientSearchText('');
+      return;
+    }
+    const selectedClient = b2cLinkableClientOptions.find((item) => item.id === selectedB2cClientId);
+    if (selectedClient) {
+      setB2cClientSearchText(selectedClient.label);
+      return;
+    }
+    setSelectedB2cClientId('');
+    setB2cClientSearchText('');
+  }, [selectedB2cClientId, b2cLinkableClientOptions]);
+
   const formatStatusLabel = (status?: string) => {
     const key = String(status || '').toUpperCase();
     if (key === 'TRIAL') return 'Trial';
@@ -4464,6 +5011,26 @@ const SettingsManagement = () => {
     return 'bg-gray-100 text-gray-700';
   };
 
+  const formatB2cStatusLabel = (status?: string) => {
+    const key = String(status || '').toUpperCase();
+    if (key === 'ACTIVE') return 'Ativa';
+    if (key === 'GRACE') return 'Em carência';
+    if (key === 'PAST_DUE') return 'Inadimplente';
+    if (key === 'PAUSED') return 'Pausada';
+    if (key === 'CANCELLED') return 'Cancelada';
+    return key || 'Indefinido';
+  };
+
+  const formatB2cStatusClass = (status?: string) => {
+    const key = String(status || '').toUpperCase();
+    if (key === 'ACTIVE') return 'bg-emerald-100 text-emerald-700';
+    if (key === 'GRACE') return 'bg-blue-100 text-blue-700';
+    if (key === 'PAST_DUE') return 'bg-amber-100 text-amber-700';
+    if (key === 'PAUSED') return 'bg-slate-200 text-slate-700';
+    if (key === 'CANCELLED') return 'bg-red-100 text-red-700';
+    return 'bg-gray-100 text-gray-700';
+  };
+
   const loadSubscription = async () => {
     if (isLoadingSubscription) return;
     setIsLoadingSubscription(true);
@@ -4471,7 +5038,7 @@ const SettingsManagement = () => {
 
     const result = await getAssinaturaApi();
     if (!result.success) {
-      setSubscriptionError(result.error || 'Falha ao carregar assinatura.');
+      setSubscriptionError(('error' in result && result.error) || 'Falha ao carregar assinatura.');
       setIsLoadingSubscription(false);
       return;
     }
@@ -4493,7 +5060,7 @@ const SettingsManagement = () => {
     });
 
     if (!result.success) {
-      setSubscriptionError(result.error || 'Falha ao salvar plano.');
+      setSubscriptionError(('error' in result && result.error) || 'Falha ao salvar plano.');
       setIsSavingSubscription(false);
       return;
     }
@@ -4524,6 +5091,394 @@ const SettingsManagement = () => {
     if (subscriptionData) return;
     loadSubscription();
   }, [activeSubTab]);
+
+  const loadB2cPlans = async () => {
+    if (isLoadingB2cPlans) return;
+    setIsLoadingB2cPlans(true);
+    setB2cError(null);
+    const result = await listPlanosAssinaturaClienteApi();
+    if (!result.success) {
+      setB2cError(('error' in result && result.error) || 'Falha ao carregar planos B2C.');
+      setIsLoadingB2cPlans(false);
+      return;
+    }
+    setB2cPlans(result.data || []);
+    setIsLoadingB2cPlans(false);
+  };
+
+  const loadSelectedClientSubscription = async (clienteId: string) => {
+    if (!clienteId) {
+      setSelectedClientSubscription(null);
+      setSelectedClientPayments([]);
+      return;
+    }
+
+    const [assinaturaRes, pagamentosRes] = await Promise.all([
+      getAssinaturaClienteApi(clienteId),
+      listPagamentosAssinaturaClienteApi(clienteId),
+    ]);
+
+    if (!assinaturaRes.success) {
+      setB2cError(('error' in assinaturaRes && assinaturaRes.error) || 'Falha ao carregar assinatura do cliente.');
+      setSelectedClientSubscription(null);
+    } else {
+      setSelectedClientSubscription(assinaturaRes.data || null);
+    }
+
+    if (!pagamentosRes.success) {
+      setSelectedClientPayments([]);
+    } else {
+      setSelectedClientPayments(pagamentosRes.data || []);
+    }
+  };
+
+  const loadB2cSubscribedClients = async () => {
+    if (isLoadingB2cSubscribedClients) return;
+    setIsLoadingB2cSubscribedClients(true);
+    setB2cError(null);
+
+    const response = await listClientesComAssinaturaApi();
+    if (!response.success) {
+      setB2cSubscribedClients([]);
+      setB2cError(('error' in response && response.error) || 'Falha ao carregar clientes com assinaturas.');
+      setIsLoadingB2cSubscribedClients(false);
+      return;
+    }
+
+    setB2cSubscribedClients(response.data || []);
+    setIsLoadingB2cSubscribedClients(false);
+  };
+
+  useEffect(() => {
+    if (activeSubTab !== 'SUBSCRIPTIONS') return;
+    loadB2cPlans();
+  }, [activeSubTab]);
+
+  useEffect(() => {
+    if (activeSubTab !== 'SUBSCRIPTIONS') return;
+    if (activeSubscriptionsTab !== 'LINK_PLANS') return;
+    if (!selectedB2cClientId) return;
+    loadSelectedClientSubscription(selectedB2cClientId);
+  }, [selectedB2cClientId, activeSubTab, activeSubscriptionsTab]);
+
+  useEffect(() => {
+    if (activeSubTab !== 'SUBSCRIPTIONS') return;
+    if (activeSubscriptionsTab !== 'CLIENTS_LIST' && activeSubscriptionsTab !== 'LINK_PLANS') return;
+    loadB2cSubscribedClients();
+  }, [activeSubTab, activeSubscriptionsTab, clients]);
+
+  const addBenefitToDraftPlan = () => {
+    const servicoId = String(b2cPlanServiceId || '').trim();
+    const quantidade = Number(b2cPlanServiceQty || 0);
+    if (!servicoId || !Number.isFinite(quantidade) || quantidade <= 0) {
+      setB2cError('Selecione um serviço e uma quantidade mensal válida.');
+      return;
+    }
+    if (b2cPlanBenefits.some((item) => item.servico_id === servicoId)) {
+      setB2cError('Este serviço já foi adicionado ao plano.');
+      return;
+    }
+    setB2cError(null);
+    setB2cPlanBenefits((prev) => [...prev, { servico_id: servicoId, quantidade_mensal: quantidade }]);
+  };
+
+  const removeBenefitFromDraftPlan = (servicoId: string) => {
+    setB2cPlanBenefits((prev) => prev.filter((item) => item.servico_id !== servicoId));
+  };
+
+  const handleCreateB2cPlan = async () => {
+    if (isSavingB2c) return;
+    const nome = String(b2cPlanName || '').trim();
+    const valorCentavos = parseReaisToCents(b2cPlanPriceReais);
+    const carencia = Number(b2cPlanGraceDays || 7);
+
+    if (!nome) {
+      setB2cError('Nome do plano é obrigatório.');
+      return;
+    }
+    if (!valorCentavos) {
+      setB2cError('Valor mensal em R$ deve ser maior que zero.');
+      return;
+    }
+    if (!Number.isFinite(carencia) || carencia < 0 || carencia > 30) {
+      setB2cError('Carência deve estar entre 0 e 30 dias.');
+      return;
+    }
+    if (b2cPlanBenefits.length === 0) {
+      setB2cError('Adicione ao menos um serviço no plano.');
+      return;
+    }
+
+    setIsSavingB2c(true);
+    setB2cError(null);
+    setB2cMessage(null);
+
+    const payload = {
+      nome,
+      descricao: String(b2cPlanDescription || '').trim() || null,
+      valor_mensal_centavos: valorCentavos,
+      dias_carencia: Math.trunc(carencia),
+      servicos: b2cPlanBenefits,
+    };
+
+    const result = editingB2cPlanId
+      ? await updatePlanoAssinaturaClienteApi(editingB2cPlanId, {
+          ...payload,
+          ativo: true,
+        })
+      : await createPlanoAssinaturaClienteApi(payload);
+
+    if (!result.success) {
+      setB2cError(('error' in result && result.error) || (editingB2cPlanId ? 'Falha ao atualizar plano B2C.' : 'Falha ao criar plano B2C.'));
+      setIsSavingB2c(false);
+      return;
+    }
+
+    setB2cMessage(editingB2cPlanId ? 'Plano B2C atualizado com sucesso.' : 'Plano B2C criado com sucesso.');
+    resetB2cPlanForm();
+    setIsB2cPlanModalOpen(false);
+    await loadB2cPlans();
+    setIsSavingB2c(false);
+  };
+
+  const handleEditB2cPlan = (plan: AssinaturaClientePlanoApi) => {
+    setEditingB2cPlanId(plan.id);
+    setB2cPlanName(plan.nome || '');
+    setB2cPlanDescription(plan.descricao || '');
+    setB2cPlanPriceReais(formatCentsToReaisInput(Number(plan.valor_mensal_centavos || 0)));
+    setB2cPlanGraceDays(String(plan.dias_carencia || 7));
+    setB2cPlanBenefits((plan.servicos || []).map((item) => ({
+      servico_id: item.servico_id,
+      quantidade_mensal: Number(item.quantidade_mensal || 1),
+    })));
+    setB2cMessage(null);
+    setB2cError(null);
+    setIsB2cPlanModalOpen(true);
+  };
+
+  const handleRequestDeleteB2cPlan = (plan: AssinaturaClientePlanoApi) => {
+    setB2cPlanToDelete(plan);
+    setIsB2cDeleteModalOpen(true);
+    setB2cError(null);
+  };
+
+  const handleDeleteB2cPlan = async () => {
+    if (isSavingB2c) return;
+    if (!b2cPlanToDelete) return;
+
+    setIsSavingB2c(true);
+    setB2cMessage(null);
+    setB2cError(null);
+
+    const result = await deletePlanoAssinaturaClienteApi(b2cPlanToDelete.id);
+    if (!result.success) {
+      setB2cError(('error' in result && result.error) || 'Falha ao excluir plano B2C.');
+      setIsSavingB2c(false);
+      return;
+    }
+
+    if (editingB2cPlanId === b2cPlanToDelete.id) {
+      resetB2cPlanForm();
+      setIsB2cPlanModalOpen(false);
+    }
+
+    setB2cMessage('Plano excluído com sucesso.');
+    setIsB2cDeleteModalOpen(false);
+    setB2cPlanToDelete(null);
+    await loadB2cPlans();
+    setIsSavingB2c(false);
+  };
+
+  const handleAssignSubscriptionToClient = async () => {
+    if (isSavingB2c) return;
+    if (!selectedB2cClientId || !selectedB2cPlanId) {
+      setB2cError('Selecione cliente e plano para ativar assinatura.');
+      return;
+    }
+    setIsSavingB2c(true);
+    setB2cError(null);
+    setB2cMessage(null);
+
+    const result = await upsertAssinaturaClienteApi(selectedB2cClientId, selectedB2cPlanId);
+    if (!result.success) {
+      setB2cError(('error' in result && result.error) || 'Falha ao ativar assinatura do cliente.');
+      setIsSavingB2c(false);
+      return;
+    }
+
+    setSelectedClientSubscription(result.data || null);
+    setB2cMessage('Assinatura vinculada ao cliente com sucesso.');
+    await loadSelectedClientSubscription(selectedB2cClientId);
+    setIsSavingB2c(false);
+  };
+
+  const handleOpenEditB2cSubscriptionModal = async (row: ClienteComAssinaturaApi) => {
+    setEditingB2cClientSubscription(row);
+    setEditingB2cSubscriptionPlanId(String(row.plano_id || ''));
+
+    const initialStatus = String(row.status || '').toUpperCase();
+    if (initialStatus === 'PAUSED' || initialStatus === 'CANCELLED') {
+      setEditingB2cSubscriptionStatus(initialStatus);
+    } else {
+      setEditingB2cSubscriptionStatus('ACTIVE');
+    }
+
+    setEditingB2cSubscriptionReason('');
+    setSelectedB2cClientId(row.cliente_id);
+    setIsB2cEditSubscriptionModalOpen(true);
+    await loadSelectedClientSubscription(row.cliente_id);
+  };
+
+  const handleSaveB2cSubscriptionEdition = async () => {
+    if (isSavingB2c) return;
+    if (!editingB2cClientSubscription) {
+      setB2cError('Nenhuma assinatura selecionada para edição.');
+      return;
+    }
+    if (!editingB2cSubscriptionPlanId) {
+      setB2cError('Selecione um plano para a assinatura.');
+      return;
+    }
+
+    const clienteId = String(editingB2cClientSubscription.cliente_id || '');
+    if (!clienteId) {
+      setB2cError('Cliente inválido para edição de assinatura.');
+      return;
+    }
+
+    setIsSavingB2c(true);
+    setB2cError(null);
+    setB2cMessage(null);
+
+    const planChanged = String(editingB2cClientSubscription.plano_id || '') !== editingB2cSubscriptionPlanId;
+    const targetStatus = String(editingB2cSubscriptionStatus || 'ACTIVE').toUpperCase();
+
+    if (planChanged) {
+      const updatePlanResult = await upsertAssinaturaClienteApi(clienteId, editingB2cSubscriptionPlanId);
+      if (!updatePlanResult.success) {
+        setB2cError(('error' in updatePlanResult && updatePlanResult.error) || 'Falha ao trocar o plano da assinatura.');
+        setIsSavingB2c(false);
+        return;
+      }
+    }
+
+    if (targetStatus === 'CANCELLED') {
+      const cancelResult = await cancelAssinaturaClienteApi(
+        clienteId,
+        String(editingB2cSubscriptionReason || '').trim() || 'Cancelada manualmente pela gestão.'
+      );
+      if (!cancelResult.success) {
+        setB2cError(('error' in cancelResult && cancelResult.error) || 'Falha ao cancelar assinatura.');
+        setIsSavingB2c(false);
+        return;
+      }
+    } else {
+      const statusResult = await updateStatusAssinaturaClienteApi(clienteId, {
+        status: targetStatus as 'ACTIVE' | 'PAUSED',
+        motivo: String(editingB2cSubscriptionReason || '').trim() || undefined,
+      });
+      if (!statusResult.success) {
+        setB2cError(('error' in statusResult && statusResult.error) || 'Falha ao atualizar status da assinatura.');
+        setIsSavingB2c(false);
+        return;
+      }
+    }
+
+    setB2cMessage('Assinatura atualizada com sucesso.');
+    setIsB2cEditSubscriptionModalOpen(false);
+    setEditingB2cClientSubscription(null);
+    await loadB2cSubscribedClients();
+
+    if (activeSubscriptionsTab === 'LINK_PLANS' && selectedB2cClientId === clienteId) {
+      await loadSelectedClientSubscription(clienteId);
+    }
+    setIsSavingB2c(false);
+  };
+
+  const handleOpenB2cPaymentModal = async (row: ClienteComAssinaturaApi) => {
+    setSelectedB2cClientId(row.cliente_id);
+    setManualPaymentMethod('DINHEIRO');
+    setManualPaymentAmountReais('');
+    setManualPaymentNote('');
+    setIsB2cPaymentModalOpen(true);
+    await loadSelectedClientSubscription(row.cliente_id);
+  };
+
+  const handleOpenCancelB2cClientSubscriptionModal = (row: ClienteComAssinaturaApi) => {
+    setB2cSubscriptionToCancel(row);
+    setIsB2cCancelSubscriptionModalOpen(true);
+  };
+
+  const handleCancelB2cClientSubscription = async () => {
+    if (isSavingB2c) return;
+    if (!b2cSubscriptionToCancel) return;
+
+    const row = b2cSubscriptionToCancel;
+
+    setIsSavingB2c(true);
+    setB2cError(null);
+    setB2cMessage(null);
+
+    const result = await cancelAssinaturaClienteApi(
+      row.cliente_id,
+      'Cancelada manualmente pela gestão na lista de assinaturas.'
+    );
+
+    if (!result.success) {
+      setB2cError(('error' in result && result.error) || 'Falha ao cancelar assinatura do cliente.');
+      setIsSavingB2c(false);
+      return;
+    }
+
+    if (selectedB2cClientId === row.cliente_id) {
+      setSelectedB2cClientId('');
+      setSelectedClientSubscription(null);
+      setSelectedClientPayments([]);
+    }
+
+    setB2cMessage('Assinatura cancelada com sucesso. A vinculação com o plano foi removida.');
+    await loadB2cSubscribedClients();
+    setIsB2cCancelSubscriptionModalOpen(false);
+    setB2cSubscriptionToCancel(null);
+    setIsSavingB2c(false);
+  };
+
+  const handleRegisterManualSubscriptionPayment = async () => {
+    if (isSavingB2c) return;
+    if (!selectedB2cClientId) {
+      setB2cError('Selecione um cliente para registrar pagamento.');
+      return;
+    }
+    const amountCentavos = manualPaymentAmountReais.trim() ? parseReaisToCents(manualPaymentAmountReais) : undefined;
+    if (manualPaymentAmountReais.trim() && !amountCentavos) {
+      setB2cError('Valor do pagamento inválido.');
+      return;
+    }
+
+    setIsSavingB2c(true);
+    setB2cError(null);
+    setB2cMessage(null);
+
+    const result = await createPagamentoAssinaturaClienteApi(selectedB2cClientId, {
+      metodo: manualPaymentMethod,
+      amount_centavos: amountCentavos,
+      observacao: String(manualPaymentNote || '').trim() || undefined,
+    });
+
+    if (!result.success) {
+      setB2cError(('error' in result && result.error) || 'Falha ao registrar pagamento manual.');
+      setIsSavingB2c(false);
+      return;
+    }
+
+    setB2cMessage('Pagamento manual registrado com sucesso.');
+    setManualPaymentAmountReais('');
+    setManualPaymentNote('');
+    await loadSelectedClientSubscription(selectedB2cClientId);
+    await loadB2cSubscribedClients();
+    setIsB2cPaymentModalOpen(false);
+    setIsSavingB2c(false);
+  };
 
   const availablePlans = subscriptionData?.planos_disponiveis || [
     {
@@ -4738,6 +5693,116 @@ const SettingsManagement = () => {
     return undefined;
   };
 
+  const loadImageDataUrl = async (url: string): Promise<string | null> => {
+    if (!url) return null;
+    try {
+      const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const element = new Image();
+        element.crossOrigin = 'anonymous';
+        element.onload = () => resolve(element);
+        element.onerror = () => reject(new Error('Falha ao carregar imagem.'));
+        element.src = url;
+      });
+
+      const canvas = document.createElement('canvas');
+      canvas.width = image.naturalWidth || 1;
+      canvas.height = image.naturalHeight || 1;
+      const context = canvas.getContext('2d');
+      if (!context) return null;
+
+      context.drawImage(image, 0, 0);
+      return canvas.toDataURL('image/png');
+    } catch {
+      return null;
+    }
+  };
+
+  const handleGenerateDisclosurePdf = async () => {
+    if (isGeneratingDisclosurePdf) return;
+    if (!disclosurePublicUrl || !disclosureQrCodeUrl) {
+      setDisclosureError('Não foi possível identificar a URL pública da barbearia para gerar o QR Code.');
+      setDisclosureSuccess(null);
+      return;
+    }
+
+    setIsGeneratingDisclosurePdf(true);
+    setDisclosureError(null);
+    setDisclosureSuccess(null);
+
+    try {
+      const barbershopName = String(identityForm.name || brandIdentity.name || 'Sua Barbearia').trim() || 'Sua Barbearia';
+      const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const margin = 36;
+
+      const logoUrl = safeIdentityAssetSrc(identityForm.logoUrl || brandIdentity.logoUrl || '', 300000) || '';
+      const logoDataUrl = await loadImageDataUrl(logoUrl);
+      const qrDataUrl = await loadImageDataUrl(disclosureQrCodeUrl);
+
+      let currentY = 44;
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(20);
+      doc.setTextColor(31, 41, 55);
+      doc.text('Divulgação Digital', pageWidth / 2, currentY, { align: 'center' });
+      currentY += 30;
+
+      if (logoDataUrl) {
+        const logoSize = 58;
+        doc.addImage(logoDataUrl, 'PNG', (pageWidth - logoSize) / 2, currentY, logoSize, logoSize);
+        currentY += logoSize + 16;
+      }
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(26);
+      doc.text(barbershopName, pageWidth / 2, currentY, { align: 'center', maxWidth: pageWidth - margin * 2 });
+      currentY += 34;
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(13);
+      doc.setTextColor(75, 85, 99);
+      doc.text('Escaneie o QR Code para acessar a barbearia no AgendeFácil', pageWidth / 2, currentY, { align: 'center' });
+      currentY += 22;
+
+      const qrSize = 240;
+      if (qrDataUrl) {
+        doc.addImage(qrDataUrl, 'PNG', (pageWidth - qrSize) / 2, currentY, qrSize, qrSize);
+      } else {
+        doc.setDrawColor(209, 213, 219);
+        doc.rect((pageWidth - qrSize) / 2, currentY, qrSize, qrSize);
+        doc.setFontSize(11);
+        doc.setTextColor(107, 114, 128);
+        doc.text('QR Code indisponível', pageWidth / 2, currentY + qrSize / 2, { align: 'center' });
+      }
+
+      currentY += qrSize + 24;
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(11);
+      doc.setTextColor(55, 65, 81);
+      doc.text('Link direto:', pageWidth / 2, currentY, { align: 'center' });
+
+      currentY += 16;
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(10);
+      doc.setTextColor(37, 99, 235);
+      doc.text(disclosurePublicUrl, pageWidth / 2, currentY, { align: 'center', maxWidth: pageWidth - margin * 2 });
+
+      const safeName = barbershopName
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-zA-Z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '')
+        .toLowerCase() || 'barbearia';
+
+      doc.save(`divulgacao_${safeName}.pdf`);
+      setDisclosureSuccess('PDF gerado com sucesso.');
+    } catch {
+      setDisclosureError('Não foi possível gerar o PDF de divulgação.');
+    } finally {
+      setIsGeneratingDisclosurePdf(false);
+    }
+  };
+
   const handleSaveProfessional = async (data: any): Promise<{ success: boolean; error?: string }> => {
     const nome = (data.name || '').trim();
     const telefone = (data.phone || '').trim();
@@ -4911,10 +5976,301 @@ const SettingsManagement = () => {
     { id: 'HOURS', label: 'Horários', icon: <Clock size={18} />, desc: 'Funcionamento' },
     { id: 'INTEGRATIONS', label: 'Integrações', icon: <Zap size={18} />, desc: 'APIs externas' },
     { id: 'BILLING', label: 'Faturamento', icon: <CreditCard size={18} />, desc: 'Assinatura e faturas' },
+    { id: 'SUBSCRIPTIONS', label: 'Assinaturas', icon: <Users size={18} />, desc: 'Planos e assinaturas de clientes' },
     { id: 'OTHER', label: 'Identidade', icon: <Settings size={18} />, desc: 'Marca e cores' },
     { id: 'ONBOARDING', label: 'Onboarding', icon: <List size={18} />, desc: 'Configuração inicial' },
     { id: 'CONTACT', label: 'Fale Conosco', icon: <Headphones size={18} />, desc: 'Suporte e ajuda' },
   ];
+
+  const helpCenterSections = useMemo(() => ([
+    {
+      id: 'START',
+      title: 'Primeiros passos',
+      description: 'Configuração inicial para começar a usar a plataforma rapidamente.',
+      articles: [
+        { id: 'START_1', title: 'Como configurar sua barbearia em 15 minutos' },
+        { id: 'START_2', title: 'Cadastro de serviços e duração de atendimento' },
+        { id: 'START_3', title: 'Cadastro de profissionais e permissões básicas' },
+        { id: 'START_4', title: 'Checklist de ativação da agenda' },
+      ],
+    },
+    {
+      id: 'AGENDA',
+      title: 'Agenda e atendimentos',
+      description: 'Operação diária de agendamentos e fluxo de atendimento.',
+      articles: [
+        { id: 'AGENDA_1', title: 'Criar, remarcar e cancelar agendamentos' },
+        { id: 'AGENDA_2', title: 'Como usar bloqueio de horário e encaixes' },
+        { id: 'AGENDA_3', title: 'No-show: boas práticas e status corretos' },
+        { id: 'AGENDA_4', title: 'Fluxo recomendado até conclusão financeira' },
+      ],
+    },
+    {
+      id: 'CLIENTS',
+      title: 'Clientes e CRM',
+      description: 'Organização da base de clientes e relacionamento.',
+      articles: [
+        { id: 'CLIENTS_1', title: 'Cadastro completo de clientes e histórico' },
+        { id: 'CLIENTS_2', title: 'Segmentação de clientes recorrentes e inativos' },
+        { id: 'CLIENTS_3', title: 'Reativação de clientes com campanhas' },
+        { id: 'CLIENTS_4', title: 'LGPD: dados e consentimento do cliente' },
+      ],
+    },
+    {
+      id: 'FINANCE',
+      title: 'Financeiro',
+      description: 'Controle de caixa, recebimentos, estornos e conferência.',
+      articles: [
+        { id: 'FINANCE_1', title: 'Fechamento diário de caixa' },
+        { id: 'FINANCE_2', title: 'Registrar pagamento parcial e quitação' },
+        { id: 'FINANCE_3', title: 'Quando e como registrar estorno' },
+        { id: 'FINANCE_4', title: 'Leitura dos indicadores financeiros principais' },
+      ],
+    },
+    {
+      id: 'SUBSCRIPTIONS',
+      title: 'Assinaturas de clientes',
+      description: 'Planos, vinculação de cliente e regras de utilização.',
+      articles: [
+        { id: 'SUBSCRIPTIONS_1', title: 'Como criar um plano de assinatura' },
+        { id: 'SUBSCRIPTIONS_2', title: 'Vincular plano ao cliente' },
+        { id: 'SUBSCRIPTIONS_3', title: 'Uso da franquia e consumo por atendimento' },
+        { id: 'SUBSCRIPTIONS_4', title: 'Pausar, cancelar e reativar assinatura' },
+      ],
+    },
+    {
+      id: 'REPORTS',
+      title: 'Relatórios',
+      description: 'Análises de faturamento, ocupação e desempenho.',
+      articles: [
+        { id: 'REPORTS_1', title: 'Como filtrar relatórios por período' },
+        { id: 'REPORTS_2', title: 'Relatório de ocupação e no-show' },
+        { id: 'REPORTS_3', title: 'Relatório de faturamento por profissional' },
+        { id: 'REPORTS_4', title: 'Exportação em PDF e Excel' },
+      ],
+    },
+  ]), []);
+
+  const filteredHelpCenterSections = useMemo(() => {
+    const query = String(helpCenterSearchTerm || '').trim().toLowerCase();
+    if (!query) return helpCenterSections;
+
+    return helpCenterSections
+      .map((section) => {
+        const titleMatches = section.title.toLowerCase().includes(query);
+        const descriptionMatches = section.description.toLowerCase().includes(query);
+        const articles = section.articles.filter((article) => article.title.toLowerCase().includes(query));
+
+        if (titleMatches || descriptionMatches) {
+          return section;
+        }
+
+        if (articles.length > 0) {
+          return {
+            ...section,
+            articles,
+          };
+        }
+
+        return null;
+      })
+      .filter((section): section is typeof helpCenterSections[number] => Boolean(section));
+  }, [helpCenterSearchTerm, helpCenterSections]);
+
+  const helpCenterArticlesCount = useMemo(() => {
+    return filteredHelpCenterSections.reduce((acc, section) => acc + section.articles.length, 0);
+  }, [filteredHelpCenterSections]);
+
+  const flattenedHelpCenterArticles = useMemo(() => {
+    return filteredHelpCenterSections.flatMap((section) =>
+      section.articles.map((article) => ({
+        ...article,
+        sectionId: section.id,
+        sectionTitle: section.title,
+      })),
+    );
+  }, [filteredHelpCenterSections]);
+
+  const selectedHelpArticle = useMemo(() => {
+    return flattenedHelpCenterArticles.find((article) => article.id === selectedHelpArticleId) || null;
+  }, [flattenedHelpCenterArticles, selectedHelpArticleId]);
+
+  const helpCenterArticleContent = useMemo<Record<string, { summary: string; where: string; steps: string[]; warnings: string[] }>>(() => ({
+    START_1: {
+      summary: 'Configuração inicial da barbearia usando os blocos de Identidade, Horários, Serviços e Profissionais.',
+      where: 'Configurações > Identidade, Horários, Serviços e Profissionais.',
+      steps: ['Defina nome, logo e cores da marca.', 'Configure dias/horários de funcionamento.', 'Cadastre serviços com duração e preço.', 'Cadastre equipe e valide permissões.'],
+      warnings: ['Não deixe horário de fim menor que início.', 'Evite criar serviços sem duração definida.'],
+    },
+    START_2: {
+      summary: 'Serviços são cadastrados com título, categoria, duração e preço para uso em agenda e relatórios.',
+      where: 'Configurações > Serviços.',
+      steps: ['Crie categorias se necessário.', 'Cadastre serviço com duração em minutos.', 'Defina preço e descrição comercial.', 'Valide disponibilidade para profissionais.'],
+      warnings: ['Preço/descritivo inconsistentes afetam relatórios.', 'Serviço removido pode aparecer como “Serviço removido” em históricos.'],
+    },
+    START_3: {
+      summary: 'Profissionais podem ser vinculados a usuário com perfil e permissões de operação.',
+      where: 'Configurações > Profissionais e Perfis.',
+      steps: ['Cadastre profissional com cargo e comissão.', 'Ative acesso (usuário) quando necessário.', 'Ajuste permissões de equipe (agenda/financeiro/relatórios).'],
+      warnings: ['Equipe sem permissão não conclui financeiro.', 'Usuário sem vínculo correto limita operação.'],
+    },
+    START_4: {
+      summary: 'Checklist de ativação para reduzir falhas operacionais no primeiro uso.',
+      where: 'Configurações > Horários, Serviços, Profissionais, Alertas e Integrações.',
+      steps: ['Valide horários de funcionamento.', 'Confirme serviços e profissionais ativos.', 'Revise canais de alerta (WhatsApp/e-mail).', 'Teste agendamento completo até conclusão financeira.'],
+      warnings: ['Sem teste fim-a-fim, erros só aparecem em produção.', 'Permissões de equipe devem ser revisadas antes de abrir agenda.'],
+    },
+    AGENDA_1: {
+      summary: 'Criação, edição e cancelamento de agendamentos com validações de horário e perfil.',
+      where: 'Agenda e Central de Agendamentos.',
+      steps: ['Crie agendamento com cliente, serviço e profissional.', 'Use editar para remarcação.', 'Cancele quando necessário com motivo.', 'Acompanhe status até confirmação.'],
+      warnings: ['Reagendar sem confirmar disponibilidade gera conflito.', 'Cancelamentos sem padrão dificultam análise.'],
+    },
+    AGENDA_2: {
+      summary: 'Bloqueios de agenda impedem encaixes indevidos e organizam indisponibilidades.',
+      where: 'Agenda > Novo bloqueio / Editar bloqueio.',
+      steps: ['Crie bloqueio informando início/fim.', 'Opcionalmente registre motivo.', 'Revise bloqueios no dia para evitar encaixe indevido.'],
+      warnings: ['Fim deve ser maior que início.', 'Bloqueios excessivos reduzem ocupação real.'],
+    },
+    AGENDA_3: {
+      summary: 'No-show possui status específico e deve seguir regra operacional padronizada.',
+      where: 'Detalhes do agendamento e Central de Agendamentos.',
+      steps: ['Marque no-show no atendimento não comparecido.', 'Evite concluir financeiro em casos indevidos.', 'Acompanhe impacto em relatórios de ocupação.'],
+      warnings: ['Misturar cancelado com no-show distorce métricas.', 'No-show sem rotina de contato reduz retenção.'],
+    },
+    AGENDA_4: {
+      summary: 'Fluxo recomendado de status até `COMPLETED_FIN`, com regras de transição controladas.',
+      where: 'Central de Agendamentos (ações de status).',
+      steps: ['Avance status conforme execução real.', 'Use conclusão financeira no momento correto.', 'Reabra somente quando necessário.'],
+      warnings: ['Transição inválida é bloqueada pelo sistema.', 'Equipe sem permissão não conclui financeiro.'],
+    },
+    CLIENTS_1: {
+      summary: 'Cadastro completo de cliente garante histórico útil para agenda, CRM e relatórios.',
+      where: 'Gestão de clientes no painel administrativo.',
+      steps: ['Cadastre nome e telefone corretamente.', 'Mantenha histórico de atendimentos consistente.', 'Revise duplicidades periodicamente.'],
+      warnings: ['Telefone inválido reduz efetividade de contato.', 'Duplicidade de cliente quebra análise de recorrência.'],
+    },
+    CLIENTS_2: {
+      summary: 'Segmentar recorrentes e inativos ajuda a direcionar ações comerciais.',
+      where: 'Relatórios (clientes) e filtros operacionais.',
+      steps: ['Identifique frequência e última visita.', 'Separe recorrentes de inativos.', 'Aplique ações por segmento.'],
+      warnings: ['Segmentação sem periodicidade perde valor.', 'Dados incompletos reduzem assertividade.'],
+    },
+    CLIENTS_3: {
+      summary: 'Reativação deve partir de clientes sem retorno em janela definida.',
+      where: 'Relatórios > Clientes (CRM).',
+      steps: ['Filtre clientes por dias sem retorno.', 'Monte campanha objetiva.', 'Acompanhe retorno e ajuste abordagem.'],
+      warnings: ['Campanha sem segmentação aumenta custo e baixa conversão.', 'Não medir retorno impede melhoria contínua.'],
+    },
+    CLIENTS_4: {
+      summary: 'LGPD exige tratamento responsável dos dados e finalidade clara.',
+      where: 'Cadastro de clientes e canais de contato.',
+      steps: ['Colete apenas dados necessários.', 'Use dados para operação legítima.', 'Atenda solicitações de atualização/exclusão quando aplicável.'],
+      warnings: ['Evite dados sensíveis desnecessários.', 'Compartilhamento indevido gera risco jurídico.'],
+    },
+    FINANCE_1: {
+      summary: 'Fechamento diário consolida valores em aberto, recebidos e estornados.',
+      where: 'Financeiro > lista e cards de resumo.',
+      steps: ['Filtre período correto.', 'Concilie recebimentos do dia.', 'Valide saldos e inconsistências.'],
+      warnings: ['Sem rotina diária, diferenças acumulam rápido.', 'Período incorreto distorce conferência.'],
+    },
+    FINANCE_2: {
+      summary: 'Pagamentos podem ser registrados parcial ou totalmente por recebível.',
+      where: 'Financeiro > ação Registrar Pagamento.',
+      steps: ['Abra ação no recebível.', 'Informe valor e método.', 'Confirme e revise status atualizado.'],
+      warnings: ['Valor inválido é recusado.', 'Método incorreto prejudica conciliação.'],
+    },
+    FINANCE_3: {
+      summary: 'Estorno exige motivo e deve ser usado apenas para correções reais.',
+      where: 'Financeiro > ação Registrar Estorno.',
+      steps: ['Selecione recebível correto.', 'Informe valor válido.', 'Preencha motivo obrigatório.', 'Confirme operação.'],
+      warnings: ['Estorno sem motivo é bloqueado.', 'Estorno no recebível errado compromete histórico.'],
+    },
+    FINANCE_4: {
+      summary: 'Indicadores principais: a receber, recebido líquido, quitado, estornado e comissão.',
+      where: 'Financeiro > cards de resumo e tabela.',
+      steps: ['Analise cards por período.', 'Cruze com filtros por profissional.', 'Avalie status OPEN/PARTIAL/PAID/REFUNDED.'],
+      warnings: ['Ler indicador sem contexto de período gera decisão ruim.', 'Comparar períodos diferentes sem padrão distorce tendência.'],
+    },
+    SUBSCRIPTIONS_1: {
+      summary: 'Plano de assinatura inclui nome, valor, carência e serviços com franquia mensal.',
+      where: 'Configurações > Assinaturas > Criar planos.',
+      steps: ['Defina nome e valor mensal.', 'Configure carência.', 'Adicione serviços e quantidades mensais.', 'Salve plano ativo.'],
+      warnings: ['Plano sem serviços não é válido.', 'Carência fora do intervalo permitido é recusada.'],
+    },
+    SUBSCRIPTIONS_2: {
+      summary: 'Vinculação associa cliente elegível a um plano ativo.',
+      where: 'Configurações > Assinaturas > Vincular planos.',
+      steps: ['Busque cliente sem assinatura ativa.', 'Selecione plano ativo.', 'Confirme vinculação.', 'Revise dados em clientes com assinatura.'],
+      warnings: ['Cliente/plano vazio impede ação.', 'Vinculação errada exige edição/cancelamento posterior.'],
+    },
+    SUBSCRIPTIONS_3: {
+      summary: 'Franquia é consumida no fechamento financeiro do atendimento (não na criação do agendamento).',
+      where: 'Assinaturas + fluxo de conclusão financeira na agenda.',
+      steps: ['Acompanhe franquia incluída vs consumida.', 'Finalize atendimento no financeiro para debitar franquia.', 'Monitore percentual de utilização.'],
+      warnings: ['Concluir financeiro indevidamente debita franquia.', 'Franquia esgotada torna atendimento avulso.'],
+    },
+    SUBSCRIPTIONS_4: {
+      summary: 'Gestão de status permite pausar, cancelar e reativar conforme operação.',
+      where: 'Assinaturas > Clientes com assinaturas.',
+      steps: ['Abra edição da assinatura.', 'Ajuste plano/status quando necessário.', 'Use cancelamento com confirmação.', 'Registre motivo em alterações sensíveis.'],
+      warnings: ['Cancelamento remove vínculo com plano.', 'Alteração de status sem processo confunde equipe.'],
+    },
+    REPORTS_1: {
+      summary: 'Relatórios aceitam período TODAY, 7/30 dias, mês atual e personalizado.',
+      where: 'Aba Relatórios > filtro Período.',
+      steps: ['Escolha período padrão.', 'Use personalizado para recorte específico.', 'Valide datas antes de comparar resultados.'],
+      warnings: ['Período errado muda conclusão do relatório.', 'Comparação sem mesma janela temporal induz erro.'],
+    },
+    REPORTS_2: {
+      summary: 'Relatório de ocupação mede agendamentos, concluídos, no-show e cancelados por profissional.',
+      where: 'Relatórios > opção Agenda e Ocupação.',
+      steps: ['Selecione relatório de ocupação.', 'Aplique filtros de período/status/profissional.', 'Analise taxa de ocupação e no-show.'],
+      warnings: ['Status inconsistentes afetam taxa de ocupação.', 'No-show mal classificado distorce indicador.'],
+    },
+    REPORTS_3: {
+      summary: 'Relatório de desempenho por profissional mostra produção, faturamento e comissão estimada.',
+      where: 'Relatórios > opção Desempenho por Profissional.',
+      steps: ['Selecione período.', 'Revise atendimentos concluídos.', 'Compare ticket médio e comissão estimada.'],
+      warnings: ['Comissão depende de percentual cadastrado do profissional.', 'Período curto pode gerar leitura sazonal.'],
+    },
+    REPORTS_4: {
+      summary: 'Exportação gera arquivo com período e tipo de relatório selecionados.',
+      where: 'Relatórios > botões Exportar PDF / Exportar Excel.',
+      steps: ['Aplique filtros e selecione relatório.', 'Clique em exportar no formato desejado.', 'Valide nome do arquivo e período no documento.'],
+      warnings: ['Exportar sem ajustar filtro gera arquivo incorreto.', 'PDF/Excel refletem exatamente os filtros atuais.'],
+    },
+  }), []);
+
+  useEffect(() => {
+    if (!isHelpCenterOpen) return;
+    if (flattenedHelpCenterArticles.length === 0) {
+      setSelectedHelpArticleId('');
+      return;
+    }
+
+    const stillExists = flattenedHelpCenterArticles.some((article) => article.id === selectedHelpArticleId);
+    if (!stillExists) {
+      setSelectedHelpArticleId(flattenedHelpCenterArticles[0].id);
+    }
+  }, [isHelpCenterOpen, flattenedHelpCenterArticles, selectedHelpArticleId]);
+
+  const selectedHelpArticleGuide = useMemo(() => {
+    if (!selectedHelpArticle) return null;
+    return helpCenterArticleContent[selectedHelpArticle.id] || null;
+  }, [helpCenterArticleContent, selectedHelpArticle]);
+
+  const helpArticleNavigation = useMemo(() => {
+    const currentIndex = flattenedHelpCenterArticles.findIndex((article) => article.id === selectedHelpArticleId);
+    if (currentIndex < 0) {
+      return { previous: null as null | typeof flattenedHelpCenterArticles[number], next: null as null | typeof flattenedHelpCenterArticles[number] };
+    }
+
+    return {
+      previous: currentIndex > 0 ? flattenedHelpCenterArticles[currentIndex - 1] : null,
+      next: currentIndex < flattenedHelpCenterArticles.length - 1 ? flattenedHelpCenterArticles[currentIndex + 1] : null,
+    };
+  }, [flattenedHelpCenterArticles, selectedHelpArticleId]);
 
   const adminUsersCount = users.filter(u => u.role === 'ADMIN').length;
   const employeeUsersCount = users.filter(u => u.role !== 'ADMIN').length;
@@ -4928,6 +6284,14 @@ const SettingsManagement = () => {
       linkedPhone: linkedUser?.phone,
     };
   });
+
+  useEffect(() => {
+    if (activeSubTab === 'CONTACT') return;
+    setIsHelpCenterOpen(false);
+    setIsHelpArticleOpen(false);
+    setHelpCenterSearchTerm('');
+    setSelectedHelpArticleId('');
+  }, [activeSubTab]);
 
   return (
     <div className="flex flex-col lg:flex-row gap-8">
@@ -5827,6 +7191,1123 @@ const SettingsManagement = () => {
                   </div>
                 </div>
               )}
+
+              {activeBillingTab === 'B2C' && (
+                <div className="space-y-6">
+                  {(b2cError || b2cMessage) && (
+                    <div className="space-y-2">
+                      {b2cError && (
+                        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                          {b2cError}
+                        </div>
+                      )}
+                      {b2cMessage && (
+                        <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
+                          {b2cMessage}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div className="p-5 bg-white border border-gray-200 rounded-2xl space-y-4">
+                      <h4 className="font-bold text-gray-800">Criar plano B2C</h4>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <input
+                          value={b2cPlanName}
+                          onChange={(e) => setB2cPlanName(e.target.value)}
+                          className="p-2.5 rounded-lg border border-gray-200 text-sm"
+                          placeholder="Nome do plano"
+                        />
+                        <input
+                          value={b2cPlanPriceReais}
+                          onChange={(e) => setB2cPlanPriceReais(e.target.value)}
+                          className="p-2.5 rounded-lg border border-gray-200 text-sm"
+                          placeholder="Valor mensal em R$ (ex: 99,90)"
+                        />
+                        <input
+                          value={b2cPlanGraceDays}
+                          onChange={(e) => setB2cPlanGraceDays(e.target.value)}
+                          className="p-2.5 rounded-lg border border-gray-200 text-sm"
+                          placeholder="Dias de carência"
+                        />
+                        <input
+                          value={b2cPlanDescription}
+                          onChange={(e) => setB2cPlanDescription(e.target.value)}
+                          className="p-2.5 rounded-lg border border-gray-200 text-sm"
+                          placeholder="Descrição (opcional)"
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">Serviços incluídos</p>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                          <select
+                            value={b2cPlanServiceId}
+                            onChange={(e) => setB2cPlanServiceId(e.target.value)}
+                            className="sm:col-span-2 p-2.5 rounded-lg border border-gray-200 text-sm"
+                          >
+                            <option value="">Selecione o serviço</option>
+                            {services.map((service) => (
+                              <option key={service.id} value={service.id}>{service.title}</option>
+                            ))}
+                          </select>
+                          <input
+                            value={b2cPlanServiceQty}
+                            onChange={(e) => setB2cPlanServiceQty(e.target.value)}
+                            className="p-2.5 rounded-lg border border-gray-200 text-sm"
+                            placeholder="Qtd/mês"
+                          />
+                        </div>
+                        <button
+                          onClick={addBenefitToDraftPlan}
+                          className="px-3 py-2 rounded-lg border border-gray-200 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                        >
+                          Adicionar serviço
+                        </button>
+                        <div className="space-y-1">
+                          {b2cPlanBenefits.map((benefit) => {
+                            const service = services.find((item) => item.id === benefit.servico_id);
+                            return (
+                              <div key={benefit.servico_id} className="flex items-center justify-between rounded-lg border border-gray-100 px-3 py-2">
+                                <span className="text-sm text-gray-700">{service?.title || benefit.servico_id} · {benefit.quantidade_mensal}/mês</span>
+                                <button onClick={() => removeBenefitFromDraftPlan(benefit.servico_id)} className="text-xs text-red-600 font-bold">Remover</button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={handleCreateB2cPlan}
+                        disabled={isSavingB2c}
+                        className="w-full py-2.5 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed"
+                      >
+                        {isSavingB2c ? 'Salvando...' : 'Criar plano'}
+                      </button>
+                    </div>
+
+                    <div className="p-5 bg-white border border-gray-200 rounded-2xl space-y-4">
+                      <div className="flex items-center justify-between">
+                        <h4 className="font-bold text-gray-800">Planos ativos</h4>
+                        <button
+                          onClick={loadB2cPlans}
+                          className="px-3 py-1.5 text-xs font-bold rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"
+                        >
+                          Atualizar
+                        </button>
+                      </div>
+                      {isLoadingB2cPlans ? (
+                        <p className="text-sm text-gray-500">Carregando planos...</p>
+                      ) : (
+                        <div className="space-y-2 max-h-72 overflow-auto pr-1">
+                          {b2cPlans.map((plan) => (
+                            <div key={plan.id} className="rounded-xl border border-gray-100 p-3">
+                              <div className="flex items-center justify-between gap-2">
+                                <p className="font-semibold text-gray-800">{plan.nome}</p>
+                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${plan.ativo ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-600'}`}>
+                                  {plan.ativo ? 'Ativo' : 'Inativo'}
+                                </span>
+                              </div>
+                              <p className="text-xs text-gray-500 mt-1">{formatMoneyFromCents(plan.valor_mensal_centavos)} / mês • carência {plan.dias_carencia} dia(s)</p>
+                              <p className="text-xs text-gray-500 mt-1">{plan.servicos?.length || 0} serviço(s) incluído(s)</p>
+                            </div>
+                          ))}
+                          {b2cPlans.length === 0 && <p className="text-sm text-gray-500">Nenhum plano cadastrado.</p>}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="p-5 bg-white border border-gray-200 rounded-2xl space-y-4">
+                    <h4 className="font-bold text-gray-800">Assinatura por cliente</h4>
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+                      <div className="relative">
+                        <input
+                          value={b2cClientSearchText}
+                          onFocus={() => setIsB2cClientSearchOpen(true)}
+                          onBlur={() => setTimeout(() => setIsB2cClientSearchOpen(false), 120)}
+                          onChange={(e) => handleB2cClientSearchChange(e.target.value)}
+                          className="w-full p-2.5 rounded-lg border border-gray-200 text-sm"
+                          placeholder="Buscar cliente por nome..."
+                        />
+                        {isB2cClientSearchOpen && (
+                          <div className="absolute z-20 mt-1 w-full max-h-44 overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg">
+                            {filteredB2cLinkableClients.length > 0 ? (
+                              filteredB2cLinkableClients.map((client) => (
+                                <button
+                                  key={client.id}
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedB2cClientId(client.id);
+                                    setB2cClientSearchText(client.label);
+                                    setIsB2cClientSearchOpen(false);
+                                  }}
+                                  className="w-full text-left px-3 py-2 hover:bg-gray-50 border-b border-gray-100 last:border-b-0"
+                                >
+                                  <p className="text-sm font-medium text-gray-900">{client.name}</p>
+                                  <p className="text-xs text-gray-500">{client.phone || 'Sem telefone'}</p>
+                                </button>
+                              ))
+                            ) : (
+                              <div className="px-3 py-2 text-sm text-gray-500">Nenhum cliente elegível encontrado.</div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      <select
+                        value={selectedB2cPlanId}
+                        onChange={(e) => setSelectedB2cPlanId(e.target.value)}
+                        className="p-2.5 rounded-lg border border-gray-200 text-sm"
+                      >
+                        <option value="">Selecione o plano</option>
+                        {b2cPlans.filter((plan) => plan.ativo).map((plan) => (
+                          <option key={plan.id} value={plan.id}>{plan.nome}</option>
+                        ))}
+                      </select>
+                      <button
+                        onClick={handleAssignSubscriptionToClient}
+                        disabled={isSavingB2c}
+                        className="py-2.5 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed"
+                      >
+                        Vincular assinatura
+                      </button>
+                    </div>
+
+                    {selectedClientSubscription && (
+                      <div className="rounded-xl border border-gray-100 p-4 space-y-2">
+                        <p className="text-sm font-bold text-gray-800">Status: {selectedClientSubscription.subscription.status}</p>
+                        <p className="text-xs text-gray-500">
+                          Ciclo: {safeDateBr(selectedClientSubscription.subscription.current_cycle_start)} até {safeDateBr(selectedClientSubscription.subscription.current_cycle_end)}
+                        </p>
+                        <div className="space-y-1 pt-1">
+                          {selectedClientSubscription.beneficios.map((benefit) => (
+                            <p key={benefit.servico_id} className="text-xs text-gray-600">
+                              {benefit.servico_nome || benefit.servico_id}: {benefit.quantidade_consumida}/{benefit.quantidade_incluida} usado(s), restante {benefit.quantidade_restante}
+                            </p>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-1 lg:grid-cols-4 gap-3 items-end">
+                      <select
+                        value={manualPaymentMethod}
+                        onChange={(e) => setManualPaymentMethod(e.target.value)}
+                        className="p-2.5 rounded-lg border border-gray-200 text-sm"
+                      >
+                        <option value="DINHEIRO">Dinheiro</option>
+                        <option value="PIX">PIX</option>
+                        <option value="CARTAO">Cartão</option>
+                      </select>
+                      <input
+                        value={manualPaymentAmountReais}
+                        onChange={(e) => setManualPaymentAmountReais(e.target.value)}
+                        className="p-2.5 rounded-lg border border-gray-200 text-sm"
+                        placeholder="Valor em R$ (opcional)"
+                      />
+                      <input
+                        value={manualPaymentNote}
+                        onChange={(e) => setManualPaymentNote(e.target.value)}
+                        className="p-2.5 rounded-lg border border-gray-200 text-sm"
+                        placeholder="Observação"
+                      />
+                      <button
+                        onClick={handleRegisterManualSubscriptionPayment}
+                        disabled={isSavingB2c || !selectedB2cClientId}
+                        className="py-2.5 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed"
+                      >
+                        Registrar pagamento
+                      </button>
+                    </div>
+
+                    {selectedClientPayments.length > 0 && (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-sm">
+                          <thead>
+                            <tr className="text-gray-400 text-[10px] font-bold uppercase tracking-wider border-b border-gray-100">
+                              <th className="pb-2 font-bold">Data</th>
+                              <th className="pb-2 font-bold">Valor</th>
+                              <th className="pb-2 font-bold">Método</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-50">
+                            {selectedClientPayments.map((payment) => (
+                              <tr key={payment.id}>
+                                <td className="py-2.5 text-gray-700">{safeDateBr(String(payment.paid_at).slice(0, 10))}</td>
+                                <td className="py-2.5 font-semibold text-gray-900">{formatMoneyFromCents(payment.amount_centavos)}</td>
+                                <td className="py-2.5 text-gray-700">{payment.metodo}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeSubTab === 'SUBSCRIPTIONS' && (
+            <div className="space-y-8">
+              <div className="space-y-4">
+                <div className="flex items-center justify-between gap-3">
+                  <h3 className="font-bold text-gray-800">Assinaturas</h3>
+                  <button
+                    onClick={() => setIsB2cFlowHelpModalOpen(true)}
+                    className="text-sm font-semibold text-blue-600 hover:text-blue-700"
+                  >
+                    Como funciona o fluxo?
+                  </button>
+                </div>
+
+                <nav className="flex overflow-x-auto pb-2 gap-2 no-scrollbar -mx-2 px-2">
+                  <button
+                    onClick={() => setActiveSubscriptionsTab('CREATE_PLANS')}
+                    className={`px-4 py-2 rounded-full text-xs sm:text-sm font-bold whitespace-nowrap transition-all ${
+                      activeSubscriptionsTab === 'CREATE_PLANS'
+                        ? 'bg-blue-600 text-white shadow-md shadow-blue-100'
+                        : 'bg-white border border-gray-200 text-gray-600'
+                    }`}
+                  >
+                    Criar planos
+                  </button>
+                  <button
+                    onClick={() => setActiveSubscriptionsTab('LINK_PLANS')}
+                    className={`px-4 py-2 rounded-full text-xs sm:text-sm font-bold whitespace-nowrap transition-all ${
+                      activeSubscriptionsTab === 'LINK_PLANS'
+                        ? 'bg-blue-600 text-white shadow-md shadow-blue-100'
+                        : 'bg-white border border-gray-200 text-gray-600'
+                    }`}
+                  >
+                    Vincular planos
+                  </button>
+                  <button
+                    onClick={() => setActiveSubscriptionsTab('CLIENTS_LIST')}
+                    className={`px-4 py-2 rounded-full text-xs sm:text-sm font-bold whitespace-nowrap transition-all ${
+                      activeSubscriptionsTab === 'CLIENTS_LIST'
+                        ? 'bg-blue-600 text-white shadow-md shadow-blue-100'
+                        : 'bg-white border border-gray-200 text-gray-600'
+                    }`}
+                  >
+                    Clientes com assinaturas
+                  </button>
+                </nav>
+              </div>
+
+              {(b2cError || b2cMessage) && (
+                <div className="space-y-2">
+                  {b2cError && (
+                    <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                      {b2cError}
+                    </div>
+                  )}
+                  {b2cMessage && (
+                    <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
+                      {b2cMessage}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {activeSubscriptionsTab === 'CREATE_PLANS' && (
+                <div className="space-y-4">
+                  <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
+                    <h4 className="font-bold text-gray-800">Planos cadastrados</h4>
+                    <div className="flex flex-col sm:flex-row gap-3 w-full lg:w-auto">
+                      <div className="relative flex-1 sm:flex-none">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                        <input
+                          type="text"
+                          placeholder="Buscar plano..."
+                          value={b2cPlanSearchTerm}
+                          onChange={(e) => setB2cPlanSearchTerm(e.target.value)}
+                          className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none w-full sm:w-64"
+                        />
+                      </div>
+                      <select
+                        value={b2cPlanSortField}
+                        onChange={(e) => setB2cPlanSortField(e.target.value as 'NOME' | 'VALOR' | 'CARENCIA' | 'SERVICOS' | 'CLIENTES' | 'STATUS')}
+                        className="px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-700 bg-white"
+                      >
+                        <option value="NOME">Ordenar por nome</option>
+                        <option value="VALOR">Ordenar por valor</option>
+                        <option value="CARENCIA">Ordenar por carência</option>
+                        <option value="SERVICOS">Ordenar por serviços</option>
+                        <option value="CLIENTES">Ordenar por clientes</option>
+                        <option value="STATUS">Ordenar por status</option>
+                      </select>
+                      <select
+                        value={b2cPlanPriorityId}
+                        onChange={(e) => setB2cPlanPriorityId(e.target.value)}
+                        className="px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-700 bg-white"
+                      >
+                        <option value="">Sem plano prioritário</option>
+                        {b2cPlans.map((plan) => (
+                          <option key={plan.id} value={plan.id}>{plan.nome}</option>
+                        ))}
+                      </select>
+                      <button
+                        onClick={() => setB2cPlanSortDirection((prev) => (prev === 'ASC' ? 'DESC' : 'ASC'))}
+                        className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                      >
+                        {b2cPlanSortDirection === 'ASC' ? 'Crescente' : 'Decrescente'}
+                      </button>
+                      <button
+                        onClick={() => {
+                          resetB2cPlanForm();
+                          setIsB2cPlanModalOpen(true);
+                        }}
+                        className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center justify-center gap-2 hover:bg-blue-700 transition-colors shadow-sm"
+                      >
+                        <Plus size={18} /> Criar Plano
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="md:hidden space-y-3">
+                    {filteredB2cPlans.map((plan) => (
+                      <div key={plan.id} className="bg-white rounded-xl border border-gray-100 p-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="font-semibold text-gray-900">{plan.nome}</p>
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${plan.ativo ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-600'}`}>
+                            {plan.ativo ? 'Ativo' : 'Inativo'}
+                          </span>
+                        </div>
+                        <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                          <div>
+                            <p className="text-xs text-gray-500">Valor</p>
+                            <p className="text-gray-900 font-semibold">{formatMoneyFromCents(plan.valor_mensal_centavos)}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-gray-500">Carência</p>
+                            <p className="text-gray-700">{plan.dias_carencia} dia(s)</p>
+                          </div>
+                          <div className="col-span-2">
+                            <p className="text-xs text-gray-500">Serviços incluídos</p>
+                            <p className="text-gray-700">{plan.servicos?.length || 0}</p>
+                          </div>
+                          <div className="col-span-2">
+                            <p className="text-xs text-gray-500">Clientes no plano</p>
+                            <p className="text-gray-700">{Number(plan.clientes_ativos_count || 0)}</p>
+                          </div>
+                        </div>
+                        <div className="mt-3 flex items-center gap-3">
+                          <button onClick={() => handleEditB2cPlan(plan)} className="text-blue-600 hover:text-blue-800">
+                            <Edit size={18} />
+                          </button>
+                          <button onClick={() => handleRequestDeleteB2cPlan(plan)} className="text-red-600 hover:text-red-800">
+                            <Trash2 size={18} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                    {filteredB2cPlans.length === 0 && (
+                      <div className="bg-white rounded-xl border border-gray-100 p-6 text-center text-sm text-gray-500">
+                        Nenhum plano encontrado.
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="hidden md:block bg-white rounded-xl shadow-sm overflow-hidden border border-gray-100">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm text-left min-w-[780px]">
+                        <thead className="bg-gray-50 text-gray-600 font-medium">
+                          <tr>
+                            <th className="px-6 py-3">Plano</th>
+                            <th className="px-6 py-3">Valor mensal</th>
+                            <th className="px-6 py-3">Carência</th>
+                            <th className="px-6 py-3">Serviços</th>
+                            <th className="px-6 py-3">Clientes</th>
+                            <th className="px-6 py-3">Status</th>
+                            <th className="px-6 py-3 text-right">Ações</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y">
+                          {filteredB2cPlans.map((plan) => (
+                            <tr key={plan.id} className="hover:bg-gray-50">
+                              <td className="px-6 py-4 font-medium text-gray-900">{plan.nome}</td>
+                              <td className="px-6 py-4 text-gray-700">{formatMoneyFromCents(plan.valor_mensal_centavos)}</td>
+                              <td className="px-6 py-4 text-gray-700">{plan.dias_carencia} dia(s)</td>
+                              <td className="px-6 py-4 text-gray-700">{plan.servicos?.length || 0}</td>
+                              <td className="px-6 py-4 text-gray-700">{Number(plan.clientes_ativos_count || 0)}</td>
+                              <td className="px-6 py-4">
+                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${plan.ativo ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-600'}`}>
+                                  {plan.ativo ? 'Ativo' : 'Inativo'}
+                                </span>
+                              </td>
+                              <td className="px-6 py-4 text-right space-x-3">
+                                <button onClick={() => handleEditB2cPlan(plan)} className="text-blue-600 hover:text-blue-800">
+                                  <Edit size={18} />
+                                </button>
+                                <button onClick={() => handleRequestDeleteB2cPlan(plan)} className="text-red-600 hover:text-red-800">
+                                  <Trash2 size={18} />
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    {filteredB2cPlans.length === 0 && (
+                      <div className="px-6 py-8 text-center text-sm text-gray-500">Nenhum plano encontrado.</div>
+                    )}
+                  </div>
+
+                  {isB2cPlanModalOpen && (
+                    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                      <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl overflow-hidden animate-fade-in">
+                        <div className="px-6 py-4 border-b flex justify-between items-center bg-gray-50">
+                          <h3 className="font-bold text-gray-900">{editingB2cPlanId ? 'Editar plano' : 'Criar plano'}</h3>
+                          <button
+                            onClick={() => {
+                              setIsB2cPlanModalOpen(false);
+                              setB2cError(null);
+                            }}
+                            className="text-gray-400 hover:text-gray-600"
+                          >
+                            <X size={20} />
+                          </button>
+                        </div>
+
+                        <div className="p-6 space-y-4">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div className="space-y-1">
+                              <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Nome do plano</label>
+                              <input
+                                value={b2cPlanName}
+                                onChange={(e) => setB2cPlanName(e.target.value)}
+                                className="w-full p-2.5 rounded-lg border border-gray-200 text-sm"
+                                placeholder="Ex: Premium Mensal"
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Valor mensal (R$)</label>
+                              <input
+                                value={b2cPlanPriceReais}
+                                onChange={(e) => setB2cPlanPriceReais(e.target.value)}
+                                className="w-full p-2.5 rounded-lg border border-gray-200 text-sm"
+                                placeholder="Ex: 99,90"
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Dias de carência</label>
+                              <input
+                                value={b2cPlanGraceDays}
+                                onChange={(e) => setB2cPlanGraceDays(e.target.value)}
+                                className="w-full p-2.5 rounded-lg border border-gray-200 text-sm"
+                                placeholder="Ex: 7"
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Descrição (opcional)</label>
+                              <input
+                                value={b2cPlanDescription}
+                                onChange={(e) => setB2cPlanDescription(e.target.value)}
+                                className="w-full p-2.5 rounded-lg border border-gray-200 text-sm"
+                                placeholder="Resumo interno do plano"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="space-y-2">
+                            <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">Serviços incluídos</p>
+                            <p className="text-xs text-gray-500">Defina quais serviços entram no plano e quantas vezes por mês o cliente pode usar cada um.</p>
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                              <div className="sm:col-span-2 space-y-1">
+                                <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Serviço</label>
+                                <select
+                                  value={b2cPlanServiceId}
+                                  onChange={(e) => setB2cPlanServiceId(e.target.value)}
+                                  className="w-full p-2.5 rounded-lg border border-gray-200 text-sm"
+                                >
+                                  <option value="">Selecione o serviço</option>
+                                  {services.map((service) => (
+                                    <option key={service.id} value={service.id}>{service.title}</option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Qtd/mês</label>
+                                <input
+                                  value={b2cPlanServiceQty}
+                                  onChange={(e) => setB2cPlanServiceQty(e.target.value)}
+                                  className="w-full p-2.5 rounded-lg border border-gray-200 text-sm"
+                                  placeholder="Ex: 2"
+                                />
+                              </div>
+                            </div>
+                            <button
+                              onClick={addBenefitToDraftPlan}
+                              className="px-3 py-2 rounded-lg border border-gray-200 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                            >
+                              Adicionar serviço
+                            </button>
+                            <div className="space-y-1 max-h-40 overflow-auto pr-1">
+                              {b2cPlanBenefits.map((benefit) => {
+                                const service = services.find((item) => item.id === benefit.servico_id);
+                                return (
+                                  <div key={benefit.servico_id} className="flex items-center justify-between rounded-lg border border-gray-100 px-3 py-2">
+                                    <span className="text-sm text-gray-700">{service?.title || benefit.servico_id} · {benefit.quantidade_mensal}/mês</span>
+                                    <button onClick={() => removeBenefitFromDraftPlan(benefit.servico_id)} className="text-xs text-red-600 font-bold">Remover</button>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="px-6 py-4 border-t bg-gray-50 flex gap-3 justify-end">
+                          <button
+                            type="button"
+                            onClick={() => setIsB2cPlanModalOpen(false)}
+                            className="px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-white"
+                          >
+                            Cancelar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleCreateB2cPlan}
+                            disabled={isSavingB2c}
+                            className="px-4 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                          >
+                            {isSavingB2c ? 'Salvando...' : (editingB2cPlanId ? 'Salvar alterações' : 'Criar plano')}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {isB2cDeleteModalOpen && b2cPlanToDelete && (
+                    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-fade-in">
+                        <div className="px-6 py-4 border-b flex justify-between items-center bg-gray-50">
+                          <h3 className="font-bold text-gray-900">Confirmar exclusão</h3>
+                          <button
+                            onClick={() => {
+                              if (isSavingB2c) return;
+                              setIsB2cDeleteModalOpen(false);
+                              setB2cPlanToDelete(null);
+                            }}
+                            className="text-gray-400 hover:text-gray-600"
+                          >
+                            <X size={20} />
+                          </button>
+                        </div>
+                        <div className="p-6 space-y-4">
+                          <p className="text-sm text-gray-700">
+                            Deseja realmente excluir o plano <span className="font-bold">{b2cPlanToDelete.nome}</span>?
+                          </p>
+                          <p className="text-xs text-gray-500">
+                            Esta ação não pode ser desfeita. Se o plano tiver assinaturas ativas, a exclusão será bloqueada.
+                          </p>
+                        </div>
+                        <div className="px-6 py-4 border-t bg-gray-50 flex gap-3 justify-end">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (isSavingB2c) return;
+                              setIsB2cDeleteModalOpen(false);
+                              setB2cPlanToDelete(null);
+                            }}
+                            className="px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-white"
+                          >
+                            Não
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleDeleteB2cPlan}
+                            disabled={isSavingB2c}
+                            className="px-4 py-2.5 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                          >
+                            {isSavingB2c ? 'Excluindo...' : 'Sim, excluir'}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {activeSubscriptionsTab === 'LINK_PLANS' && (
+                <div className="p-5 bg-white border border-gray-200 rounded-2xl space-y-4">
+                  <h4 className="font-bold text-gray-800">Vincular plano ao cliente</h4>
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+                    <div className="relative">
+                      <input
+                        value={b2cClientSearchText}
+                        onFocus={() => setIsB2cClientSearchOpen(true)}
+                        onBlur={() => setTimeout(() => setIsB2cClientSearchOpen(false), 120)}
+                        onChange={(e) => handleB2cClientSearchChange(e.target.value)}
+                        className="w-full p-2.5 rounded-lg border border-gray-200 text-sm"
+                        placeholder="Buscar cliente por nome..."
+                      />
+                      {isB2cClientSearchOpen && (
+                        <div className="absolute z-20 mt-1 w-full max-h-44 overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg">
+                          {filteredB2cLinkableClients.length > 0 ? (
+                            filteredB2cLinkableClients.map((client) => (
+                              <button
+                                key={client.id}
+                                type="button"
+                                onClick={() => {
+                                  setSelectedB2cClientId(client.id);
+                                  setB2cClientSearchText(client.label);
+                                  setIsB2cClientSearchOpen(false);
+                                }}
+                                className="w-full text-left px-3 py-2 hover:bg-gray-50 border-b border-gray-100 last:border-b-0"
+                              >
+                                <p className="text-sm font-medium text-gray-900">{client.name}</p>
+                                <p className="text-xs text-gray-500">{client.phone || 'Sem telefone'}</p>
+                              </button>
+                            ))
+                          ) : (
+                            <div className="px-3 py-2 text-sm text-gray-500">Nenhum cliente elegível encontrado.</div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    <select
+                      value={selectedB2cPlanId}
+                      onChange={(e) => setSelectedB2cPlanId(e.target.value)}
+                      className="p-2.5 rounded-lg border border-gray-200 text-sm"
+                    >
+                      <option value="">Selecione o plano</option>
+                      {b2cPlans.filter((plan) => plan.ativo).map((plan) => (
+                        <option key={plan.id} value={plan.id}>{plan.nome}</option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={handleAssignSubscriptionToClient}
+                      disabled={isSavingB2c}
+                      className="py-2.5 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      Vincular assinatura
+                    </button>
+                  </div>
+
+                  {selectedClientSubscription && (
+                    <div className="rounded-xl border border-gray-100 p-4 space-y-2">
+                      <p className="text-sm font-bold text-gray-800">Status: {selectedClientSubscription.subscription.status}</p>
+                      <p className="text-xs text-gray-500">
+                        Ciclo: {safeDateBr(selectedClientSubscription.subscription.current_cycle_start)} até {safeDateBr(selectedClientSubscription.subscription.current_cycle_end)}
+                      </p>
+                      <div className="space-y-1 pt-1">
+                        {selectedClientSubscription.beneficios.map((benefit) => (
+                          <p key={benefit.servico_id} className="text-xs text-gray-600">
+                            {benefit.servico_nome || benefit.servico_id}: {benefit.quantidade_consumida}/{benefit.quantidade_incluida} usado(s), restante {benefit.quantidade_restante}
+                          </p>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                </div>
+              )}
+
+              {activeSubscriptionsTab === 'CLIENTS_LIST' && (
+                <div className="p-5 bg-white border border-gray-200 rounded-2xl space-y-4">
+                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                    <h4 className="font-bold text-gray-800">Clientes com assinaturas ativas</h4>
+                    <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto">
+                      <div className="relative flex-1 sm:flex-none">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+                        <input
+                          type="text"
+                          value={b2cSubscribedClientSearchTerm}
+                          onChange={(e) => setB2cSubscribedClientSearchTerm(e.target.value)}
+                          placeholder="Buscar cliente/plano..."
+                          className="pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none w-full sm:w-56"
+                        />
+                      </div>
+                      <select
+                        value={b2cSubscribedClientStatusFilter}
+                        onChange={(e) => setB2cSubscribedClientStatusFilter(e.target.value as 'ALL' | 'ACTIVE' | 'GRACE' | 'PAST_DUE' | 'PAUSED' | 'CANCELLED')}
+                        className="px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-700 bg-white"
+                      >
+                        <option value="ALL">Todos status</option>
+                        <option value="ACTIVE">Ativa</option>
+                        <option value="GRACE">Em carência</option>
+                        <option value="PAST_DUE">Inadimplente</option>
+                        <option value="PAUSED">Pausada</option>
+                        <option value="CANCELLED">Cancelada</option>
+                      </select>
+                      <select
+                        value={b2cSubscribedClientPlanFilter}
+                        onChange={(e) => setB2cSubscribedClientPlanFilter(e.target.value)}
+                        className="px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-700 bg-white"
+                      >
+                        <option value="ALL">Todos planos</option>
+                        {b2cSubscribedPlanOptions.map((planName) => (
+                          <option key={planName} value={planName}>{planName}</option>
+                        ))}
+                      </select>
+                      <select
+                        value={b2cSubscribedClientSortField}
+                        onChange={(e) => setB2cSubscribedClientSortField(e.target.value as 'CLIENTE' | 'PLANO' | 'STATUS' | 'CICLO' | 'UTILIZACAO')}
+                        className="px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-700 bg-white"
+                      >
+                        <option value="CLIENTE">Ordenar por cliente</option>
+                        <option value="PLANO">Ordenar por plano</option>
+                        <option value="STATUS">Ordenar por status</option>
+                        <option value="CICLO">Ordenar por ciclo</option>
+                        <option value="UTILIZACAO">Ordenar por utilização</option>
+                      </select>
+                      <button
+                        onClick={() => setB2cSubscribedClientSortDirection((prev) => (prev === 'ASC' ? 'DESC' : 'ASC'))}
+                        className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                      >
+                        {b2cSubscribedClientSortDirection === 'ASC' ? 'Crescente' : 'Decrescente'}
+                      </button>
+                      <button
+                        onClick={loadB2cSubscribedClients}
+                        className="px-3 py-2 text-xs font-bold rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"
+                      >
+                        Atualizar lista
+                      </button>
+                    </div>
+                  </div>
+
+                  {isLoadingB2cSubscribedClients ? (
+                    <p className="text-sm text-gray-500">Carregando clientes assinantes...</p>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-sm">
+                        <thead>
+                          <tr className="text-gray-400 text-[10px] font-bold uppercase tracking-wider border-b border-gray-100">
+                            <th className="pb-2 font-bold">Cliente</th>
+                            <th className="pb-2 font-bold">Plano</th>
+                            <th className="pb-2 font-bold">Status</th>
+                            <th className="pb-2 font-bold">Ciclo atual</th>
+                            <th className="pb-2 font-bold">Utilização mensal</th>
+                            <th className="pb-2 font-bold text-right">Ações</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-50">
+                          {filteredB2cSubscribedClients.map((row) => (
+                            <tr key={row.cliente_id}>
+                              <td className="py-2.5 font-medium text-gray-800">{row.cliente_nome || 'Cliente'}</td>
+                              <td className="py-2.5 text-gray-700">{row.plano_nome || 'Plano'}</td>
+                              <td className="py-2.5 text-gray-700">
+                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${formatB2cStatusClass(row.status)}`}>
+                                  {formatB2cStatusLabel(row.status)}
+                                </span>
+                              </td>
+                              <td className="py-2.5 text-gray-700">
+                                {safeDateBr(row.current_cycle_start)} até {safeDateBr(row.current_cycle_end)}
+                              </td>
+                              <td className="py-2.5 text-gray-700">
+                                {Number(row.franquia_consumida_total || 0)}/{Number(row.franquia_incluida_total || 0)} ({Number(row.franquia_utilizacao_percent || 0)}%)
+                              </td>
+                              <td className="py-2.5">
+                                <div className="flex items-center justify-end gap-2">
+                                  <button
+                                    onClick={() => handleOpenEditB2cSubscriptionModal(row)}
+                                    className="px-3 py-1.5 text-xs font-bold rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50"
+                                  >
+                                    Editar
+                                  </button>
+                                  <button
+                                    onClick={() => handleOpenB2cPaymentModal(row)}
+                                    className="px-3 py-1.5 text-xs font-bold rounded-lg bg-blue-600 text-white hover:bg-blue-700"
+                                  >
+                                    Registrar pagamento
+                                  </button>
+                                  <button
+                                    onClick={() => handleOpenCancelB2cClientSubscriptionModal(row)}
+                                    disabled={isSavingB2c}
+                                    className="px-3 py-1.5 text-xs font-bold rounded-lg border border-red-200 text-red-700 hover:bg-red-50 disabled:opacity-60 disabled:cursor-not-allowed"
+                                  >
+                                    Cancelar assinatura
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      {filteredB2cSubscribedClients.length === 0 && (
+                        <p className="text-sm text-gray-500 mt-3">Nenhum cliente com assinatura ativa encontrado.</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {isB2cEditSubscriptionModalOpen && editingB2cClientSubscription && (
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                  <div className="bg-white rounded-2xl shadow-xl w-full max-w-xl overflow-hidden animate-fade-in">
+                    <div className="px-6 py-4 border-b flex justify-between items-center bg-gray-50">
+                      <h3 className="font-bold text-gray-900">Editar assinatura do cliente</h3>
+                      <button
+                        onClick={() => {
+                          if (isSavingB2c) return;
+                          setIsB2cEditSubscriptionModalOpen(false);
+                          setEditingB2cClientSubscription(null);
+                        }}
+                        className="text-gray-400 hover:text-gray-600"
+                      >
+                        <X size={20} />
+                      </button>
+                    </div>
+
+                    <div className="p-6 space-y-4">
+                      <p className="text-sm text-gray-700">
+                        Cliente: <span className="font-semibold">{editingB2cClientSubscription.cliente_nome || 'Cliente'}</span>
+                      </p>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Plano</label>
+                          <select
+                            value={editingB2cSubscriptionPlanId}
+                            onChange={(e) => setEditingB2cSubscriptionPlanId(e.target.value)}
+                            className="w-full p-2.5 rounded-lg border border-gray-200 text-sm"
+                          >
+                            <option value="">Selecione o plano</option>
+                            {b2cPlans.filter((plan) => plan.ativo).map((plan) => (
+                              <option key={plan.id} value={plan.id}>{plan.nome}</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Status</label>
+                          <select
+                            value={editingB2cSubscriptionStatus}
+                            onChange={(e) => setEditingB2cSubscriptionStatus(e.target.value as 'ACTIVE' | 'PAUSED' | 'CANCELLED')}
+                            className="w-full p-2.5 rounded-lg border border-gray-200 text-sm"
+                          >
+                            <option value="ACTIVE">Ativa</option>
+                            <option value="PAUSED">Pausada</option>
+                            <option value="CANCELLED">Cancelada</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Motivo (opcional)</label>
+                        <input
+                          value={editingB2cSubscriptionReason}
+                          onChange={(e) => setEditingB2cSubscriptionReason(e.target.value)}
+                          className="w-full p-2.5 rounded-lg border border-gray-200 text-sm"
+                          placeholder="Ex: Pausa solicitada pelo cliente"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="px-6 py-4 border-t bg-gray-50 flex gap-3 justify-end">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (isSavingB2c) return;
+                          setIsB2cEditSubscriptionModalOpen(false);
+                          setEditingB2cClientSubscription(null);
+                        }}
+                        className="px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-white"
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSaveB2cSubscriptionEdition}
+                        disabled={isSavingB2c}
+                        className="px-4 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                      >
+                        {isSavingB2c ? 'Salvando...' : 'Salvar alterações'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {isB2cPaymentModalOpen && (
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                  <div className="bg-white rounded-2xl shadow-xl w-full max-w-xl overflow-hidden animate-fade-in">
+                    <div className="px-6 py-4 border-b flex justify-between items-center bg-gray-50">
+                      <h3 className="font-bold text-gray-900">Registrar pagamento da assinatura</h3>
+                      <button
+                        onClick={() => {
+                          if (isSavingB2c) return;
+                          setIsB2cPaymentModalOpen(false);
+                        }}
+                        className="text-gray-400 hover:text-gray-600"
+                      >
+                        <X size={20} />
+                      </button>
+                    </div>
+
+                    <div className="p-6 space-y-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+                        <select
+                          value={manualPaymentMethod}
+                          onChange={(e) => setManualPaymentMethod(e.target.value)}
+                          className="p-2.5 rounded-lg border border-gray-200 text-sm"
+                        >
+                          <option value="DINHEIRO">Dinheiro</option>
+                          <option value="PIX">PIX</option>
+                          <option value="CARTAO">Cartão</option>
+                        </select>
+                        <input
+                          value={manualPaymentAmountReais}
+                          onChange={(e) => setManualPaymentAmountReais(e.target.value)}
+                          className="p-2.5 rounded-lg border border-gray-200 text-sm"
+                          placeholder="Valor em R$ (opcional)"
+                        />
+                        <input
+                          value={manualPaymentNote}
+                          onChange={(e) => setManualPaymentNote(e.target.value)}
+                          className="p-2.5 rounded-lg border border-gray-200 text-sm"
+                          placeholder="Observação"
+                        />
+                      </div>
+
+                      {selectedClientPayments.length > 0 && (
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-left text-sm">
+                            <thead>
+                              <tr className="text-gray-400 text-[10px] font-bold uppercase tracking-wider border-b border-gray-100">
+                                <th className="pb-2 font-bold">Data</th>
+                                <th className="pb-2 font-bold">Valor</th>
+                                <th className="pb-2 font-bold">Método</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-50">
+                              {selectedClientPayments.map((payment) => (
+                                <tr key={payment.id}>
+                                  <td className="py-2.5 text-gray-700">{safeDateBr(String(payment.paid_at).slice(0, 10))}</td>
+                                  <td className="py-2.5 font-semibold text-gray-900">{formatMoneyFromCents(payment.amount_centavos)}</td>
+                                  <td className="py-2.5 text-gray-700">{payment.metodo}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="px-6 py-4 border-t bg-gray-50 flex gap-3 justify-end">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (isSavingB2c) return;
+                          setIsB2cPaymentModalOpen(false);
+                        }}
+                        className="px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-white"
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleRegisterManualSubscriptionPayment}
+                        disabled={isSavingB2c || !selectedB2cClientId}
+                        className="px-4 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                      >
+                        {isSavingB2c ? 'Salvando...' : 'Registrar pagamento'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {isB2cCancelSubscriptionModalOpen && b2cSubscriptionToCancel && (
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                  <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-fade-in">
+                    <div className="px-6 py-4 border-b flex justify-between items-center bg-gray-50">
+                      <h3 className="font-bold text-gray-900">Confirmar cancelamento</h3>
+                      <button
+                        onClick={() => {
+                          if (isSavingB2c) return;
+                          setIsB2cCancelSubscriptionModalOpen(false);
+                          setB2cSubscriptionToCancel(null);
+                        }}
+                        className="text-gray-400 hover:text-gray-600"
+                      >
+                        <X size={20} />
+                      </button>
+                    </div>
+
+                    <div className="p-6 space-y-3">
+                      <p className="text-sm text-gray-700">
+                        Deseja cancelar a assinatura de <span className="font-semibold">{b2cSubscriptionToCancel.cliente_nome || 'Cliente'}</span>?
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        Essa ação remove a vinculação entre o cliente e o plano atual.
+                      </p>
+                    </div>
+
+                    <div className="px-6 py-4 border-t bg-gray-50 flex gap-3 justify-end">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (isSavingB2c) return;
+                          setIsB2cCancelSubscriptionModalOpen(false);
+                          setB2cSubscriptionToCancel(null);
+                        }}
+                        className="px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-white"
+                      >
+                        Não
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleCancelB2cClientSubscription}
+                        disabled={isSavingB2c}
+                        className="px-4 py-2.5 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                      >
+                        {isSavingB2c ? 'Cancelando...' : 'Sim, cancelar assinatura'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {isB2cFlowHelpModalOpen && (
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                  <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl overflow-hidden animate-fade-in">
+                    <div className="px-6 py-4 border-b flex justify-between items-center bg-gray-50">
+                      <h3 className="font-bold text-gray-900">Fluxo de assinaturas (resumo)</h3>
+                      <button
+                        onClick={() => setIsB2cFlowHelpModalOpen(false)}
+                        className="text-gray-400 hover:text-gray-600"
+                      >
+                        <X size={20} />
+                      </button>
+                    </div>
+
+                    <div className="p-6 space-y-4 text-sm text-gray-700">
+                      <div className="rounded-xl border border-gray-100 p-4">
+                        <p className="font-semibold text-gray-900">1) Criar plano</p>
+                        <p className="mt-1">Defina nome, valor, carência e os serviços com quantidade mensal (franquia).</p>
+                      </div>
+
+                      <div className="rounded-xl border border-gray-100 p-4">
+                        <p className="font-semibold text-gray-900">2) Vincular ao cliente</p>
+                        <p className="mt-1">Selecione cliente sem assinatura ativa e escolha o plano para iniciar o ciclo atual.</p>
+                      </div>
+
+                      <div className="rounded-xl border border-gray-100 p-4">
+                        <p className="font-semibold text-gray-900">3) Uso no atendimento</p>
+                        <p className="mt-1">A franquia só é debitada quando o atendimento é concluído no financeiro.</p>
+                      </div>
+
+                      <div className="rounded-xl border border-gray-100 p-4">
+                        <p className="font-semibold text-gray-900">4) Pagamentos e status</p>
+                        <p className="mt-1">Pagamentos podem ser registrados manualmente. Status da assinatura pode ser alterado ou cancelado na lista de clientes com assinaturas.</p>
+                      </div>
+                    </div>
+
+                    <div className="px-6 py-4 border-t bg-gray-50 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => setIsB2cFlowHelpModalOpen(false)}
+                        className="px-4 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700"
+                      >
+                        Fechar
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -5866,78 +8347,257 @@ const SettingsManagement = () => {
 
           {activeSubTab === 'CONTACT' && (
             <div className="space-y-8">
-              <div className="text-center max-w-md mx-auto space-y-4 py-6">
-                <div className="w-20 h-20 bg-blue-50 text-blue-600 rounded-3xl flex items-center justify-center mx-auto shadow-sm">
-                  <Headphones size={40} />
+              {isHelpCenterOpen ? (
+                <div className="space-y-6">
+                  {!isHelpArticleOpen ? (
+                    <>
+                      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                        <div>
+                          <h3 className="text-2xl font-bold text-gray-800">Central de Ajuda</h3>
+                          <p className="text-sm text-gray-500">Selecione um artigo para abrir a página de conteúdo.</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsHelpCenterOpen(false);
+                            setIsHelpArticleOpen(false);
+                            setHelpCenterSearchTerm('');
+                            setSelectedHelpArticleId('');
+                          }}
+                          className="px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm font-medium hover:bg-gray-50"
+                        >
+                          Voltar para Fale Conosco
+                        </button>
+                      </div>
+
+                      <div className="bg-white border border-gray-100 rounded-2xl p-4 sm:p-5 shadow-sm space-y-4">
+                        <div className="relative">
+                          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                          <input
+                            type="text"
+                            value={helpCenterSearchTerm}
+                            onChange={(event) => setHelpCenterSearchTerm(event.target.value)}
+                            placeholder="Buscar por tema, módulo ou tarefa"
+                            className="w-full pl-9 pr-3 py-2.5 border border-gray-200 rounded-lg text-sm"
+                          />
+                        </div>
+                        <p className="text-xs text-gray-500">{helpCenterArticlesCount} conteúdo(s) encontrado(s).</p>
+                      </div>
+
+                      {filteredHelpCenterSections.length > 0 ? (
+                        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                          {filteredHelpCenterSections.map((section) => (
+                            <div key={section.id} className="bg-white border border-gray-100 rounded-2xl p-5 shadow-sm">
+                              <h4 className="font-bold text-gray-800">{section.title}</h4>
+                              <p className="text-xs text-gray-500 mt-1">{section.description}</p>
+                              <div className="mt-4 space-y-2">
+                                {section.articles.map((article) => (
+                                  <button
+                                    key={article.id}
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedHelpArticleId(article.id);
+                                      setIsHelpArticleOpen(true);
+                                    }}
+                                    className="w-full text-left text-sm rounded-lg border border-gray-100 px-3 py-2 bg-gray-50 text-gray-700 hover:bg-gray-100"
+                                  >
+                                    {article.title}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="bg-white border border-gray-100 rounded-2xl p-6 text-center text-sm text-gray-500">
+                          Nenhum conteúdo encontrado para esta busca.
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="space-y-4">
+                      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                        <div>
+                          <p className="text-xs text-gray-500">Central de Ajuda {'>'} {selectedHelpArticle?.sectionTitle || 'Categoria'} {'>'} Artigo</p>
+                          <h3 className="text-2xl font-bold text-gray-800 mt-1">{selectedHelpArticle?.title || 'Artigo'}</h3>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setIsHelpArticleOpen(false)}
+                          className="px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm font-medium hover:bg-gray-50"
+                        >
+                          Voltar para lista
+                        </button>
+                      </div>
+
+                      {selectedHelpArticle && selectedHelpArticleGuide ? (
+                        <div className="bg-white border border-gray-100 rounded-2xl p-5 shadow-sm space-y-5">
+                          <div>
+                            <p className="text-xs font-semibold text-blue-600 uppercase tracking-wide">{selectedHelpArticle.sectionTitle}</p>
+                            <p className="text-sm text-gray-600 mt-2">{selectedHelpArticleGuide.summary}</p>
+                            <p className="text-sm text-gray-500 mt-2"><span className="font-semibold text-gray-700">Onde encontrar:</span> {selectedHelpArticleGuide.where}</p>
+                          </div>
+
+                          <div>
+                            <p className="text-sm font-semibold text-gray-800">Passo a passo</p>
+                            <ol className="mt-2 space-y-2">
+                              {selectedHelpArticleGuide.steps.map((step, index) => (
+                                <li key={`${selectedHelpArticle.id}-step-${index}`} className="text-sm text-gray-700 rounded-lg border border-gray-100 px-3 py-2 bg-gray-50">
+                                  {index + 1}. {step}
+                                </li>
+                              ))}
+                            </ol>
+                          </div>
+
+                          <div>
+                            <p className="text-sm font-semibold text-gray-800">Pontos de atenção</p>
+                            <ul className="mt-2 space-y-2">
+                              {selectedHelpArticleGuide.warnings.map((warning, index) => (
+                                <li key={`${selectedHelpArticle.id}-warning-${index}`} className="text-sm text-gray-700 rounded-lg border border-gray-100 px-3 py-2 bg-gray-50">
+                                  • {warning}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+
+                          <div className="pt-2 border-t border-gray-100 flex flex-col sm:flex-row gap-2 sm:justify-between">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (!helpArticleNavigation.previous) return;
+                                setSelectedHelpArticleId(helpArticleNavigation.previous.id);
+                              }}
+                              disabled={!helpArticleNavigation.previous}
+                              className="px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              ← Anterior
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (!helpArticleNavigation.next) return;
+                                setSelectedHelpArticleId(helpArticleNavigation.next.id);
+                              }}
+                              disabled={!helpArticleNavigation.next}
+                              className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              Próximo →
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="bg-white border border-gray-100 rounded-2xl p-6 text-center text-sm text-gray-500">
+                          Conteúdo não encontrado para o artigo selecionado.
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="p-5 bg-gray-50 rounded-2xl border border-gray-100 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-gray-800">Não encontrou o que precisava?</p>
+                      <p className="text-xs text-gray-500">Nossa equipe segue disponível por WhatsApp e e-mail.</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <a
+                        href="https://wa.me/5511999999999"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
+                      >
+                        WhatsApp
+                      </a>
+                      <a
+                        href="mailto:suporte@agendefacil.com.br"
+                        className="px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50"
+                      >
+                        E-mail
+                      </a>
+                    </div>
+                  </div>
                 </div>
-                <h3 className="text-2xl font-bold text-gray-800">Como podemos ajudar?</h3>
-                <p className="text-gray-500 text-sm">Nossa equipe de suporte está disponível de segunda a sexta, das 09h às 18h, para garantir que sua barbearia nunca pare.</p>
-              </div>
+              ) : (
+                <>
+                  <div className="text-center max-w-md mx-auto space-y-4 py-6">
+                    <div className="w-20 h-20 bg-blue-50 text-blue-600 rounded-3xl flex items-center justify-center mx-auto shadow-sm">
+                      <Headphones size={40} />
+                    </div>
+                    <h3 className="text-2xl font-bold text-gray-800">Como podemos ajudar?</h3>
+                    <p className="text-gray-500 text-sm">Nossa equipe de suporte está disponível de segunda a sexta, das 09h às 18h, para garantir que sua barbearia nunca pare.</p>
+                  </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                {/* WhatsApp Contact */}
-                <a 
-                  href="https://wa.me/5511999999999" 
-                  target="_blank" 
-                  rel="noopener noreferrer"
-                  className="p-6 bg-white border border-gray-100 rounded-2xl shadow-sm hover:shadow-md hover:border-blue-200 transition-all group text-center"
-                >
-                  <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform">
-                    <MessageSquare size={24} />
-                  </div>
-                  <h4 className="font-bold text-gray-800 mb-1">WhatsApp</h4>
-                  <p className="text-xs text-gray-500 mb-4">Resposta em até 15 min</p>
-                  <div className="flex items-center justify-center gap-2 text-blue-600 font-bold text-sm">
-                    Iniciar conversa <ExternalLink size={14} />
-                  </div>
-                </a>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <a
+                      href="https://wa.me/5511999999999"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="p-6 bg-white border border-gray-100 rounded-2xl shadow-sm hover:shadow-md hover:border-blue-200 transition-all group text-center"
+                    >
+                      <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform">
+                        <MessageSquare size={24} />
+                      </div>
+                      <h4 className="font-bold text-gray-800 mb-1">WhatsApp</h4>
+                      <p className="text-xs text-gray-500 mb-4">Resposta em até 15 min</p>
+                      <div className="flex items-center justify-center gap-2 text-blue-600 font-bold text-sm">
+                        Iniciar conversa <ExternalLink size={14} />
+                      </div>
+                    </a>
 
-                {/* Email Contact */}
-                <a 
-                  href="mailto:suporte@agendefacil.com.br" 
-                  className="p-6 bg-white border border-gray-100 rounded-2xl shadow-sm hover:shadow-md hover:border-blue-200 transition-all group text-center"
-                >
-                  <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform">
-                    <Mail size={24} />
-                  </div>
-                  <h4 className="font-bold text-gray-800 mb-1">E-mail</h4>
-                  <p className="text-xs text-gray-500 mb-4">Para casos complexos</p>
-                  <div className="flex items-center justify-center gap-2 text-blue-600 font-bold text-sm">
-                    Enviar e-mail <ExternalLink size={14} />
-                  </div>
-                </a>
+                    <a
+                      href="mailto:suporte@agendefacil.com.br"
+                      className="p-6 bg-white border border-gray-100 rounded-2xl shadow-sm hover:shadow-md hover:border-blue-200 transition-all group text-center"
+                    >
+                      <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform">
+                        <Mail size={24} />
+                      </div>
+                      <h4 className="font-bold text-gray-800 mb-1">E-mail</h4>
+                      <p className="text-xs text-gray-500 mb-4">Para casos complexos</p>
+                      <div className="flex items-center justify-center gap-2 text-blue-600 font-bold text-sm">
+                        Enviar e-mail <ExternalLink size={14} />
+                      </div>
+                    </a>
 
-                {/* Phone Contact */}
-                <a 
-                  href="tel:+551140028922" 
-                  className="p-6 bg-white border border-gray-100 rounded-2xl shadow-sm hover:shadow-md hover:border-blue-200 transition-all group text-center"
-                >
-                  <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform">
-                    <Phone size={24} />
+                    <a
+                      href="tel:+551140028922"
+                      className="p-6 bg-white border border-gray-100 rounded-2xl shadow-sm hover:shadow-md hover:border-blue-200 transition-all group text-center"
+                    >
+                      <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform">
+                        <Phone size={24} />
+                      </div>
+                      <h4 className="font-bold text-gray-800 mb-1">Telefone</h4>
+                      <p className="text-xs text-gray-500 mb-4">Atendimento imediato</p>
+                      <div className="flex items-center justify-center gap-2 text-blue-600 font-bold text-sm">
+                        Ligar agora <ExternalLink size={14} />
+                      </div>
+                    </a>
                   </div>
-                  <h4 className="font-bold text-gray-800 mb-1">Telefone</h4>
-                  <p className="text-xs text-gray-500 mb-4">Atendimento imediato</p>
-                  <div className="flex items-center justify-center gap-2 text-blue-600 font-bold text-sm">
-                    Ligar agora <ExternalLink size={14} />
-                  </div>
-                </a>
-              </div>
 
-              {/* FAQ / Help Center Link */}
-              <div className="p-6 bg-gray-50 rounded-2xl border border-gray-100 flex flex-col sm:flex-row items-center justify-between gap-4">
-                <div className="flex items-center gap-4 text-center sm:text-left">
-                  <div className="p-3 bg-white rounded-xl shadow-sm text-blue-600">
-                    <Globe size={24} />
+                  <div className="p-6 bg-gray-50 rounded-2xl border border-gray-100 flex flex-col sm:flex-row items-center justify-between gap-4">
+                    <div className="flex items-center gap-4 text-center sm:text-left">
+                      <div className="p-3 bg-white rounded-xl shadow-sm text-blue-600">
+                        <Globe size={24} />
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-gray-800">Central de Ajuda</h4>
+                        <p className="text-xs text-gray-500">Acesse conteúdos organizados sobre agenda, financeiro, assinaturas e mais.</p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsHelpCenterOpen(true);
+                        setIsHelpArticleOpen(false);
+                        if (!selectedHelpArticleId && helpCenterSections[0]?.articles[0]?.id) {
+                          setSelectedHelpArticleId(helpCenterSections[0].articles[0].id);
+                        }
+                      }}
+                      className="px-6 py-2.5 bg-white border border-gray-200 text-gray-700 rounded-xl text-sm font-bold hover:bg-gray-50 transition-all whitespace-nowrap"
+                    >
+                      Acessar Central
+                    </button>
                   </div>
-                  <div>
-                    <h4 className="font-bold text-gray-800">Central de Ajuda</h4>
-                    <p className="text-xs text-gray-500">Acesse tutoriais e vídeos sobre como usar o sistema.</p>
-                  </div>
-                </div>
-                <button className="px-6 py-2.5 bg-white border border-gray-200 text-gray-700 rounded-xl text-sm font-bold hover:bg-gray-50 transition-all whitespace-nowrap">
-                  Acessar Central
-                </button>
-              </div>
+                </>
+              )}
             </div>
           )}
 
@@ -5976,6 +8636,16 @@ const SettingsManagement = () => {
                     }`}
                   >
                     Outras Preferências
+                  </button>
+                  <button
+                    onClick={() => setActiveIdentityTab('DISCLOSURE')}
+                    className={`px-4 py-2 rounded-full text-xs sm:text-sm font-bold whitespace-nowrap transition-all ${
+                      activeIdentityTab === 'DISCLOSURE'
+                        ? 'bg-blue-600 text-white shadow-md shadow-blue-100'
+                        : 'bg-white border border-gray-200 text-gray-600'
+                    }`}
+                  >
+                    Divulgação
                   </button>
                 </nav>
 
@@ -6365,6 +9035,102 @@ const SettingsManagement = () => {
                     </div>
                   </div>
                 )}
+
+                {activeIdentityTab === 'DISCLOSURE' && (
+                  <div className="space-y-5">
+                    <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm space-y-4">
+                      <div>
+                        <h4 className="font-bold text-gray-800">Material de divulgação com QR Code</h4>
+                        <p className="text-sm text-gray-500 mt-1">Gere um PDF para impressão com o nome da barbearia e QR Code para acesso ao SaaS.</p>
+                      </div>
+
+                      <div className="rounded-xl border border-gray-100 bg-gray-50 p-4 space-y-2">
+                        <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">URL pública identificada</p>
+                        <p className="text-sm text-gray-800 break-all">{disclosurePublicUrl || 'URL não disponível'}</p>
+                        <div className="pt-1 flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              if (!disclosurePublicUrl) return;
+                              try {
+                                await navigator.clipboard.writeText(disclosurePublicUrl);
+                                setDisclosureError(null);
+                                setDisclosureSuccess('Link copiado com sucesso.');
+                              } catch {
+                                setDisclosureSuccess(null);
+                                setDisclosureError('Não foi possível copiar o link automaticamente.');
+                              }
+                            }}
+                            className="px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50"
+                          >
+                            Copiar link
+                          </button>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              if (!disclosurePublicUrl) return;
+                              try {
+                                if (navigator.share) {
+                                  await navigator.share({
+                                    title: identityForm.name || brandIdentity.name || 'Barbearia',
+                                    text: 'Agende seu horário online:',
+                                    url: disclosurePublicUrl,
+                                  });
+                                  setDisclosureError(null);
+                                  setDisclosureSuccess('Link compartilhado com sucesso.');
+                                  return;
+                                }
+
+                                await navigator.clipboard.writeText(disclosurePublicUrl);
+                                setDisclosureError(null);
+                                setDisclosureSuccess('Compartilhamento não suportado neste navegador. Link copiado.');
+                              } catch {
+                                setDisclosureSuccess(null);
+                                setDisclosureError('Não foi possível compartilhar o link.');
+                              }
+                            }}
+                            className="px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 inline-flex items-center gap-2"
+                          >
+                            <Share2 size={14} /> Compartilhar
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="rounded-xl border border-gray-100 p-4 flex flex-col md:flex-row md:items-center gap-4">
+                        <div className="w-28 h-28 rounded-lg border border-gray-100 bg-white flex items-center justify-center overflow-hidden">
+                          {disclosureQrCodeUrl ? (
+                            <img src={disclosureQrCodeUrl} alt="QR Code de divulgação" className="w-full h-full object-cover" />
+                          ) : (
+                            <span className="text-xs text-gray-400">QR indisponível</span>
+                          )}
+                        </div>
+                        <div className="space-y-2">
+                          <p className="text-sm text-gray-700">Use este QR Code em balcão, vitrine e materiais impressos para levar clientes direto ao sistema.</p>
+                          <button
+                            type="button"
+                            onClick={handleGenerateDisclosurePdf}
+                            disabled={isGeneratingDisclosurePdf || !disclosurePublicUrl}
+                            className="px-4 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed"
+                          >
+                            {isGeneratingDisclosurePdf ? 'Gerando PDF...' : 'Gerar PDF de divulgação'}
+                          </button>
+                        </div>
+                      </div>
+
+                      {disclosureError && (
+                        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                          {disclosureError}
+                        </div>
+                      )}
+
+                      {disclosureSuccess && (
+                        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                          {disclosureSuccess}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -6409,7 +9175,8 @@ const FinanceManagement = () => {
   const [receivables, setReceivables] = useState<RecebivelApi[]>([]);
   const [professionalFilter, setProfessionalFilter] = useState<string>('ALL');
   const [professionalOptions, setProfessionalOptions] = useState<Array<{ id: string; nome: string }>>([]);
-  const [period, setPeriod] = useState<FinancePeriod>('LAST_30_DAYS');
+  const [period, setPeriod] = useState<FinancePeriod>('TODAY');
+  const [hasUserChangedPeriod, setHasUserChangedPeriod] = useState(false);
   const [customStartDate, setCustomStartDate] = useState<string>('');
   const [customEndDate, setCustomEndDate] = useState<string>('');
   const [startDateFilter, setStartDateFilter] = useState<string>('');
@@ -6447,6 +9214,12 @@ const FinanceManagement = () => {
       setCustomStartDate(d.toISOString().slice(0, 10));
     }
   }, [customEndDate, customStartDate, todayIso]);
+
+  useEffect(() => {
+    if (!hasUserChangedPeriod && period !== 'TODAY') {
+      setPeriod('TODAY');
+    }
+  }, [hasUserChangedPeriod, period]);
 
   useEffect(() => {
     const end = new Date();
@@ -6545,7 +9318,7 @@ const FinanceManagement = () => {
 
   const clearFilters = () => {
     setProfessionalFilter('ALL');
-    setPeriod('LAST_30_DAYS');
+    setPeriod('TODAY');
     setCustomStartDate('');
     setCustomEndDate('');
   };
@@ -6851,7 +9624,10 @@ const FinanceManagement = () => {
           )}
           <select
             value={period}
-            onChange={(event) => setPeriod(event.target.value as FinancePeriod)}
+            onChange={(event) => {
+              setHasUserChangedPeriod(true);
+              setPeriod(event.target.value as FinancePeriod);
+            }}
             className="px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm"
             aria-label="Período"
           >
@@ -7175,7 +9951,8 @@ const AppointmentCenterManagement = ({
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [professionalFilter, setProfessionalFilter] = useState<string>('ALL');
-  const [period, setPeriod] = useState<AppointmentCenterPeriod>('LAST_30_DAYS');
+  const [period, setPeriod] = useState<AppointmentCenterPeriod>('TODAY');
+  const [hasUserChangedPeriod, setHasUserChangedPeriod] = useState(false);
   const [customStartDate, setCustomStartDate] = useState('');
   const [customEndDate, setCustomEndDate] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
@@ -7197,6 +9974,12 @@ const AppointmentCenterManagement = ({
       setCustomStartDate(d.toISOString().slice(0, 10));
     }
   }, [customEndDate, customStartDate, todayIso]);
+
+  useEffect(() => {
+    if (!hasUserChangedPeriod && period !== 'TODAY') {
+      setPeriod('TODAY');
+    }
+  }, [hasUserChangedPeriod, period]);
 
   const dateRange = useMemo(() => {
     const end = new Date();
@@ -7454,7 +10237,10 @@ const AppointmentCenterManagement = ({
             <label className="block text-xs font-semibold text-gray-600 mb-1">Período</label>
             <select
               value={period}
-              onChange={(event) => setPeriod(event.target.value as AppointmentCenterPeriod)}
+              onChange={(event) => {
+                setHasUserChangedPeriod(true);
+                setPeriod(event.target.value as AppointmentCenterPeriod);
+              }}
               className="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm"
             >
               <option value="TODAY">Hoje</option>
@@ -7752,7 +10538,8 @@ const ReportsManagement = () => {
   const [selectedReport, setSelectedReport] = useState<ReportKey>('FINANCIAL');
   const [sortBy, setSortBy] = useState<string>('');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
-  const [period, setPeriod] = useState<ReportPeriod>('LAST_30_DAYS');
+  const [period, setPeriod] = useState<ReportPeriod>('TODAY');
+  const [hasUserChangedPeriod, setHasUserChangedPeriod] = useState(false);
   const [professionalFilter, setProfessionalFilter] = useState<string>('ALL');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [customStartDate, setCustomStartDate] = useState<string>('');
@@ -7790,6 +10577,12 @@ const ReportsManagement = () => {
       setCustomStartDate(d.toISOString().slice(0, 10));
     }
   }, [customEndDate, customStartDate, todayIso]);
+
+  useEffect(() => {
+    if (!hasUserChangedPeriod && period !== 'TODAY') {
+      setPeriod('TODAY');
+    }
+  }, [hasUserChangedPeriod, period]);
 
   const dateRange = useMemo(() => {
     const end = new Date();
@@ -8415,7 +11208,10 @@ const ReportsManagement = () => {
             <label className="block text-xs font-semibold text-gray-600 mb-1">Período</label>
             <select
               value={period}
-              onChange={(event) => setPeriod(event.target.value as ReportPeriod)}
+              onChange={(event) => {
+                setHasUserChangedPeriod(true);
+                setPeriod(event.target.value as ReportPeriod);
+              }}
               className="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm"
             >
               <option value="TODAY">Hoje</option>
@@ -8567,6 +11363,8 @@ const ReportsManagement = () => {
 
 export const AdminDashboard: React.FC = () => {
   const { user, logout, brandIdentity } = useAppContext();
+  const [isImpersonationMode, setIsImpersonationMode] = useState(false);
+  const [impersonationTenantName, setImpersonationTenantName] = useState('');
   const isAdminUser = user?.role === 'ADMIN';
   const canEmployeeViewFinance = user?.role === 'EMPLOYEE' && Boolean(brandIdentity.allowEmployeeViewFinance);
   const canEmployeeViewReports = user?.role === 'EMPLOYEE' && Boolean(brandIdentity.allowEmployeeViewReports);
@@ -8577,6 +11375,38 @@ export const AdminDashboard: React.FC = () => {
   const [agendaNavigationRequest, setAgendaNavigationRequest] = useState<(AgendaNavigationPayload & { nonce: number }) | null>(null);
 
   const toggleMobileMenu = () => setIsMobileMenuOpen(!isMobileMenuOpen);
+
+  useEffect(() => {
+    const hasBackup = Boolean(localStorage.getItem('impersonation_master_token'));
+    const tenantName = String(localStorage.getItem('impersonation_tenant_name') || '');
+    setIsImpersonationMode(hasBackup);
+    setImpersonationTenantName(tenantName);
+  }, [user?.id, user?.role]);
+
+  const handleReturnToMaster = () => {
+    const masterToken = localStorage.getItem('impersonation_master_token');
+    const masterUser = localStorage.getItem('impersonation_master_user');
+    if (!masterToken || !masterUser) {
+      return;
+    }
+
+    const previousTenantSlug = localStorage.getItem('impersonation_previous_tenant_slug');
+    if (previousTenantSlug && previousTenantSlug.trim()) {
+      localStorage.setItem('tenant_slug', previousTenantSlug);
+    } else {
+      localStorage.removeItem('tenant_slug');
+    }
+
+    localStorage.setItem('auth_token', masterToken);
+    localStorage.setItem('app_user', masterUser);
+    localStorage.removeItem('impersonation_master_token');
+    localStorage.removeItem('impersonation_master_user');
+    localStorage.removeItem('impersonation_tenant_name');
+    localStorage.removeItem('impersonation_tenant_slug');
+    localStorage.removeItem('impersonation_previous_tenant_slug');
+    window.location.hash = '/master';
+    window.location.reload();
+  };
 
   useEffect(() => {
     if (!isAdminUser && activeTab !== 'AGENDA' && activeTab !== 'APPOINTMENT_CENTER' && activeTab !== 'FINANCE' && activeTab !== 'REPORTS') {
@@ -8726,6 +11556,21 @@ export const AdminDashboard: React.FC = () => {
              </div>
              <button onClick={logout}><LogOut size={20} className="text-red-500" /></button>
          </header>
+
+         {isImpersonationMode && (
+          <div className="mx-4 md:mx-6 mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+            <div className="text-sm text-amber-800">
+              Você está visualizando como admin da barbearia <strong>{impersonationTenantName || 'selecionada'}</strong>.
+            </div>
+            <button
+              type="button"
+              onClick={handleReturnToMaster}
+              className="px-3 py-2 rounded-lg text-sm bg-amber-600 text-white hover:bg-amber-700"
+            >
+              Voltar ao Master
+            </button>
+          </div>
+         )}
 
          <div className={`p-4 md:p-6 ${activeTab === 'AGENDA' ? 'flex-1 overflow-hidden' : ''}`}>
           {activeTab === 'DASHBOARD' && isAdminUser && <DashboardHome onViewAllRecent={handleViewAllRecent} />}

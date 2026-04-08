@@ -24,3 +24,16 @@ api resend: re_2sSscbka_JhmYkU5baN6Fn9xVtrWmEHWK
 
 #stripe
 stripe listen --forward-to http://127.0.0.1:5000/stripe/webhook
+
+
+----
+Cria barbearia
+
+curl -X POST http://127.0.0.1:5000/auth/signup -H "Content-Type: application/json" -H "X-Barbearia-Slug: demo2" -d '{"nome":"Admin Demo2","telefone":"11911111111","senha":"admin123","role":"ADMIN"}
+
+
+users:
+demo1
+11911111111 / admin123
+
+

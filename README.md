@@ -107,6 +107,25 @@ python3 scripts/notifications_worker.py --once --limit 50
 python3 scripts/notifications_worker.py --limit 50 --poll-seconds 10
 ```
 
+## Configurações globais no MASTER (proxy/e-mail/whatsapp/pagamentos)
+
+Para habilitar a nova área **Configurações Globais** no painel MASTER, execute também:
+
+- `backend/migrations/024_module24_master_runtime_config.sql`
+
+Opcional no `backend/.env` (recomendado em produção):
+
+- `MASTER_CONFIG_ENCRYPTION_KEY` (Fernet key URL-safe base64, 32 bytes)
+- `MASTER_RUNTIME_CONFIG_CACHE_SECONDS` (default: `30`)
+
+Sem `MASTER_CONFIG_ENCRYPTION_KEY`, o sistema deriva uma chave a partir de `SECRET_KEY`.
+
+## Assinaturas B2C (clientes da barbearia)
+
+Para habilitar planos/assinaturas B2C e consumo automático de franquia ao concluir financeiro, execute:
+
+- `backend/migrations/025_module25_clientes_assinaturas_b2c.sql`
+
 Job de lembrete D-1:
 
 ```bash
@@ -151,6 +170,7 @@ No SQL Editor do Supabase, execute nesta ordem:
 - `backend/migrations/012_module12_profissionais_comissao.sql`
 - `backend/migrations/013_module13_notifications_core.sql`
 - `backend/migrations/014_module14_notifications_queue_ops.sql`
+- `backend/migrations/025_module25_clientes_assinaturas_b2c.sql`
 
 ### 2) Subir backend Flask
 

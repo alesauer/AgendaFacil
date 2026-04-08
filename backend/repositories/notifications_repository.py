@@ -1,10 +1,30 @@
 from __future__ import annotations
 
+import time
 from datetime import datetime, timezone
 from typing import Any
 
 from backend.repositories.base_repository import BaseRepository
 from backend.supabase_client import get_supabase_client, is_supabase_ready
+
+
+def _is_proxy_related_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return "proxy" in message or "http 407" in message or "502" in message or "503" in message
+
+
+def _execute_with_proxy_retries(builder, retries: int = 3, base_delay_seconds: float = 0.35):
+    last_exc = None
+    safe_retries = max(1, int(retries or 1))
+    for attempt in range(safe_retries):
+        try:
+            return builder.execute()
+        except Exception as exc:
+            last_exc = exc
+            if attempt >= safe_retries - 1 or not _is_proxy_related_error(exc):
+                raise
+            time.sleep(base_delay_seconds * (attempt + 1))
+    raise last_exc
 
 
 class NotificationsRepository(BaseRepository):
@@ -178,7 +198,7 @@ class NotificationsRepository(BaseRepository):
         supabase = get_supabase_client()
 
         try:
-            response = (
+            query = (
                 supabase.table("notification_dispatches")
                 .select(
                     "id,barbearia_id,channel,provider_name,recipient,template_key,payload,idempotency_key,correlation_id,status,attempts,provider_ref,error_code,error_message,last_attempt_at,next_retry_at,max_attempts,locked_at,locked_by,updated_at"
@@ -187,21 +207,24 @@ class NotificationsRepository(BaseRepository):
                 .lte("next_retry_at", now_iso)
                 .order("next_retry_at")
                 .limit(safe_limit)
-                .execute()
             )
+            response = _execute_with_proxy_retries(query)
             return response.data or []
         except Exception:
-            fallback = (
-                supabase.table("notification_dispatches")
-                .select(
-                    "id,barbearia_id,channel,provider_name,recipient,template_key,payload,idempotency_key,correlation_id,status,attempts,provider_ref,error_code,error_message,last_attempt_at,max_attempts,updated_at"
+            try:
+                fallback_query = (
+                    supabase.table("notification_dispatches")
+                    .select(
+                        "id,barbearia_id,channel,provider_name,recipient,template_key,payload,idempotency_key,correlation_id,status,attempts,provider_ref,error_code,error_message,last_attempt_at,max_attempts,updated_at"
+                    )
+                    .in_("status", ["QUEUED", "RETRYING"])
+                    .order("created_at")
+                    .limit(safe_limit)
                 )
-                .in_("status", ["QUEUED", "RETRYING"])
-                .order("created_at")
-                .limit(safe_limit)
-                .execute()
-            )
-            return fallback.data or []
+                fallback = _execute_with_proxy_retries(fallback_query)
+                return fallback.data or []
+            except Exception:
+                return []
 
     @staticmethod
     def claim_dispatch(dispatch_id: str, expected_updated_at: str, worker_id: str):

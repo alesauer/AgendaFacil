@@ -10,6 +10,7 @@ except Exception:
     resend = None
 
 from backend.notifications.models import Channel, DispatchResult, DispatchStatus, NotificationCommand
+from backend.services.master_runtime_config_service import MasterRuntimeConfigService
 
 
 class ResendEmailAdapter:
@@ -19,8 +20,8 @@ class ResendEmailAdapter:
         return channel == Channel.EMAIL
 
     def health_check(self) -> bool:
-        api_key = str(current_app.config.get("RESEND_API_KEY") or "").strip()
-        from_address = str(current_app.config.get("EMAIL_FROM_ADDRESS") or "").strip()
+        api_key = str(MasterRuntimeConfigService.get_runtime_value("RESEND_API_KEY", "") or "").strip()
+        from_address = str(MasterRuntimeConfigService.get_runtime_value("EMAIL_FROM_ADDRESS", "") or "").strip()
         return bool(api_key and from_address and resend is not None)
 
     def send(self, command: NotificationCommand) -> DispatchResult:
@@ -31,9 +32,9 @@ class ResendEmailAdapter:
                 error_message="Adapter Resend suporta apenas EMAIL",
             )
 
-        api_key = str(current_app.config.get("RESEND_API_KEY") or "").strip()
-        from_address = str(current_app.config.get("EMAIL_FROM_ADDRESS") or "").strip()
-        from_name = str(current_app.config.get("EMAIL_FROM_NAME") or "AgendaFácil").strip()
+        api_key = str(MasterRuntimeConfigService.get_runtime_value("RESEND_API_KEY", "") or "").strip()
+        from_address = str(MasterRuntimeConfigService.get_runtime_value("EMAIL_FROM_ADDRESS", "") or "").strip()
+        from_name = str(MasterRuntimeConfigService.get_runtime_value("EMAIL_FROM_NAME", "AgendaFácil") or "AgendaFácil").strip()
 
         if resend is None:
             return DispatchResult(
