@@ -24,6 +24,7 @@ export interface Service {
   price: number;
   durationMinutes: number;
   category: string;
+  sortOrder?: number;
   imageUrl?: string;
   iconName?: string;
   isPromo?: boolean;
@@ -34,6 +35,7 @@ export interface Professional {
   id: string;
   name: string;
   role: string;
+  active?: boolean;
   avatar?: string;
   iconName?: string;
   commissionPercentage?: number;
@@ -100,6 +102,8 @@ export interface BusinessHour {
 
 export interface BrandIdentity {
   name: string;
+  phone?: string;
+  city?: string;
   logoUrl?: string;
   loginLogoUrl?: string;
   loginBackgroundUrl?: string;
@@ -108,6 +112,7 @@ export interface BrandIdentity {
   allowEmployeeCreateAppointment?: boolean;
   allowEmployeeViewFinance?: boolean;
   allowEmployeeViewReports?: boolean;
+  allowEmployeeViewUsers?: boolean;
   iconName?: string;
   primaryColor?: string;
   secondaryColor?: string;

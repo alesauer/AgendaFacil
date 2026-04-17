@@ -14,6 +14,7 @@ export type IdentidadeApi = {
   allow_employee_create_appointment?: boolean | null;
   allow_employee_view_finance?: boolean | null;
   allow_employee_view_reports?: boolean | null;
+  allow_employee_view_users?: boolean | null;
   icone_marca?: string | null;
   cor_primaria?: string | null;
   cor_secundaria?: string | null;
@@ -31,6 +32,7 @@ export type IdentidadePayload = {
   allow_employee_create_appointment?: boolean;
   allow_employee_view_finance?: boolean;
   allow_employee_view_reports?: boolean;
+  allow_employee_view_users?: boolean;
   icone_marca?: string | null;
   cor_primaria?: string | null;
   cor_secundaria?: string | null;
@@ -43,7 +45,7 @@ export async function getIdentidadeApi() {
 }
 
 export async function getIdentidadePublicaApi() {
-  return apiRequest<Pick<IdentidadeApi, 'nome' | 'logo_url' | 'login_logo_url' | 'login_background_url' | 'churn_risk_days_threshold' | 'allow_employee_confirm_appointment' | 'allow_employee_create_appointment' | 'allow_employee_view_finance' | 'allow_employee_view_reports' | 'icone_marca' | 'cor_primaria' | 'cor_secundaria'>>('/barbearia/identidade-publica', {
+  return apiRequest<Pick<IdentidadeApi, 'nome' | 'logo_url' | 'login_logo_url' | 'login_background_url' | 'churn_risk_days_threshold' | 'allow_employee_confirm_appointment' | 'allow_employee_create_appointment' | 'allow_employee_view_finance' | 'allow_employee_view_reports' | 'allow_employee_view_users' | 'icone_marca' | 'cor_primaria' | 'cor_secundaria'>>('/barbearia/identidade-publica', {
     method: 'GET',
   });
 }

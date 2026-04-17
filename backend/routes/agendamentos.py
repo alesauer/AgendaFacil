@@ -488,6 +488,9 @@ def remarca_agendamento_publico(agendamento_id: str):
             return error("Horário bloqueado", 409)
 
     status = _normalized_status(existing.get("status") or "CONFIRMED")
+    old_data = str(existing.get("data") or "")
+    old_hora_inicio = str(existing.get("hora_inicio") or "")[:5]
+    old_hora_fim = str(existing.get("hora_fim") or "")[:5]
     updated = AgendamentosRepository.update(
         g.barbearia_id,
         agendamento_id,
@@ -501,6 +504,24 @@ def remarca_agendamento_publico(agendamento_id: str):
     )
     if not updated:
         return error("Agendamento não encontrado", 404)
+
+    notification_warning = None
+    try:
+        suffix = f"{old_data}:{old_hora_inicio}-{old_hora_fim}->{data}:{hora_inicio}-{hora_fim}"
+        queued = enqueue_for_appointment_event(
+            g.barbearia_id,
+            agendamento_id,
+            "APPOINTMENT_RESCHEDULED",
+            correlation_id="remarca_agendamento_publico",
+            idempotency_suffix=suffix,
+        )
+        if not queued:
+            notification_warning = "Falha ao enfileirar notificação de reagendamento"
+    except Exception as exc:
+        notification_warning = str(exc)
+
+    if notification_warning:
+        updated["notification_warning"] = notification_warning
 
     metrics_warning = _refresh_cliente_metrics(str(existing.get("cliente_id") or ""))
     if metrics_warning:
@@ -610,6 +631,55 @@ def update_agendamento(agendamento_id: str):
         metrics_warning = metrics_warning or second_warning
     if metrics_warning:
         agendamento["client_metrics_warning"] = metrics_warning
+
+    notification_warning = None
+    previous_status = _normalized_status(existing_row.get("status") or "CONFIRMED")
+    is_cancelled_now = status == "CANCELLED" and previous_status != "CANCELLED"
+    is_rescheduled = any(
+        [
+            str(existing_row.get("data") or "") != data,
+            str(existing_row.get("hora_inicio") or "")[:5] != hora_inicio,
+            str(existing_row.get("hora_fim") or "")[:5] != hora_fim,
+            str(existing_row.get("profissional_id") or "") != profissional_id,
+        ]
+    )
+
+    if is_cancelled_now:
+        try:
+            queued = enqueue_for_appointment_event(
+                g.barbearia_id,
+                agendamento_id,
+                "APPOINTMENT_CANCELLED",
+                correlation_id="update_agendamento",
+            )
+            if not queued:
+                notification_warning = "Falha ao enfileirar notificação de cancelamento"
+        except Exception as exc:
+            notification_warning = str(exc)
+    elif is_rescheduled:
+        try:
+            old_data = str(existing_row.get("data") or "")
+            old_hora_inicio = str(existing_row.get("hora_inicio") or "")[:5]
+            old_hora_fim = str(existing_row.get("hora_fim") or "")[:5]
+            old_profissional = str(existing_row.get("profissional_id") or "")
+            suffix = (
+                f"{old_data}:{old_hora_inicio}-{old_hora_fim}:{old_profissional}"
+                f"->{data}:{hora_inicio}-{hora_fim}:{profissional_id}"
+            )
+            queued = enqueue_for_appointment_event(
+                g.barbearia_id,
+                agendamento_id,
+                "APPOINTMENT_RESCHEDULED",
+                correlation_id="update_agendamento",
+                idempotency_suffix=suffix,
+            )
+            if not queued:
+                notification_warning = "Falha ao enfileirar notificação de reagendamento"
+        except Exception as exc:
+            notification_warning = str(exc)
+
+    if notification_warning:
+        agendamento["notification_warning"] = notification_warning
 
     return success(agendamento)
 

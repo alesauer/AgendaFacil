@@ -45,18 +45,18 @@ def auth_required(fn):
 
         auth_header = request.headers.get("Authorization", "")
         if not auth_header.startswith("Bearer "):
-            return error("Token ausente", 401)
+            return error("Sua sessão expirou. Faça login novamente para continuar.", 401)
 
         token = auth_header.replace("Bearer ", "", 1).strip()
         if not token:
-            return error("Token inválido", 401)
+            return error("Sua sessão expirou. Faça login novamente para continuar.", 401)
 
         try:
             payload = jwt.decode(
                 token, current_app.config["SECRET_KEY"], algorithms=["HS256"]
             )
         except jwt.InvalidTokenError:
-            return error("Token inválido", 401)
+            return error("Sua sessão expirou. Faça login novamente para continuar.", 401)
 
         if str(payload.get("scope", "TENANT")).upper() == "MASTER":
             return error("Escopo de token inválido para esta rota", 403)
@@ -80,18 +80,18 @@ def master_auth_required(fn):
 
         auth_header = request.headers.get("Authorization", "")
         if not auth_header.startswith("Bearer "):
-            return error("Token ausente", 401)
+            return error("Sua sessão expirou. Faça login novamente para continuar.", 401)
 
         token = auth_header.replace("Bearer ", "", 1).strip()
         if not token:
-            return error("Token inválido", 401)
+            return error("Sua sessão expirou. Faça login novamente para continuar.", 401)
 
         try:
             payload = jwt.decode(
                 token, current_app.config["SECRET_KEY"], algorithms=["HS256"]
             )
         except jwt.InvalidTokenError:
-            return error("Token inválido", 401)
+            return error("Sua sessão expirou. Faça login novamente para continuar.", 401)
 
         scope = str(payload.get("scope", "")).upper()
         role = str(payload.get("role", "")).upper()

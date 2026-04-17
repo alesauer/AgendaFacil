@@ -43,6 +43,21 @@ def create_servico():
     return success(servico, 201)
 
 
+@servicos_bp.put("/ordem")
+@auth_required
+def reorder_servicos():
+    payload = request.get_json(silent=True) or {}
+    service_ids = payload.get("service_ids")
+    if not isinstance(service_ids, list):
+        return error("service_ids deve ser um array", 400)
+
+    result = ServicosRepository.reorder(g.barbearia_id, service_ids)
+    if result.get("error"):
+        return error(result["error"], 400)
+
+    return success(result.get("data") or [])
+
+
 @servicos_bp.put("/<servico_id>")
 @auth_required
 def update_servico(servico_id: str):

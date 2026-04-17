@@ -77,8 +77,33 @@ const getFriendlyHttpError = (
 ): string => {
   const normalizedPath = path.toLowerCase();
   const normalizedMethod = method.toUpperCase();
+  const normalizedMessage = String(message || '').toLowerCase();
+
+  const isProfissionalPhoneDuplicated =
+    normalizedPath.startsWith('/profissionais') &&
+    (
+      normalizedMessage.includes('uq_profissionais_barbearia_telefone') ||
+      normalizedMessage.includes('key (barbearia_id, telefone)') ||
+      (normalizedMessage.includes('duplicate key value') && normalizedMessage.includes('telefone')) ||
+      (normalizedMessage.includes('23505') && normalizedMessage.includes('telefone'))
+    );
+
+  if (isProfissionalPhoneDuplicated && (normalizedMethod === 'POST' || normalizedMethod === 'PUT')) {
+    return 'Já existe um profissional cadastrado com este telefone. Informe outro número.';
+  }
 
   if (status === 401) {
+    const isTechnicalTokenMessage =
+      normalizedMessage.includes('token inválido') ||
+      normalizedMessage.includes('token invalido') ||
+      normalizedMessage.includes('token ausente') ||
+      normalizedMessage.includes('unauthorized') ||
+      normalizedMessage.includes('jwt');
+
+    if (isTechnicalTokenMessage) {
+      return 'Sua sessão expirou. Faça login novamente para continuar.';
+    }
+
     return message || 'Sessão expirada ou não autenticada. Faça login novamente.';
   }
 

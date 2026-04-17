@@ -8,7 +8,7 @@ import { masterLoginApi, masterMeApi } from './services/authApi';
 import { CategoriaApi, createCategoriaApi, deleteCategoriaApi, listCategoriasApi, updateCategoriaApi } from './services/categoriasApi';
 import { ClienteApi, createClienteApi, deleteClienteApi, findClienteByPhonePublicApi, listClientesApi, updateClienteApi } from './services/clientesApi';
 import { createProfissionalApi, deleteProfissionalApi, listProfissionaisApi, listProfissionaisPublicApi, ProfissionalApi, updateProfissionalApi } from './services/profissionaisApi';
-import { createServicoApi, deleteServicoApi, listServicosApi, listServicosPublicApi, ServicoApi, updateServicoApi } from './services/servicosApi';
+import { createServicoApi, deleteServicoApi, listServicosApi, listServicosPublicApi, reorderServicosApi, ServicoApi, updateServicoApi } from './services/servicosApi';
 import { HorarioFuncionamentoApi, listHorariosFuncionamentoApi, listHorariosFuncionamentoPublicApi, saveHorariosFuncionamentoApi } from './services/horariosApi';
 import { getIdentidadeApi, getIdentidadePublicaApi, IdentidadeApi, saveIdentidadeApi } from './services/identidadeApi';
 import { Login } from './views/Login';
@@ -42,6 +42,7 @@ interface AppContextType {
   updateService: (service: Service) => void;
   deleteService: (id: string) => Promise<{ success: boolean; error?: string }>;
   addService: (service: Service) => void;
+  reorderServices: (orderedServiceIds: string[]) => Promise<{ success: boolean; error?: string }>;
   categories: Category[];
   addCategory: (category: Category) => void;
   updateCategory: (category: Category) => void;
@@ -56,6 +57,7 @@ interface AppContextType {
   addUser: (user: User & { password?: string; commissionPercentage?: number }) => Promise<{ success: boolean; error?: string }>;
   updateUser: (user: User & { password?: string; commissionPercentage?: number }) => Promise<{ success: boolean; error?: string }>;
   deleteUser: (id: string) => Promise<{ success: boolean; error?: string }>;
+  deactivateProfessional: (id: string) => Promise<{ success: boolean; error?: string }>;
   businessHours: BusinessHour[];
   saveBusinessHours: (hours: BusinessHour[]) => Promise<{ success: boolean; error?: string }>;
   brandIdentity: BrandIdentity;
@@ -97,6 +99,82 @@ const LGPDBanner = () => {
       >
         Concordo e Fechar
       </button>
+    </div>
+  );
+};
+
+type OnboardingAccessGuardProps = {
+  user: User | null;
+  isOnboardingCompleted: () => boolean;
+  getCurrentTenantSlug: () => string;
+};
+
+const OnboardingAccessGuard: React.FC<OnboardingAccessGuardProps> = ({
+  user,
+  isOnboardingCompleted,
+  getCurrentTenantSlug,
+}) => {
+  const [confirmedRestart, setConfirmedRestart] = useState(false);
+  const [cancelledRestart, setCancelledRestart] = useState(false);
+  const manualRestartRequested = localStorage.getItem('manual_onboarding_request') === 'true';
+
+  if (!(user && user.role === 'ADMIN')) {
+    return <Navigate to="/login" />;
+  }
+
+  if (cancelledRestart) {
+    localStorage.removeItem('manual_onboarding_request');
+    return <Navigate to="/admin" />;
+  }
+
+  if (!isOnboardingCompleted() || confirmedRestart) {
+    return <Onboarding />;
+  }
+
+  if (!manualRestartRequested) {
+    return <Navigate to="/admin" />;
+  }
+
+  const handleConfirmRestart = () => {
+    const tenantSlug = getCurrentTenantSlug();
+    localStorage.setItem('manual_onboarding_request', 'true');
+    localStorage.setItem(`onboarding_completed:${tenantSlug}`, 'false');
+    localStorage.removeItem(`onboarding_completed_at:${tenantSlug}`);
+
+    if (tenantSlug === 'demo') {
+      localStorage.setItem('onboarding_completed', 'false');
+      localStorage.removeItem('onboarding_completed_at');
+    }
+
+    setConfirmedRestart(true);
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+      <div className="w-full max-w-lg bg-white rounded-2xl shadow-xl border border-gray-100 overflow-hidden">
+        <div className="px-6 py-5 border-b border-gray-100">
+          <h2 className="text-lg font-bold text-gray-900">Refazer onboarding?</h2>
+          <p className="text-sm text-gray-600 mt-2">
+            Refazer o onboarding pode zerar configurações da barbearia e afetar a operação.
+          </p>
+        </div>
+        <div className="px-6 py-4 bg-gray-50 flex items-center justify-end gap-3">
+          <button
+            type="button"
+            onClick={() => setCancelledRestart(true)}
+            className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-white"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            onClick={handleConfirmRestart}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700"
+          >
+            Confirmar e iniciar
+          </button>
+        </div>
+      </div>
     </div>
   );
 };
@@ -156,6 +234,8 @@ const App: React.FC = () => {
         const parsed = JSON.parse(raw) as BrandIdentity;
         return {
           name: parsed.name || 'AgendeFácil Barbearia',
+          phone: parsed.phone || undefined,
+          city: parsed.city || undefined,
           logoUrl: parsed.logoUrl,
           loginLogoUrl: parsed.loginLogoUrl,
           loginBackgroundUrl: parsed.loginBackgroundUrl,
@@ -164,6 +244,7 @@ const App: React.FC = () => {
           allowEmployeeCreateAppointment: parsed.allowEmployeeCreateAppointment !== undefined ? Boolean(parsed.allowEmployeeCreateAppointment) : true,
           allowEmployeeViewFinance: Boolean(parsed.allowEmployeeViewFinance),
           allowEmployeeViewReports: Boolean(parsed.allowEmployeeViewReports),
+          allowEmployeeViewUsers: Boolean(parsed.allowEmployeeViewUsers),
           iconName: parsed.iconName || 'scissors',
           primaryColor: parsed.primaryColor || DEFAULT_PRIMARY_COLOR,
           secondaryColor: parsed.secondaryColor || DEFAULT_SECONDARY_COLOR,
@@ -180,6 +261,7 @@ const App: React.FC = () => {
       allowEmployeeCreateAppointment: true,
       allowEmployeeViewFinance: false,
       allowEmployeeViewReports: false,
+      allowEmployeeViewUsers: false,
       iconName: 'scissors',
       primaryColor: DEFAULT_PRIMARY_COLOR,
       secondaryColor: DEFAULT_SECONDARY_COLOR,
@@ -241,6 +323,7 @@ const App: React.FC = () => {
       price: Number(servico.preco || 0),
       durationMinutes: servico.duracao_min,
       category: categoria?.name || 'Geral',
+      sortOrder: Number(servico.sort_order || 0),
       iconName: 'Scissors',
     };
   };
@@ -249,6 +332,7 @@ const App: React.FC = () => {
     id: profissional.id,
     name: profissional.nome,
     role: profissional.cargo || 'Profissional',
+    active: profissional.ativo,
     avatar: normalizeAvatar(profissional.foto_url),
     commissionPercentage: Number(profissional.comissao_percentual || 0),
     specialties: [],
@@ -323,6 +407,8 @@ const App: React.FC = () => {
 
   const mapIdentidade = (identidade: IdentidadeApi): BrandIdentity => ({
     name: identidade.nome,
+    phone: identidade.telefone || undefined,
+    city: identidade.cidade || undefined,
     logoUrl: identidade.logo_url || undefined,
     loginLogoUrl: identidade.login_logo_url || undefined,
     loginBackgroundUrl: identidade.login_background_url || undefined,
@@ -331,6 +417,7 @@ const App: React.FC = () => {
     allowEmployeeCreateAppointment: identidade.allow_employee_create_appointment === undefined || identidade.allow_employee_create_appointment === null ? true : Boolean(identidade.allow_employee_create_appointment),
     allowEmployeeViewFinance: Boolean(identidade.allow_employee_view_finance),
     allowEmployeeViewReports: Boolean(identidade.allow_employee_view_reports),
+    allowEmployeeViewUsers: Boolean(identidade.allow_employee_view_users),
     iconName: identidade.icone_marca || 'scissors',
     primaryColor: identidade.cor_primaria || '#2563eb',
     secondaryColor: identidade.cor_secundaria || '#eff6ff',
@@ -360,17 +447,23 @@ const App: React.FC = () => {
       listProfissionaisApi(),
       listClientesApi(),
     ]);
-    const authUsersResult = isAdminApiSession() ? await listAuthUsersApi() : null;
+    const authUsersResult = isAdminApiSession() && user?.role === 'ADMIN' ? await listAuthUsersApi() : null;
 
     const horariosResult = await listHorariosFuncionamentoApi();
-    const identidadeResult = await getIdentidadeApi();
+    const identidadeResult = user?.role === 'ADMIN'
+      ? await getIdentidadeApi()
+      : await getIdentidadePublicaApi();
 
     if (servicosResult.success) {
       setServices(servicosResult.data.map(item => mapServico(item, categoriasAtuais)));
     }
 
     if (profissionaisResult.success) {
-      setProfessionals(profissionaisResult.data.map(mapProfissional));
+      setProfessionals(
+        profissionaisResult.data
+          .filter(item => item.ativo !== false)
+          .map(mapProfissional)
+      );
     }
 
     if (authUsersResult?.success) {
@@ -389,7 +482,23 @@ const App: React.FC = () => {
     }
 
     if (identidadeResult.success) {
-      const mapped = mapIdentidade(identidadeResult.data);
+      const mapped: BrandIdentity = {
+        name: identidadeResult.data.nome,
+        phone: identidadeResult.data.telefone || undefined,
+        city: identidadeResult.data.cidade || undefined,
+        logoUrl: identidadeResult.data.logo_url || undefined,
+        loginLogoUrl: identidadeResult.data.login_logo_url || undefined,
+        loginBackgroundUrl: identidadeResult.data.login_background_url || undefined,
+        churnRiskDaysThreshold: Number(identidadeResult.data.churn_risk_days_threshold || 45),
+        allowEmployeeConfirmAppointment: Boolean(identidadeResult.data.allow_employee_confirm_appointment),
+        allowEmployeeCreateAppointment: identidadeResult.data.allow_employee_create_appointment === undefined || identidadeResult.data.allow_employee_create_appointment === null ? true : Boolean(identidadeResult.data.allow_employee_create_appointment),
+        allowEmployeeViewFinance: Boolean(identidadeResult.data.allow_employee_view_finance),
+        allowEmployeeViewReports: Boolean(identidadeResult.data.allow_employee_view_reports),
+        allowEmployeeViewUsers: Boolean(identidadeResult.data.allow_employee_view_users),
+        iconName: identidadeResult.data.icone_marca || 'scissors',
+        primaryColor: identidadeResult.data.cor_primaria || '#2563eb',
+        secondaryColor: identidadeResult.data.cor_secundaria || '#eff6ff',
+      };
       setBrandIdentity(mapped);
     }
 
@@ -432,7 +541,7 @@ const App: React.FC = () => {
     if (authUsersResult && !authUsersResult.success) errors.push('usuários');
     if (!clientesResult.success) errors.push('clientes');
     if (!horariosResult.success) errors.push('horários de funcionamento');
-    if (!identidadeResult.success) errors.push('identidade visual');
+    if (!identidadeResult.success && user?.role === 'ADMIN') errors.push('identidade visual');
     if (!agendamentosResult.success) errors.push('agendamentos');
 
     if (errors.length > 0 && !options?.silent) {
@@ -461,7 +570,11 @@ const App: React.FC = () => {
     }
 
     if (profissionaisResult.success) {
-      setProfessionals(profissionaisResult.data.map(mapProfissional));
+      setProfessionals(
+        profissionaisResult.data
+          .filter(item => item.ativo !== false)
+          .map(mapProfissional)
+      );
     }
 
     if (horariosResult.success) {
@@ -633,6 +746,8 @@ const App: React.FC = () => {
       if (!cancelled && result.success) {
         const mapped: BrandIdentity = {
           name: result.data.nome,
+          phone: brandIdentity.phone,
+          city: brandIdentity.city,
           logoUrl: result.data.logo_url || undefined,
           loginLogoUrl: result.data.login_logo_url || undefined,
           loginBackgroundUrl: result.data.login_background_url || undefined,
@@ -641,6 +756,7 @@ const App: React.FC = () => {
           allowEmployeeCreateAppointment: result.data.allow_employee_create_appointment === undefined || result.data.allow_employee_create_appointment === null ? true : Boolean(result.data.allow_employee_create_appointment),
           allowEmployeeViewFinance: Boolean(result.data.allow_employee_view_finance),
           allowEmployeeViewReports: Boolean(result.data.allow_employee_view_reports),
+          allowEmployeeViewUsers: Boolean(result.data.allow_employee_view_users),
           iconName: result.data.icone_marca || 'scissors',
           primaryColor: result.data.cor_primaria || DEFAULT_PRIMARY_COLOR,
           secondaryColor: result.data.cor_secundaria || DEFAULT_SECONDARY_COLOR,
@@ -653,7 +769,7 @@ const App: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [authInitialized]);
+  }, [authInitialized, brandIdentity.phone, brandIdentity.city]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -1020,7 +1136,7 @@ const App: React.FC = () => {
 
   const addService = (newService: Service) => {
     if (!isAdminApiSession()) {
-      setServices(prev => [...prev, newService]);
+      setServices(prev => [...prev, { ...newService, sortOrder: prev.length + 1 }]);
       return;
     }
 
@@ -1060,6 +1176,53 @@ const App: React.FC = () => {
       return { success: false, error: message };
     }
     setServices(prev => prev.filter(s => s.id !== id));
+    return { success: true };
+  };
+
+  const reorderServices = async (orderedServiceIds: string[]): Promise<{ success: boolean; error?: string }> => {
+    if (orderedServiceIds.length !== services.length) {
+      return { success: false, error: 'A ordenação enviada está incompleta.' };
+    }
+
+    const servicesById = new Map(services.map(service => [service.id, service]));
+    if (orderedServiceIds.some(id => !servicesById.has(id))) {
+      return { success: false, error: 'A ordenação contém serviços inválidos.' };
+    }
+
+    const reorderedLocal = orderedServiceIds.map((serviceId, index) => {
+      const current = servicesById.get(serviceId)!;
+      return {
+        ...current,
+        sortOrder: index + 1,
+      };
+    });
+
+    const previous = services;
+    setServices(reorderedLocal);
+
+    if (!isAdminApiSession()) {
+      return { success: true };
+    }
+
+    const result = await reorderServicosApi(orderedServiceIds);
+    if (!result.success) {
+      setServices(previous);
+      const message = ('error' in result && result.error) ? result.error : 'Falha ao salvar ordenação de serviços.';
+      pushErrorNotification(message);
+      return { success: false, error: message };
+    }
+
+    const previousById = new Map(previous.map(service => [service.id, service]));
+    const mapped = result.data.map((item) => {
+      const base = mapServico(item, categories);
+      const existing = previousById.get(base.id);
+      return {
+        ...base,
+        description: existing?.description || base.description,
+        iconName: existing?.iconName || base.iconName,
+      };
+    });
+    setServices(mapped);
     return { success: true };
   };
 
@@ -1122,7 +1285,7 @@ const App: React.FC = () => {
   };
 
   const addClient = (newClient: Client) => {
-    if (!isAdminApiSession()) {
+    if (!isBackofficeApiSession()) {
       setClients(prev => [...prev, newClient]);
       return;
     }
@@ -1153,7 +1316,7 @@ const App: React.FC = () => {
       return { successCount: 0, failed: [] };
     }
 
-    if (!isAdminApiSession()) {
+    if (!isBackofficeApiSession()) {
       const now = Date.now();
       const mappedClients: Client[] = clientsToImport.map((item, index) => ({
         id: `${now}-${index}`,
@@ -1203,7 +1366,7 @@ const App: React.FC = () => {
   };
 
   const updateClient = (updatedClient: Client) => {
-    if (!isAdminApiSession()) {
+    if (!isBackofficeApiSession()) {
       setClients(prev => prev.map(c => c.id === updatedClient.id ? updatedClient : c));
       return;
     }
@@ -1228,7 +1391,7 @@ const App: React.FC = () => {
   };
 
   const deleteClient = async (id: string): Promise<{ success: boolean; error?: string }> => {
-    if (!isAdminApiSession()) {
+    if (!isBackofficeApiSession()) {
       setClients(prev => prev.filter(c => c.id !== id));
       return { success: true };
     }
@@ -1382,6 +1545,9 @@ const App: React.FC = () => {
     setUsers(prev => prev.map(u => u.id === updatedUser.id ? mapAuthUserToUser(authResult.data, profissionalResult.data.foto_url || undefined) : u));
     setProfessionals(prev => {
       const mapped = mapProfissional(profissionalResult.data);
+      if (mapped.active === false) {
+        return prev.filter(p => p.id !== updatedUser.id);
+      }
       if (hasProfissional) {
         return prev.map(p => p.id === updatedUser.id ? mapped : p);
       }
@@ -1409,6 +1575,23 @@ const App: React.FC = () => {
     }
 
     setUsers(prev => prev.filter(u => u.id !== id));
+    setProfessionals(prev => prev.filter(p => p.id !== id));
+    return { success: true };
+  };
+
+  const deactivateProfessional = async (id: string): Promise<{ success: boolean; error?: string }> => {
+    if (!isAdminApiSession()) {
+      setProfessionals(prev => prev.filter(p => p.id !== id));
+      return { success: true };
+    }
+
+    const result = await deleteProfissionalApi(id);
+    if (!result.success) {
+      const message = ('error' in result && result.error) ? result.error : 'Falha ao inativar profissional.';
+      pushErrorNotification(message);
+      return { success: false, error: message };
+    }
+
     setProfessionals(prev => prev.filter(p => p.id !== id));
     return { success: true };
   };
@@ -1445,6 +1628,8 @@ const App: React.FC = () => {
 
     const result = await saveIdentidadeApi({
       nome: identity.name,
+      telefone: identity.phone || null,
+      cidade: identity.city || null,
       logo_url: identity.logoUrl || null,
       login_logo_url: identity.loginLogoUrl || null,
       login_background_url: identity.loginBackgroundUrl || null,
@@ -1453,6 +1638,7 @@ const App: React.FC = () => {
       allow_employee_create_appointment: identity.allowEmployeeCreateAppointment === undefined ? true : Boolean(identity.allowEmployeeCreateAppointment),
       allow_employee_view_finance: Boolean(identity.allowEmployeeViewFinance),
       allow_employee_view_reports: Boolean(identity.allowEmployeeViewReports),
+      allow_employee_view_users: Boolean(identity.allowEmployeeViewUsers),
       icone_marca: identity.iconName || 'scissors',
       cor_primaria: identity.primaryColor || '#2563eb',
       cor_secundaria: identity.secondaryColor || '#eff6ff',
@@ -1504,66 +1690,6 @@ const App: React.FC = () => {
     !isOnboardingCompleted()
   );
 
-  const OnboardingAccessGuard: React.FC = () => {
-    const [confirmedRestart, setConfirmedRestart] = useState(false);
-    const [cancelledRestart, setCancelledRestart] = useState(false);
-
-    if (!(user && user.role === 'ADMIN')) {
-      return <Navigate to="/login" />;
-    }
-
-    if (cancelledRestart) {
-      return <Navigate to="/admin" />;
-    }
-
-    if (!isOnboardingCompleted() || confirmedRestart) {
-      return <Onboarding />;
-    }
-
-    const handleConfirmRestart = () => {
-      const tenantSlug = getCurrentTenantSlug();
-      localStorage.setItem('manual_onboarding_request', 'true');
-      localStorage.setItem(`onboarding_completed:${tenantSlug}`, 'false');
-      localStorage.removeItem(`onboarding_completed_at:${tenantSlug}`);
-
-      if (tenantSlug === 'demo') {
-        localStorage.setItem('onboarding_completed', 'false');
-        localStorage.removeItem('onboarding_completed_at');
-      }
-
-      setConfirmedRestart(true);
-    };
-
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-        <div className="w-full max-w-lg bg-white rounded-2xl shadow-xl border border-gray-100 overflow-hidden">
-          <div className="px-6 py-5 border-b border-gray-100">
-            <h2 className="text-lg font-bold text-gray-900">Refazer onboarding?</h2>
-            <p className="text-sm text-gray-600 mt-2">
-              Refazer o onboarding pode zerar configurações da barbearia e afetar a operação.
-            </p>
-          </div>
-          <div className="px-6 py-4 bg-gray-50 flex items-center justify-end gap-3">
-            <button
-              type="button"
-              onClick={() => setCancelledRestart(true)}
-              className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-white"
-            >
-              Cancelar
-            </button>
-            <button
-              type="button"
-              onClick={handleConfirmRestart}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700"
-            >
-              Confirmar e iniciar
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
   if (!authInitialized) {
     return <div className="min-h-screen bg-gray-50" />;
   }
@@ -1572,10 +1698,10 @@ const App: React.FC = () => {
     <AppContext.Provider value={{ 
       user, login, logout, notifications, markNotificationRead, 
       appointments, addAppointment, updateAppointment, transitionAppointmentStatus, deleteAppointment,
-      services, updateService, addService, deleteService,
+      services, updateService, addService, deleteService, reorderServices,
       categories, addCategory, updateCategory, deleteCategory,
       professionals, clients, addClient, importClients, updateClient, deleteClient,
-      users, addUser, updateUser, deleteUser,
+      users, addUser, updateUser, deleteUser, deactivateProfessional,
       businessHours, saveBusinessHours,
       brandIdentity, saveBrandIdentity
     }}>
@@ -1601,7 +1727,11 @@ const App: React.FC = () => {
             } />
 
             <Route path="/onboarding" element={
-              <OnboardingAccessGuard />
+              <OnboardingAccessGuard
+                user={user}
+                isOnboardingCompleted={isOnboardingCompleted}
+                getCurrentTenantSlug={getCurrentTenantSlug}
+              />
             } />
 
             <Route path="/" element={<Navigate to="/login" />} />

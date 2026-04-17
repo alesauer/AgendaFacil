@@ -30,7 +30,9 @@ def _build_payload(snapshot: dict[str, Any]) -> dict[str, Any]:
         "agendamento_id": str(snapshot.get("agendamento_id") or ""),
         "client_name": str(snapshot.get("cliente_nome") or "Cliente"),
         "service_name": str(snapshot.get("servico_nome") or "Serviço"),
+        "service_price": snapshot.get("servico_preco"),
         "professional_name": str(snapshot.get("profissional_nome") or "Profissional"),
+        "location": str(snapshot.get("barbearia_local") or "Local não informado"),
         "appointment_date": _to_br_date(str(snapshot.get("data") or "")),
         "appointment_time": str(snapshot.get("hora_inicio") or "")[:5],
         "raw_date": str(snapshot.get("data") or "")[:10],
@@ -112,10 +114,11 @@ def _fetch_appointment_snapshot(barbearia_id: str, agendamento_id: str) -> dict[
             profissional_nome = str(profissionais[0].get("nome") or "Profissional")
 
     servico_nome = "Serviço"
+    servico_preco = None
     if servico_id:
         servico_response = (
             supabase.table("servicos")
-            .select("nome")
+            .select("nome,preco")
             .eq("barbearia_id", barbearia_id)
             .eq("id", servico_id)
             .limit(1)
@@ -124,6 +127,24 @@ def _fetch_appointment_snapshot(barbearia_id: str, agendamento_id: str) -> dict[
         servicos = servico_response.data or []
         if servicos:
             servico_nome = str(servicos[0].get("nome") or "Serviço")
+            servico_preco = servicos[0].get("preco")
+
+    barbearia_local = "Local não informado"
+    try:
+        barbearia_response = (
+            supabase.table("barbearias")
+            .select("cidade")
+            .eq("id", barbearia_id)
+            .limit(1)
+            .execute()
+        )
+        barbearias = barbearia_response.data or []
+        if barbearias:
+            cidade = str(barbearias[0].get("cidade") or "").strip()
+            if cidade:
+                barbearia_local = cidade
+    except Exception:
+        pass
 
     return {
         "agendamento_id": str(appointment.get("id") or ""),
@@ -135,6 +156,8 @@ def _fetch_appointment_snapshot(barbearia_id: str, agendamento_id: str) -> dict[
         "cliente_email": cliente_email,
         "profissional_nome": profissional_nome,
         "servico_nome": servico_nome,
+        "servico_preco": servico_preco,
+        "barbearia_local": barbearia_local,
     }
 
 
@@ -143,6 +166,7 @@ def enqueue_for_appointment_event(
     agendamento_id: str,
     template_key: str,
     correlation_id: str | None = None,
+    idempotency_suffix: str | None = None,
 ):
     snapshot = _fetch_appointment_snapshot(barbearia_id, agendamento_id)
     if not snapshot:
@@ -153,7 +177,12 @@ def enqueue_for_appointment_event(
 
     phone_recipient = str(snapshot.get("cliente_telefone") or "")
     if phone_recipient:
-        idempotency_key_whatsapp = f"{template_key}:{agendamento_id}:WHATSAPP"
+        base_idempotency_whatsapp = f"{template_key}:{agendamento_id}:WHATSAPP"
+        idempotency_key_whatsapp = (
+            f"{base_idempotency_whatsapp}:{idempotency_suffix}"
+            if idempotency_suffix
+            else base_idempotency_whatsapp
+        )
         created = NotificationsRepository.enqueue_dispatch(
             barbearia_id=barbearia_id,
             channel="WHATSAPP",
@@ -169,7 +198,12 @@ def enqueue_for_appointment_event(
 
     email_recipient = str(snapshot.get("cliente_email") or "").strip()
     if email_recipient:
-        idempotency_key_email = f"{template_key}:{agendamento_id}:EMAIL"
+        base_idempotency_email = f"{template_key}:{agendamento_id}:EMAIL"
+        idempotency_key_email = (
+            f"{base_idempotency_email}:{idempotency_suffix}"
+            if idempotency_suffix
+            else base_idempotency_email
+        )
         created = NotificationsRepository.enqueue_dispatch(
             barbearia_id=barbearia_id,
             channel="EMAIL",

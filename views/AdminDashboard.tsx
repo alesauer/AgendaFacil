@@ -6,7 +6,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { LayoutDashboard, Users, Calendar, Settings, LogOut, Plus, Edit, Trash2, DollarSign, X, Clock, Tag, Image as ImageIcon, Search, ChevronLeft, ChevronRight, Bell, Mail, MessageSquare, Shield, Globe, Menu, Scissors, Sparkles, Smile, Zap, Heart, Share2, RotateCcw, ChevronDown, Lock, Camera, Store, User as UserIcon, Palette, Check, CreditCard, Receipt, BarChart3, Phone, Headphones, ExternalLink, List, Upload } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import * as XLSX from 'xlsx';
-import { createProfissionalApi, deleteProfissionalApi, listProfissionaisApi, updateProfissionalApi } from '../services/profissionaisApi';
+import { createProfissionalApi, listProfissionaisApi, updateProfissionalApi } from '../services/profissionaisApi';
 import {
   listRecebiveisApi,
   registrarEstornoRecebivelApi,
@@ -33,6 +33,10 @@ import {
   updatePlanoAssinaturaClienteApi,
   upsertAssinaturaClienteApi,
 } from '../services/clientesApi';
+import { createEvolutionInstanceApi, disconnectEvolutionInstanceApi, getEvolutionIntegrationStateApi } from '../services/whatsappApi';
+import type { WhatsAppIntegrationStatus } from '../services/whatsappApi';
+import { getNotificationChannelSettingsApi, saveNotificationChannelSettingsApi } from '../services/notificationSettingsApi';
+import { sendSupportContactApi } from '../services/supportApi';
 
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042'];
 
@@ -744,12 +748,16 @@ type AgendaNavigationPayload = {
 };
 
 const ServicesManagement = () => {
-  const { services, deleteService, addService, updateService, categories } = useAppContext();
+  const { services, deleteService, addService, updateService, reorderServices, categories } = useAppContext();
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
     const [serviceToDelete, setServiceToDelete] = useState<Service | null>(null);
     const [deleteError, setDeleteError] = useState<string | null>(null);
     const [isDeletingService, setIsDeletingService] = useState(false);
+    const [isReorderingServices, setIsReorderingServices] = useState(false);
+    const [reorderError, setReorderError] = useState<string | null>(null);
+    const [draggedServiceId, setDraggedServiceId] = useState<string | null>(null);
+    const [dropTargetServiceId, setDropTargetServiceId] = useState<string | null>(null);
   const [selectedServiceId, setSelectedServiceId] = useState<string | null>(null);
     const [formData, setFormData] = useState({
         title: '',
@@ -794,10 +802,38 @@ const ServicesManagement = () => {
         });
     };
 
+    const moveService = async (sourceId: string, targetId: string) => {
+      if (!sourceId || !targetId || sourceId === targetId || isReorderingServices) {
+        return;
+      }
+
+      const ids = services.map(service => service.id);
+      const sourceIndex = ids.indexOf(sourceId);
+      const targetIndex = ids.indexOf(targetId);
+      if (sourceIndex < 0 || targetIndex < 0) {
+        return;
+      }
+
+      const nextIds = [...ids];
+      const [moved] = nextIds.splice(sourceIndex, 1);
+      nextIds.splice(targetIndex, 0, moved);
+
+      setReorderError(null);
+      setIsReorderingServices(true);
+      const result = await reorderServices(nextIds);
+      if (!result.success) {
+        setReorderError(result.error || 'Falha ao reordenar serviços.');
+      }
+      setIsReorderingServices(false);
+    };
+
     return (
         <div className="space-y-6">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                <h2 className="text-xl font-bold text-gray-800">Gerenciar Serviços</h2>
+                <div>
+                  <h2 className="text-xl font-bold text-gray-800">Gerenciar Serviços</h2>
+                  <p className="text-sm text-gray-500 mt-1">Arraste e solte pela alça para definir a ordem exibida ao cliente.</p>
+                </div>
                 <button 
                   onClick={() => {
                     setSelectedServiceId(null);
@@ -969,7 +1005,7 @@ const ServicesManagement = () => {
                       <button
                         type="button"
                         onClick={async () => {
-                          if (!serviceToDelete || isDeletingService) return;
+                          if (!serviceToDelete || isDeletingService || isReorderingServices) return;
                           setIsDeletingService(true);
                           const result = await deleteService(serviceToDelete.id);
                           if (!result.success) {
@@ -983,7 +1019,7 @@ const ServicesManagement = () => {
                           setIsDeletingService(false);
                         }}
                         className="flex-1 px-4 py-2.5 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-                        disabled={isDeletingService}
+                        disabled={isDeletingService || isReorderingServices}
                       >
                         {isDeletingService ? 'Excluindo...' : 'Excluir'}
                       </button>
@@ -992,11 +1028,18 @@ const ServicesManagement = () => {
                 </div>
               </div>
             )}
+
+            {reorderError && (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                {reorderError}
+              </div>
+            )}
             
             <div className="bg-white rounded-xl shadow-sm overflow-hidden border border-gray-100">
                 <table className="w-full text-sm text-left">
                     <thead className="bg-gray-50 text-gray-600 font-medium">
                     <tr>
+                        <th className="px-6 py-3 w-10"></th>
                         <th className="px-6 py-3">Serviço</th>
                         <th className="px-6 py-3">Preço</th>
                         <th className="px-6 py-3">Duração</th>
@@ -1005,7 +1048,39 @@ const ServicesManagement = () => {
                     </thead>
                     <tbody className="divide-y">
                         {services.map(service => (
-                            <tr key={service.id} className="hover:bg-gray-50">
+                            <tr
+                              key={service.id}
+                              className={`hover:bg-gray-50 ${dropTargetServiceId === service.id ? 'bg-blue-50' : ''}`}
+                              draggable={!isReorderingServices}
+                              onDragStart={() => {
+                                setDraggedServiceId(service.id);
+                                setDropTargetServiceId(service.id);
+                                setReorderError(null);
+                              }}
+                              onDragOver={(event) => {
+                                event.preventDefault();
+                                if (draggedServiceId && draggedServiceId !== service.id) {
+                                  setDropTargetServiceId(service.id);
+                                }
+                              }}
+                              onDrop={async (event) => {
+                                event.preventDefault();
+                                const sourceId = draggedServiceId;
+                                setDraggedServiceId(null);
+                                setDropTargetServiceId(null);
+                                if (!sourceId) return;
+                                await moveService(sourceId, service.id);
+                              }}
+                              onDragEnd={() => {
+                                setDraggedServiceId(null);
+                                setDropTargetServiceId(null);
+                              }}
+                            >
+                                <td className="px-6 py-3 text-gray-400">
+                                  <span className="inline-flex items-center justify-center" title="Arrastar para reordenar">
+                                    <List size={16} />
+                                  </span>
+                                </td>
                                 <td className="px-6 py-3">
                                     <div className="flex items-center gap-3">
                                         <div className="w-10 h-10 rounded-lg bg-blue-50 flex items-center justify-center text-blue-600">
@@ -2122,6 +2197,7 @@ const CalendarManagement = ({
     const canEmployeeCreateAppointment = !isEmployeeUser || allowEmployeeCreateAppointment;
     const employeeProfessionalId = user?.id || '';
     const canManageSelectedAppointment = !selectedApt || !isEmployeeUser || selectedApt.professionalId === employeeProfessionalId;
+    const isUuid = (value: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || '').trim());
 
     const filteredClients = clients
       .filter(client => {
@@ -2135,6 +2211,13 @@ const CalendarManagement = ({
       if (!isModalOpen || formData.isBlocked || !formData.clientId) {
         setAppointmentSubscriptionPreview(null);
         setAppointmentSubscriptionPreviewError(null);
+        setIsLoadingAppointmentSubscriptionPreview(false);
+        return;
+      }
+
+      if (!isUuid(formData.clientId)) {
+        setAppointmentSubscriptionPreview(null);
+        setAppointmentSubscriptionPreviewError('Selecione um cliente válido para continuar.');
         setIsLoadingAppointmentSubscriptionPreview(false);
         return;
       }
@@ -2587,6 +2670,11 @@ const CalendarManagement = ({
       }
 
       if (!formData.isBlocked && !formData.clientId) {
+        setAppointmentSubmitError('Selecione um cliente válido para continuar.');
+        return;
+      }
+
+      if (!formData.isBlocked && !isUuid(formData.clientId)) {
         setAppointmentSubmitError('Selecione um cliente válido para continuar.');
         return;
       }
@@ -4393,31 +4481,281 @@ const ProfessionalModal = ({ isOpen, onClose, onSave, professionalToEdit }: {
 };
 
 const WhatsAppIntegration = () => {
-  const [status, setStatus] = useState<'DISCONNECTED' | 'LOADING' | 'QR_CODE' | 'CONNECTED'>('DISCONNECTED');
+  const normalizeIntegrationStatus = (
+    raw: string | null | undefined,
+    fallback: WhatsAppIntegrationStatus = 'DISCONNECTED',
+  ): WhatsAppIntegrationStatus => {
+    const normalized = String(raw || '').trim().toUpperCase();
+    if (
+      normalized === 'DISCONNECTED' ||
+      normalized === 'CONNECTING' ||
+      normalized === 'QR_READY' ||
+      normalized === 'AWAITING_CONNECTION' ||
+      normalized === 'CONNECTED' ||
+      normalized === 'ERROR'
+    ) {
+      return normalized;
+    }
+    return fallback;
+  };
+
+  const integrationStatusLabel = (value: WhatsAppIntegrationStatus | null): string | null => {
+    if (!value) return null;
+    if (value === 'DISCONNECTED') return 'Desconectado';
+    if (value === 'CONNECTING') return 'Conectando';
+    if (value === 'QR_READY') return 'QR pronto';
+    if (value === 'AWAITING_CONNECTION') return 'Aguardando conexão';
+    if (value === 'CONNECTED') return 'Conectado';
+    if (value === 'ERROR') return 'Erro';
+    return value;
+  };
+
+  const loadCachedConnectedState = (): { status: 'CONNECTED' | 'LOADING'; instanceName: string | null } => {
+    try {
+      const raw = localStorage.getItem('agf.whatsapp.integration.cache');
+      if (!raw) return { status: 'LOADING', instanceName: null };
+      const parsed = JSON.parse(raw) as { status?: string; instanceName?: string | null };
+      const cachedStatus = String(parsed?.status || '').toUpperCase();
+      const cachedInstance = String(parsed?.instanceName || '').trim() || null;
+      if (cachedStatus === 'CONNECTED' && cachedInstance) {
+        return { status: 'CONNECTED', instanceName: cachedInstance };
+      }
+    } catch {
+      return { status: 'LOADING', instanceName: null };
+    }
+    return { status: 'LOADING', instanceName: null };
+  };
+
+  const initialCached = loadCachedConnectedState();
+  const [status, setStatus] = useState<'DISCONNECTED' | 'LOADING' | 'QR_CODE' | 'CONNECTED'>(initialCached.status);
   const [qrCode, setQrCode] = useState<string | null>(null);
+  const [instanceName, setInstanceName] = useState('');
+  const [connectedNumber, setConnectedNumber] = useState<string | null>(initialCached.instanceName);
+  const [apiError, setApiError] = useState<string | null>(null);
+  const [isInitializing, setIsInitializing] = useState(true);
+  const [isDisconnecting, setIsDisconnecting] = useState(false);
+  const [showDisconnectModal, setShowDisconnectModal] = useState(false);
+  const [isPollingStatus, setIsPollingStatus] = useState(false);
+  const [integrationStatus, setIntegrationStatus] = useState<WhatsAppIntegrationStatus | null>(null);
+  const [connectionStatus, setConnectionStatus] = useState<string | null>(null);
+  const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
+  const [lastBackendError, setLastBackendError] = useState<string | null>(null);
+  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollStartedAtRef = useRef<number | null>(null);
+  const isRefreshingStateRef = useRef(false);
+  const connectionStatusRef = useRef<string | null>(null);
 
-  const generateQR = () => {
-    setStatus('LOADING');
-    setTimeout(() => {
-      setQrCode('https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=AgendeFacilWhatsAppIntegration');
-      setStatus('QR_CODE');
-    }, 1500);
-  };
-
-  const connect = () => {
-    setStatus('CONNECTED');
-  };
-
-  const disconnect = () => {
-    if (confirm('Tem certeza que deseja desconectar sua conta do WhatsApp?')) {
-      setStatus('DISCONNECTED');
-      setQrCode(null);
+  const persistCachedState = (nextStatus: 'DISCONNECTED' | 'LOADING' | 'QR_CODE' | 'CONNECTED', nextInstanceName?: string | null) => {
+    try {
+      if (nextStatus === 'CONNECTED' && nextInstanceName) {
+        localStorage.setItem('agf.whatsapp.integration.cache', JSON.stringify({ status: 'CONNECTED', instanceName: nextInstanceName }));
+        return;
+      }
+      localStorage.removeItem('agf.whatsapp.integration.cache');
+    } catch {
+      return;
     }
   };
 
+  const stopStatePolling = () => {
+    if (pollTimerRef.current) {
+      clearInterval(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+    pollStartedAtRef.current = null;
+    setIsPollingStatus(false);
+  };
+
+  const syncStateFromBackend = async (): Promise<'CONNECTED' | 'HAS_INTEGRATION' | 'DISCONNECTED' | 'ERROR'> => {
+    if (isRefreshingStateRef.current) return 'ERROR';
+    isRefreshingStateRef.current = true;
+
+    const response = await getEvolutionIntegrationStateApi();
+    isRefreshingStateRef.current = false;
+
+    if (!response.success) {
+      return 'ERROR';
+    }
+
+    const state = response.data;
+    const savedInstance = String(state.instance_name || '').trim();
+    if (savedInstance) {
+      setConnectedNumber(savedInstance);
+      setInstanceName(savedInstance);
+    }
+
+    const nextIntegrationStatus = normalizeIntegrationStatus(state.integration_status || null, savedInstance ? 'AWAITING_CONNECTION' : 'DISCONNECTED');
+    setIntegrationStatus(nextIntegrationStatus);
+    const currentConnectionStatus = String(state.connection_status || '').trim() || null;
+    setConnectionStatus(currentConnectionStatus);
+    connectionStatusRef.current = currentConnectionStatus;
+    setLastSyncAt(String(state.last_sync_at || '').trim() || null);
+    setLastBackendError(String(state.last_error || '').trim() || null);
+
+    if (state.is_connected) {
+      setStatus('CONNECTED');
+      setQrCode(null);
+      setApiError(null);
+      persistCachedState('CONNECTED', savedInstance);
+      return 'CONNECTED';
+    }
+
+    if (state.has_integration && !savedInstance) {
+      setStatus('DISCONNECTED');
+      setConnectedNumber(null);
+      setQrCode(null);
+      setConnectionStatus(null);
+      connectionStatusRef.current = null;
+      persistCachedState('DISCONNECTED');
+      return 'DISCONNECTED';
+    }
+
+    if (state.has_integration) {
+      setStatus('QR_CODE');
+      return 'HAS_INTEGRATION';
+    }
+
+    setStatus('DISCONNECTED');
+    setConnectedNumber(null);
+    setQrCode(null);
+    setConnectionStatus(null);
+    connectionStatusRef.current = null;
+    persistCachedState('DISCONNECTED');
+    return 'DISCONNECTED';
+  };
+
+  const startStatePolling = () => {
+    if (pollTimerRef.current) return;
+
+    pollStartedAtRef.current = Date.now();
+    setIsPollingStatus(true);
+
+    pollTimerRef.current = setInterval(async () => {
+      const syncResult = await syncStateFromBackend();
+      const elapsed = Date.now() - (pollStartedAtRef.current || Date.now());
+
+      if (syncResult === 'CONNECTED' || syncResult === 'DISCONNECTED') {
+        stopStatePolling();
+        return;
+      }
+
+      if (elapsed >= 180000) {
+        stopStatePolling();
+        const normalizedConnection = String(connectionStatusRef.current || '').toLowerCase();
+        if (normalizedConnection === 'connecting') {
+          setApiError('A instância ainda está conectando na Evolution. Se você já escaneou, o QR pode ter expirado. Clique em “Regenerar QR Code”.');
+        } else {
+          setApiError('Aguardando confirmação da conexão. Clique em “Verificar conexão agora”.');
+        }
+      }
+    }, 2500);
+  };
+
+  useEffect(() => {
+    let mounted = true;
+
+    const loadState = async () => {
+      const syncResult = await syncStateFromBackend();
+      if (!mounted) return;
+
+      if (syncResult === 'HAS_INTEGRATION') {
+        startStatePolling();
+      }
+      setIsInitializing(false);
+    };
+
+    loadState();
+
+    return () => {
+      mounted = false;
+      stopStatePolling();
+    };
+  }, []);
+
+  const toQrImageSrc = (raw: string | null) => {
+    const text = String(raw || '').trim();
+    if (!text) return null;
+    if (text.startsWith('http://') || text.startsWith('https://')) return text;
+    if (text.startsWith('data:image/')) return text;
+    return `data:image/png;base64,${text}`;
+  };
+
+  const generateQR = async () => {
+    setApiError(null);
+    setStatus('LOADING');
+    persistCachedState('LOADING');
+    stopStatePolling();
+    const response = await createEvolutionInstanceApi({
+      instance_name: instanceName.trim() || undefined,
+    });
+
+    if (!response.success) {
+      setStatus('DISCONNECTED');
+      persistCachedState('DISCONNECTED');
+      const errorMessage = 'error' in response ? response.error : 'Falha ao criar instância na Evolution.';
+      setApiError(errorMessage || 'Falha ao criar instância na Evolution.');
+      return;
+    }
+
+    const normalizedQr = toQrImageSrc(response.data.qr_code || null);
+    setConnectedNumber(response.data.instance_name || null);
+    setIntegrationStatus(normalizeIntegrationStatus(response.data.integration_status || null, normalizedQr ? 'QR_READY' : 'AWAITING_CONNECTION'));
+    setLastSyncAt(String(response.data.last_sync_at || '').trim() || null);
+    setLastBackendError(null);
+    setQrCode(normalizedQr);
+    setStatus(normalizedQr ? 'QR_CODE' : 'LOADING');
+    persistCachedState(normalizedQr ? 'QR_CODE' : 'LOADING', response.data.instance_name || null);
+    startStatePolling();
+  };
+
+  const disconnect = async () => {
+    setShowDisconnectModal(false);
+    setApiError(null);
+    stopStatePolling();
+    setIsDisconnecting(true);
+    const response = await disconnectEvolutionInstanceApi();
+    setIsDisconnecting(false);
+
+    if (!response.success) {
+      const fallback = 'Falha ao desconectar instância na Evolution.';
+      let errorMessage = 'error' in response ? (response.error || fallback) : fallback;
+      if ('details' in response && response.details && typeof response.details === 'object') {
+        const providerResponse = (response.details as Record<string, unknown>).provider_response as Record<string, unknown> | undefined;
+        const providerStatus = providerResponse && typeof providerResponse.status === 'number' ? providerResponse.status : null;
+        if (providerStatus) {
+          errorMessage = `${errorMessage} (Evolution HTTP ${providerStatus})`;
+        }
+      }
+
+      const syncAfterFailure = await syncStateFromBackend();
+      if (syncAfterFailure === 'DISCONNECTED') {
+        setApiError(null);
+        setLastBackendError(null);
+        return;
+      }
+
+      setApiError(errorMessage);
+      setLastBackendError(errorMessage);
+      return;
+    }
+
+    setStatus('DISCONNECTED');
+    persistCachedState('DISCONNECTED');
+    setQrCode(null);
+    setConnectedNumber(null);
+    setInstanceName('');
+    setIntegrationStatus('DISCONNECTED');
+    setConnectionStatus(null);
+    connectionStatusRef.current = null;
+    setLastSyncAt(null);
+    setLastBackendError(null);
+    setApiError(null);
+  };
+
   return (
-    <div className="max-w-2xl">
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+    <>
+      <div className="max-w-2xl">
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
         <div className="p-6 flex items-start justify-between border-b border-gray-50">
           <div className="flex items-center gap-4">
             <div className="w-12 h-12 bg-blue-50 rounded-xl flex items-center justify-center text-blue-600">
@@ -4431,70 +4769,122 @@ const WhatsAppIntegration = () => {
                 {status === 'CONNECTED' ? (
                   <span className="inline-flex items-center gap-1.5 py-0.5 px-2 rounded-full text-[10px] font-bold bg-blue-100 text-blue-700 uppercase tracking-wider border border-blue-200">
                     <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>
-                    Connected
+                    Conectado
+                  </span>
+                ) : isInitializing ? (
+                  <span className="inline-flex items-center gap-1.5 py-0.5 px-2 rounded-full text-[10px] font-bold bg-gray-100 text-gray-600 uppercase tracking-wider border border-gray-200">
+                    <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-pulse"></span>
+                    Sincronizando
+                  </span>
+                ) : status === 'QR_CODE' || status === 'LOADING' ? (
+                  <span className="inline-flex items-center gap-1.5 py-0.5 px-2 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700 uppercase tracking-wider border border-amber-200">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+                    Aguardando conexão
                   </span>
                 ) : (
                   <span className="inline-flex items-center gap-1.5 py-0.5 px-2 rounded-full text-[10px] font-bold bg-gray-100 text-gray-500 uppercase tracking-wider border border-gray-200">
                     <span className="w-1.5 h-1.5 rounded-full bg-gray-400"></span>
-                    Disconnected
+                    Desconectado
                   </span>
                 )}
               </div>
             </div>
           </div>
-          {status === 'CONNECTED' && (
-            <button 
-              onClick={disconnect}
-              className="text-red-600 hover:bg-red-50 px-4 py-2 rounded-lg text-sm font-bold transition-colors"
-            >
-              Disconnect
-            </button>
-          )}
+            {status === 'CONNECTED' && (
+              <button
+                onClick={() => setShowDisconnectModal(true)}
+                disabled={isDisconnecting}
+                className="text-red-600 hover:bg-red-50 px-4 py-2 rounded-lg text-sm font-bold transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {isDisconnecting ? 'Desconectando...' : 'Disconnect'}
+              </button>
+            )}
         </div>
 
         <div className="p-8 flex flex-col items-center text-center">
-          {status === 'DISCONNECTED' && (
-            <div className="space-y-6 max-w-sm">
-              <p className="text-gray-600">
-                Connect your WhatsApp account to send and receive messages from the platform.
-              </p>
-              <button 
-                onClick={generateQR}
-                className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 shadow-lg shadow-blue-100 transition-all flex items-center justify-center gap-2"
-              >
-                Generate QR Code
-              </button>
+          {apiError && status !== 'DISCONNECTED' && (
+            <div className="mb-4 w-full max-w-xl rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              {apiError}
             </div>
           )}
 
-          {status === 'LOADING' && (
+          {!isInitializing && status === 'DISCONNECTED' && (
+            <div className="space-y-6 max-w-sm">
+              <p className="text-gray-600">Crie sua instância no Evolution para conectar o WhatsApp da barbearia.</p>
+              <input
+                value={instanceName}
+                onChange={(event) => setInstanceName(event.target.value)}
+                placeholder="Nome da instância (opcional)"
+                className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+              />
+              <button 
+                onClick={generateQR}
+                disabled={isPollingStatus}
+                className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 shadow-lg shadow-blue-100 transition-all flex items-center justify-center gap-2"
+              >
+                Criar instância + gerar QR Code
+              </button>
+              {apiError && <p className="text-sm text-red-600">{apiError}</p>}
+            </div>
+          )}
+
+          {(status === 'LOADING' || isInitializing) && (
             <div className="py-12 flex flex-col items-center gap-4">
               <div className="w-12 h-12 border-4 border-blue-100 border-t-blue-600 rounded-full animate-spin"></div>
-              <p className="text-gray-500 font-medium">Generating secure QR Code...</p>
+              <p className="text-gray-500 font-medium">{isInitializing ? 'Carregando integração...' : 'Criando instância e QR Code...'}</p>
             </div>
           )}
 
           {status === 'QR_CODE' && (
             <div className="space-y-6">
-              <div className="p-4 bg-white border-2 border-dashed border-gray-200 rounded-2xl inline-block">
-                <img 
-                  src={qrCode!} 
-                  alt="WhatsApp QR Code" 
-                  className="w-48 h-48 cursor-pointer"
-                  onClick={connect}
-                  referrerPolicy="no-referrer"
-                />
-              </div>
+              {qrCode ? (
+                <div className="p-4 bg-white border-2 border-dashed border-gray-200 rounded-2xl inline-block">
+                  <img 
+                    src={qrCode}
+                    alt="WhatsApp QR Code" 
+                    className="w-48 h-48"
+                    referrerPolicy="no-referrer"
+                  />
+                </div>
+              ) : (
+                <div className="p-6 bg-amber-50 border border-amber-200 rounded-2xl inline-block text-amber-800 text-sm font-medium">
+                  Instância criada. Aguardando confirmação de conexão na Evolution...
+                </div>
+              )}
               <div className="space-y-2">
-                <p className="font-bold text-gray-800">Scan the QR Code using WhatsApp on your phone</p>
-                <p className="text-sm text-gray-500">Open WhatsApp {'>'} Settings {'>'} Linked Devices</p>
+                <p className="font-bold text-gray-800">Escaneie o QR Code no WhatsApp do celular</p>
+                {connectedNumber && (
+                  <p className="text-sm text-gray-600">Instância: <span className="font-semibold">{connectedNumber}</span></p>
+                )}
+                {integrationStatus && (
+                  <p className="text-xs text-gray-500">Status da integração: {integrationStatusLabel(integrationStatus)}</p>
+                )}
+                {connectionStatus && (
+                  <p className="text-xs text-gray-500">Status da conexão na Evolution: {connectionStatus}</p>
+                )}
+                {lastSyncAt && (
+                  <p className="text-xs text-gray-500">Última sincronização: {new Date(lastSyncAt).toLocaleString('pt-BR')}</p>
+                )}
+                {lastBackendError && (
+                  <p className="text-xs text-red-600">{lastBackendError}</p>
+                )}
+                <p className="text-sm text-gray-500">WhatsApp {'>'} Configurações {'>'} Aparelhos conectados</p>
               </div>
-              <button 
-                onClick={generateQR}
-                className="text-blue-600 font-bold text-sm hover:underline"
-              >
-                Regenerate QR Code
-              </button>
+              <div className="flex items-center justify-center gap-4">
+                <button 
+                  onClick={generateQR}
+                  className="text-blue-600 font-bold text-sm hover:underline"
+                >
+                  Regenerar QR Code
+                </button>
+                <button
+                  onClick={syncStateFromBackend}
+                  className="text-blue-600 font-bold text-sm hover:underline"
+                >
+                  Verificar conexão agora
+                </button>
+              </div>
+              {isPollingStatus && <p className="text-xs text-amber-700">Monitorando conexão automaticamente (até 3 minutos)...</p>}
             </div>
           )}
 
@@ -4504,154 +4894,71 @@ const WhatsAppIntegration = () => {
                 <Smile size={40} />
               </div>
               <div className="space-y-1">
-                <p className="text-2xl font-bold text-gray-900">+55 11 99999-9999</p>
-                <p className="text-gray-500">Account connected and active</p>
+                <p className="text-2xl font-bold text-gray-900">{connectedNumber || 'Instância criada'}</p>
+                <p className="text-gray-500">Conta conectada e ativa</p>
               </div>
               <div className="flex items-center gap-2 justify-center bg-blue-50 text-blue-700 px-4 py-2 rounded-full text-sm font-medium">
                 <Zap size={16} />
-                Ready to send notifications
+                Pronto para enviar notificações
               </div>
             </div>
           )}
         </div>
-      </div>
-      
-      <div className="mt-6 p-4 bg-blue-50 rounded-xl border border-blue-100 flex gap-3">
-        <div className="text-blue-600 mt-0.5">
-          <Shield size={20} />
         </div>
-        <div className="text-sm text-blue-800">
-          <p className="font-bold mb-1">Security Information</p>
-          <p>Your connection is encrypted. We do not store your messages, only use the connection to send automated appointment reminders.</p>
-        </div>
-      </div>
-    </div>
-  );
-};
 
-const EmailIntegration = () => {
-  const [mode, setMode] = useState<'SMTP' | 'API'>('SMTP');
-  const [isTesting, setIsTesting] = useState(false);
-  const [testResult, setTestResult] = useState<'SUCCESS' | 'ERROR' | null>(null);
-
-  const handleTest = () => {
-    setIsTesting(true);
-    setTestResult(null);
-    setTimeout(() => {
-      setIsTesting(false);
-      setTestResult('SUCCESS');
-    }, 2000);
-  };
-
-  return (
-    <div className="max-w-2xl">
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-        <div className="p-6 flex items-start justify-between border-b border-gray-50">
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 bg-blue-50 rounded-xl flex items-center justify-center text-blue-600">
-              <Mail size={24} />
-            </div>
-            <div>
-              <h3 className="font-bold text-gray-800">E-mail</h3>
-              <p className="text-xs text-gray-500 mt-1">Configure SMTP or API keys for notifications</p>
-            </div>
+        <div className="mt-6 p-4 bg-blue-50 rounded-xl border border-blue-100 flex gap-3">
+          <div className="text-blue-600 mt-0.5">
+            <Shield size={20} />
           </div>
-          <div className="flex bg-gray-100 p-1 rounded-lg">
-            <button 
-              onClick={() => setMode('SMTP')}
-              className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all ${mode === 'SMTP' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-            >
-              SMTP
-            </button>
-            <button 
-              onClick={() => setMode('API')}
-              className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all ${mode === 'API' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-            >
-              API Key
-            </button>
+          <div className="text-sm text-blue-800">
+            <p className="font-bold mb-1">Informação de segurança</p>
+            <p>A conexão usa criptografia. A plataforma utiliza o canal apenas para disparos automáticos de notificação.</p>
           </div>
         </div>
-
-        <div className="p-6 space-y-4">
-          {mode === 'SMTP' ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="md:col-span-2">
-                <label className="block text-xs font-bold text-gray-700 mb-1 uppercase tracking-wider">Host SMTP</label>
-                <input type="text" placeholder="smtp.example.com" className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all text-sm" />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1 uppercase tracking-wider">Porta</label>
-                <input type="text" placeholder="587" className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all text-sm" />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1 uppercase tracking-wider">Segurança</label>
-                <select className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all text-sm">
-                  <option>TLS</option>
-                  <option>SSL</option>
-                  <option>Nenhum</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1 uppercase tracking-wider">Usuário</label>
-                <input type="text" placeholder="user@example.com" className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all text-sm" />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1 uppercase tracking-wider">Senha</label>
-                <input type="password" placeholder="••••••••" className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all text-sm" />
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1 uppercase tracking-wider">Provedor de Serviço</label>
-                <select className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all text-sm">
-                  <option>SendGrid</option>
-                  <option>Mailgun</option>
-                  <option>Postmark</option>
-                  <option>Amazon SES</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1 uppercase tracking-wider">Chave de API (API Key)</label>
-                <input type="password" placeholder="SG.xxxxxxxxxxxxxxxxxxxx" className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all text-sm" />
-              </div>
-            </div>
-          )}
-
-          <div className="pt-4 flex flex-col md:flex-row gap-3">
-            <button 
-              onClick={handleTest}
-              disabled={isTesting}
-              className="flex-1 py-3 border border-gray-200 rounded-xl font-bold text-gray-600 hover:bg-gray-50 transition-all flex items-center justify-center gap-2 text-sm"
-            >
-              {isTesting ? (
-                <><RotateCcw size={16} className="animate-spin" /> Testando...</>
-              ) : (
-                <><Zap size={16} /> Testar Conexão</>
-              )}
-            </button>
-            <button className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 shadow-lg shadow-blue-100 transition-all text-sm">
-              Salvar Configuração
-            </button>
-          </div>
-
-          {testResult === 'SUCCESS' && (
-            <div className="p-3 bg-green-50 text-green-700 rounded-xl text-xs font-medium flex items-center gap-2 animate-in fade-in slide-in-from-top-1">
-              <Smile size={14} /> Conexão estabelecida com sucesso! E-mail de teste enviado.
-            </div>
-          )}
-        </div>
       </div>
-    </div>
+
+      {showDisconnectModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white shadow-xl border border-gray-100 overflow-hidden">
+            <div className="p-6">
+              <h4 className="text-lg font-bold text-gray-900">Desconectar WhatsApp</h4>
+              <p className="mt-2 text-sm text-gray-600">
+                Tem certeza que deseja desconectar o WhatsApp desta barbearia?
+              </p>
+            </div>
+            <div className="p-4 bg-gray-50 border-t border-gray-100 flex gap-3">
+              <button
+                onClick={() => setShowDisconnectModal(false)}
+                disabled={isDisconnecting}
+                className="flex-1 py-2.5 rounded-xl border border-gray-200 text-gray-700 font-semibold hover:bg-white transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={disconnect}
+                disabled={isDisconnecting}
+                className="flex-1 py-2.5 rounded-xl bg-red-600 text-white font-semibold hover:bg-red-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {isDisconnecting ? 'Desconectando...' : 'Desconectar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 };
 
 const SettingsManagement = () => {
   const navigate = useNavigate();
-  const { users, professionals, clients, services, addUser, updateUser, deleteUser, categories, addCategory, updateCategory, deleteCategory, businessHours, saveBusinessHours, brandIdentity, saveBrandIdentity } = useAppContext();
-  const [activeSubTab, setActiveSubTab] = useState<'PROFESSIONALS' | 'SERVICES' | 'ALERTS' | 'PROFILES' | 'HOURS' | 'INTEGRATIONS' | 'OTHER' | 'ONBOARDING' | 'BILLING' | 'SUBSCRIPTIONS' | 'CONTACT'>('PROFESSIONALS');
+  const { users, professionals, clients, services, addUser, updateUser, deleteUser, deactivateProfessional, categories, addCategory, updateCategory, deleteCategory, businessHours, saveBusinessHours, brandIdentity, saveBrandIdentity } = useAppContext();
+  const [activeSubTab, setActiveSubTab] = useState<'PROFESSIONALS' | 'SERVICES' | 'PROFILES' | 'HOURS' | 'INTEGRATIONS' | 'OTHER' | 'ONBOARDING' | 'BILLING' | 'SUBSCRIPTIONS' | 'CONTACT'>('PROFESSIONALS');
   const [activeServiceTab, setActiveServiceTab] = useState<'SERVICES' | 'CATEGORIES'>('SERVICES');
-  const [activeIntegrationTab, setActiveIntegrationTab] = useState<'WHATSAPP' | 'EMAIL'>('WHATSAPP');
+  const [isWhatsappAlertsEnabled, setIsWhatsappAlertsEnabled] = useState<boolean>(true);
+  const [isEmailAlertsEnabled, setIsEmailAlertsEnabled] = useState<boolean>(true);
+  const [isLoadingAlertSettings, setIsLoadingAlertSettings] = useState<boolean>(true);
+  const [isSavingAlertSettings, setIsSavingAlertSettings] = useState<boolean>(false);
+  const [alertSettingsError, setAlertSettingsError] = useState<string | null>(null);
   const [activeBillingTab, setActiveBillingTab] = useState<'PLAN' | 'UTILIZATION' | 'PAYMENT' | 'INVOICING' | 'B2C'>('PLAN');
   const [activeSubscriptionsTab, setActiveSubscriptionsTab] = useState<'CREATE_PLANS' | 'LINK_PLANS' | 'CLIENTS_LIST'>('CREATE_PLANS');
   const [activeIdentityTab, setActiveIdentityTab] = useState<'LOGO' | 'COLORS' | 'OTHER_PREFERENCES' | 'DISCLOSURE'>('LOGO');
@@ -4659,6 +4966,13 @@ const SettingsManagement = () => {
   const [helpCenterSearchTerm, setHelpCenterSearchTerm] = useState('');
   const [selectedHelpArticleId, setSelectedHelpArticleId] = useState('');
   const [isHelpArticleOpen, setIsHelpArticleOpen] = useState(false);
+  const [isSupportEmailModalOpen, setIsSupportEmailModalOpen] = useState(false);
+  const [supportContactBarbeariaName, setSupportContactBarbeariaName] = useState('');
+  const [supportContactName, setSupportContactName] = useState('');
+  const [supportContactMessage, setSupportContactMessage] = useState('');
+  const [supportContactError, setSupportContactError] = useState<string | null>(null);
+  const [supportContactSuccess, setSupportContactSuccess] = useState<string | null>(null);
+  const [isSendingSupportContact, setIsSendingSupportContact] = useState(false);
   const [isGeneratingDisclosurePdf, setIsGeneratingDisclosurePdf] = useState(false);
   const [disclosureError, setDisclosureError] = useState<string | null>(null);
   const [disclosureSuccess, setDisclosureSuccess] = useState<string | null>(null);
@@ -4692,6 +5006,7 @@ const SettingsManagement = () => {
   );
   const [allowEmployeeViewFinance, setAllowEmployeeViewFinance] = useState(Boolean(brandIdentity.allowEmployeeViewFinance));
   const [allowEmployeeViewReports, setAllowEmployeeViewReports] = useState(Boolean(brandIdentity.allowEmployeeViewReports));
+  const [allowEmployeeViewUsers, setAllowEmployeeViewUsers] = useState(Boolean(brandIdentity.allowEmployeeViewUsers));
   const [profileSettingsError, setProfileSettingsError] = useState<string | null>(null);
   const [profileSettingsSuccess, setProfileSettingsSuccess] = useState<string | null>(null);
   const [isSavingProfileSettings, setIsSavingProfileSettings] = useState(false);
@@ -4720,6 +5035,127 @@ const SettingsManagement = () => {
   const [b2cPlanSortField, setB2cPlanSortField] = useState<'NOME' | 'VALOR' | 'CARENCIA' | 'SERVICOS' | 'CLIENTES' | 'STATUS'>('NOME');
   const [b2cPlanSortDirection, setB2cPlanSortDirection] = useState<'ASC' | 'DESC'>('ASC');
   const [b2cPlanPriorityId, setB2cPlanPriorityId] = useState('');
+
+  useEffect(() => {
+    let mounted = true;
+
+    const loadAlertSettings = async () => {
+      const response = await getNotificationChannelSettingsApi();
+      if (!mounted) return;
+      if (!response.success) {
+        setAlertSettingsError(('error' in response ? response.error : '') || 'Falha ao carregar configurações de alertas.');
+        setIsLoadingAlertSettings(false);
+        return;
+      }
+
+      setIsWhatsappAlertsEnabled(Boolean(response.data.whatsapp_enabled));
+      setIsEmailAlertsEnabled(Boolean(response.data.email_enabled));
+      setAlertSettingsError(null);
+      setIsLoadingAlertSettings(false);
+    };
+
+    loadAlertSettings();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const updateAlertChannelSettings = async (nextWhatsappEnabled: boolean, nextEmailEnabled: boolean) => {
+    setIsSavingAlertSettings(true);
+    setAlertSettingsError(null);
+
+    const response = await saveNotificationChannelSettingsApi({
+      whatsapp_enabled: nextWhatsappEnabled,
+      email_enabled: nextEmailEnabled,
+    });
+
+    if (!response.success) {
+      setAlertSettingsError(('error' in response ? response.error : '') || 'Falha ao salvar configurações de alertas.');
+      setIsSavingAlertSettings(false);
+      return false;
+    }
+
+    setIsWhatsappAlertsEnabled(Boolean(response.data.whatsapp_enabled));
+    setIsEmailAlertsEnabled(Boolean(response.data.email_enabled));
+    setIsSavingAlertSettings(false);
+    return true;
+  };
+
+  const handleToggleWhatsappAlerts = async () => {
+    if (isSavingAlertSettings) return;
+    const previousWhatsapp = isWhatsappAlertsEnabled;
+    const previousEmail = isEmailAlertsEnabled;
+    const nextWhatsapp = !previousWhatsapp;
+
+    setIsWhatsappAlertsEnabled(nextWhatsapp);
+    const saved = await updateAlertChannelSettings(nextWhatsapp, previousEmail);
+    if (!saved) {
+      setIsWhatsappAlertsEnabled(previousWhatsapp);
+      setIsEmailAlertsEnabled(previousEmail);
+    }
+  };
+
+  const handleToggleEmailAlerts = async () => {
+    if (isSavingAlertSettings) return;
+    const previousWhatsapp = isWhatsappAlertsEnabled;
+    const previousEmail = isEmailAlertsEnabled;
+    const nextEmail = !previousEmail;
+
+    setIsEmailAlertsEnabled(nextEmail);
+    const saved = await updateAlertChannelSettings(previousWhatsapp, nextEmail);
+    if (!saved) {
+      setIsWhatsappAlertsEnabled(previousWhatsapp);
+      setIsEmailAlertsEnabled(previousEmail);
+    }
+  };
+
+  const openSupportEmailModal = () => {
+    setSupportContactBarbeariaName(String(brandIdentity.name || '').trim());
+    setSupportContactName('');
+    setSupportContactMessage('');
+    setSupportContactError(null);
+    setSupportContactSuccess(null);
+    setIsSupportEmailModalOpen(true);
+  };
+
+  const closeSupportEmailModal = () => {
+    if (isSendingSupportContact) return;
+    setIsSupportEmailModalOpen(false);
+  };
+
+  const submitSupportContact = async () => {
+    const contactName = supportContactName.trim();
+    const message = supportContactMessage.trim();
+
+    if (!contactName) {
+      setSupportContactError('Informe seu nome para contato.');
+      return;
+    }
+    if (!message) {
+      setSupportContactError('Descreva sua mensagem para o suporte.');
+      return;
+    }
+
+    setIsSendingSupportContact(true);
+    setSupportContactError(null);
+    setSupportContactSuccess(null);
+
+    const response = await sendSupportContactApi({
+      contact_name: contactName,
+      message,
+    });
+
+    if (!response.success) {
+      setSupportContactError(('error' in response ? response.error : '') || 'Falha ao enviar mensagem para o suporte.');
+      setIsSendingSupportContact(false);
+      return;
+    }
+
+    setSupportContactSuccess('Mensagem enviada com sucesso para suporte@barbeiros.app.');
+    setSupportContactMessage('');
+    setIsSendingSupportContact(false);
+  };
   const [isB2cPlanModalOpen, setIsB2cPlanModalOpen] = useState(false);
   const [isB2cDeleteModalOpen, setIsB2cDeleteModalOpen] = useState(false);
   const [b2cPlanToDelete, setB2cPlanToDelete] = useState<AssinaturaClientePlanoApi | null>(null);
@@ -4752,6 +5188,7 @@ const SettingsManagement = () => {
   const logoInputRef = useRef<HTMLInputElement | null>(null);
   const loginLogoInputRef = useRef<HTMLInputElement | null>(null);
   const loginBackgroundInputRef = useRef<HTMLInputElement | null>(null);
+  const identityFormDirtyRef = useRef(false);
 
   const identityPalettes = [
     { name: 'Modern Blue', primary: '#2563eb', secondary: '#eff6ff', label: 'Confiança' },
@@ -4778,8 +5215,16 @@ const SettingsManagement = () => {
   }, [businessHours]);
 
   useEffect(() => {
+    if (identityFormDirtyRef.current) return;
     setIdentityForm(brandIdentity);
   }, [brandIdentity]);
+
+  const updateIdentityForm = (updater: React.SetStateAction<BrandIdentity>) => {
+    identityFormDirtyRef.current = true;
+    setIdentityForm(updater);
+    setIdentityError(null);
+    setIdentitySuccess(null);
+  };
 
   useEffect(() => {
     setAllowEmployeeConfirmAppointment(Boolean(brandIdentity.allowEmployeeConfirmAppointment));
@@ -4800,6 +5245,10 @@ const SettingsManagement = () => {
   useEffect(() => {
     setAllowEmployeeViewReports(Boolean(brandIdentity.allowEmployeeViewReports));
   }, [brandIdentity.allowEmployeeViewReports]);
+
+  useEffect(() => {
+    setAllowEmployeeViewUsers(Boolean(brandIdentity.allowEmployeeViewUsers));
+  }, [brandIdentity.allowEmployeeViewUsers]);
 
   useEffect(() => {
     setChurnRiskDaysThreshold(Math.max(1, Math.min(365, Number(brandIdentity.churnRiskDaysThreshold || 45))));
@@ -5552,6 +6001,8 @@ const SettingsManagement = () => {
     setIsSavingIdentity(true);
     const result = await saveBrandIdentity({
       name,
+      phone: identityForm.phone?.trim() || undefined,
+      city: identityForm.city?.trim() || undefined,
       logoUrl: identityForm.logoUrl?.trim() || undefined,
       loginLogoUrl: identityForm.loginLogoUrl?.trim() || undefined,
       loginBackgroundUrl: identityForm.loginBackgroundUrl?.trim() || undefined,
@@ -5569,6 +6020,7 @@ const SettingsManagement = () => {
       return;
     }
 
+    identityFormDirtyRef.current = false;
     setIdentitySuccess('Identidade visual atualizada com sucesso.');
     setIsSavingIdentity(false);
   };
@@ -5589,6 +6041,7 @@ const SettingsManagement = () => {
       allowEmployeeCreateAppointment,
       allowEmployeeViewFinance,
       allowEmployeeViewReports,
+      allowEmployeeViewUsers,
     });
 
     if (!result.success) {
@@ -5673,9 +6126,7 @@ const SettingsManagement = () => {
           return;
         }
 
-        setIdentityForm(prev => ({ ...prev, [field]: result }));
-        setIdentityError(null);
-        setIdentitySuccess(null);
+        updateIdentityForm(prev => ({ ...prev, [field]: result }));
       };
       reader.onerror = () => {
         setIdentityError('Não foi possível ler o arquivo selecionado.');
@@ -5815,21 +6266,27 @@ const SettingsManagement = () => {
     }
 
     const linkedUser = selectedProfessional?.linkedUser || null;
+    const hasProfessionalRecord = Boolean(selectedProfessional?.hasProfessionalRecord);
 
-    if (selectedProfessional) {
-      const profissionalResult = await updateProfissionalApi(selectedProfessional.id, {
+    if (selectedProfessional && !data.hasAccess) {
+      const profissionalPayload = {
+        id: selectedProfessional.id,
         nome,
         cargo,
         telefone,
         foto_url: fotoUrl,
         comissao_percentual: Number(comissaoPercentual.toFixed(2)),
         ativo: true,
-      });
+      };
+
+      const profissionalResult = hasProfessionalRecord
+        ? await updateProfissionalApi(selectedProfessional.id, profissionalPayload)
+        : await createProfissionalApi(profissionalPayload);
 
       if (!profissionalResult.success) {
         return { success: false, error: ('error' in profissionalResult && profissionalResult.error) ? profissionalResult.error : 'Falha ao atualizar profissional.' };
       }
-    } else if (!data.hasAccess) {
+    } else if (!selectedProfessional && !data.hasAccess) {
       const profissionalResult = await createProfissionalApi({
         nome,
         cargo,
@@ -5910,10 +6367,13 @@ const SettingsManagement = () => {
     const linkedUser = users.find(user => user.id === professionalToDelete.id);
 
     const result = linkedUser
-      ? await deleteUser(professionalToDelete.id)
-      : await deleteProfissionalApi(professionalToDelete.id);
+      ? await updateUser({
+          ...linkedUser,
+          active: false,
+        })
+      : await deactivateProfessional(professionalToDelete.id);
     if (!result.success) {
-      setDeleteProfessionalError(result.error || 'Falha ao excluir profissional.');
+      setDeleteProfessionalError(result.error || 'Falha ao inativar profissional.');
       setIsDeletingProfessional(false);
       return;
     }
@@ -5971,7 +6431,6 @@ const SettingsManagement = () => {
   const tabs = [
     { id: 'PROFESSIONALS', label: 'Profissionais', icon: <Scissors size={18} />, desc: 'Equipe de atendimento' },
     { id: 'SERVICES', label: 'Serviços', icon: <DollarSign size={18} />, desc: 'Gerencie os serviços' },
-    { id: 'ALERTS', label: 'Alertas', icon: <Bell size={18} />, desc: 'WhatsApp e e-mail' },
     { id: 'PROFILES', label: 'Perfis', icon: <Shield size={18} />, desc: 'Níveis de permissão' },
     { id: 'HOURS', label: 'Horários', icon: <Clock size={18} />, desc: 'Funcionamento' },
     { id: 'INTEGRATIONS', label: 'Integrações', icon: <Zap size={18} />, desc: 'APIs externas' },
@@ -6274,16 +6733,38 @@ const SettingsManagement = () => {
 
   const adminUsersCount = users.filter(u => u.role === 'ADMIN').length;
   const employeeUsersCount = users.filter(u => u.role !== 'ADMIN').length;
-  const settingsProfessionals = professionals.map((professional) => {
-    const linkedUser = users.find(user => user.id === professional.id);
-    return {
-      ...professional,
-      linkedUser,
-      linkedAccessRole: linkedUser?.role,
-      linkedEmail: linkedUser?.email,
-      linkedPhone: linkedUser?.phone,
-    };
-  });
+  const settingsProfessionals = useMemo(() => {
+    const professionalsWithLinks = professionals.map((professional) => {
+      const linkedUser = users.find(user => user.id === professional.id);
+      return {
+        ...professional,
+        hasProfessionalRecord: true,
+        linkedUser,
+        linkedAccessRole: linkedUser?.role,
+        linkedEmail: linkedUser?.email,
+        linkedPhone: linkedUser?.phone,
+      };
+    });
+
+    const professionalIds = new Set(professionalsWithLinks.map((item) => item.id));
+    const adminUsersWithoutProfessional = users
+      .filter((user) => user.role === 'ADMIN' && !professionalIds.has(user.id))
+      .map((adminUser) => ({
+        id: adminUser.id,
+        name: adminUser.name,
+        role: 'Administrador',
+        avatar: adminUser.avatar,
+        commissionPercentage: 0,
+        specialties: [],
+        hasProfessionalRecord: false,
+        linkedUser: adminUser,
+        linkedAccessRole: adminUser.role,
+        linkedEmail: adminUser.email,
+        linkedPhone: adminUser.phone,
+      }));
+
+    return [...professionalsWithLinks, ...adminUsersWithoutProfessional];
+  }, [professionals, users]);
 
   useEffect(() => {
     if (activeSubTab === 'CONTACT') return;
@@ -6389,9 +6870,16 @@ const SettingsManagement = () => {
                             ? ` • ${professional.linkedEmail || professional.linkedPhone}`
                             : ' • Sem acesso ao sistema'}
                         </p>
-                        <span className={`inline-flex mt-1 items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${professional.linkedUser ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
-                          {professional.linkedUser ? 'Com acesso' : 'Sem acesso'}
-                        </span>
+                        <div className="mt-1 flex items-center gap-1.5">
+                          <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${professional.linkedUser ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+                            {professional.linkedUser ? 'Com acesso' : 'Sem acesso'}
+                          </span>
+                          {professional.linkedAccessRole === 'ADMIN' && (
+                            <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">
+                              Admin
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
                     <div className="flex items-center gap-2 self-end sm:self-auto">
@@ -6512,7 +7000,7 @@ const SettingsManagement = () => {
             <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
               <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-fade-in">
                 <div className="px-6 py-4 border-b flex justify-between items-center bg-gray-50">
-                  <h3 className="font-bold text-gray-900">Confirmar exclusão</h3>
+                  <h3 className="font-bold text-gray-900">Confirmar inativação</h3>
                   <button
                     onClick={() => {
                       if (isDeletingProfessional) return;
@@ -6527,7 +7015,10 @@ const SettingsManagement = () => {
                 </div>
                 <div className="px-6 py-5 space-y-3">
                   <p className="text-sm text-gray-700">
-                    Deseja realmente excluir o profissional <span className="font-semibold">{professionalToDelete?.name}</span>?
+                    Deseja realmente inativar o profissional <span className="font-semibold">{professionalToDelete?.name}</span>?
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    Os agendamentos e histórico serão mantidos, e o profissional não aparecerá nos fluxos de operação.
                   </p>
                   {deleteProfessionalError && (
                     <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -6552,7 +7043,7 @@ const SettingsManagement = () => {
                     disabled={isDeletingProfessional}
                     className="flex-1 py-2.5 bg-red-600 text-white rounded-xl text-sm font-bold hover:bg-red-700 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
                   >
-                    {isDeletingProfessional ? 'Excluindo...' : 'Excluir'}
+                    {isDeletingProfessional ? 'Inativando...' : 'Inativar'}
                   </button>
                 </div>
               </div>
@@ -6616,38 +7107,6 @@ const SettingsManagement = () => {
             </div>
           )}
 
-          {activeSubTab === 'ALERTS' && (
-            <div className="space-y-6">
-              <h3 className="font-bold text-gray-800">Configuração de Notificações</h3>
-              <div className="space-y-4">
-                <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-blue-100 text-blue-600 rounded-lg"><MessageSquare size={20} /></div>
-                    <div>
-                      <p className="font-medium text-gray-900">WhatsApp (API Oficial)</p>
-                      <p className="text-xs text-gray-500">Lembretes automáticos 2h antes do agendamento</p>
-                    </div>
-                  </div>
-                  <div className="w-12 h-6 bg-blue-600 rounded-full relative cursor-pointer">
-                    <div className="absolute right-1 top-1 w-4 h-4 bg-white rounded-full"></div>
-                  </div>
-                </div>
-                <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-blue-100 text-blue-600 rounded-lg"><Mail size={20} /></div>
-                    <div>
-                      <p className="font-medium text-gray-900">E-mail de Confirmação</p>
-                      <p className="text-xs text-gray-500">Enviar e-mail assim que o agendamento for criado</p>
-                    </div>
-                  </div>
-                  <div className="w-12 h-6 bg-blue-600 rounded-full relative cursor-pointer">
-                    <div className="absolute right-1 top-1 w-4 h-4 bg-white rounded-full"></div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
           {activeSubTab === 'PROFILES' && (
             <div className="space-y-6">
               <h3 className="font-bold text-gray-800">Níveis de Acesso</h3>
@@ -6683,6 +7142,7 @@ const SettingsManagement = () => {
                       );
                       setAllowEmployeeViewFinance(Boolean(brandIdentity.allowEmployeeViewFinance));
                       setAllowEmployeeViewReports(Boolean(brandIdentity.allowEmployeeViewReports));
+                      setAllowEmployeeViewUsers(Boolean(brandIdentity.allowEmployeeViewUsers));
                       setIsEmployeeProfileModalOpen(true);
                     }}
                     className={`w-full text-left p-4 border rounded-xl transition-colors ${p.key === 'EMPLOYEE' ? 'hover:border-blue-300 cursor-pointer' : 'cursor-default'}`}
@@ -6817,6 +7277,20 @@ const SettingsManagement = () => {
                           className={`w-12 h-6 rounded-full relative transition-colors shrink-0 ${allowEmployeeViewReports ? 'bg-blue-600' : 'bg-gray-300'}`}
                         >
                           <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${allowEmployeeViewReports ? 'right-1' : 'left-1'}`}></div>
+                        </button>
+                      </div>
+
+                      <div className="rounded-xl border border-gray-200 p-4 flex items-start justify-between gap-4">
+                        <div>
+                          <p className="font-bold text-gray-900 text-sm">Permitir visualizar Usuários</p>
+                          <p className="text-xs text-gray-500 mt-1">Quando ativado, usuários do perfil Funcionário / Equipe terão acesso à aba Usuários.</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setAllowEmployeeViewUsers(prev => !prev)}
+                          className={`w-12 h-6 rounded-full relative transition-colors shrink-0 ${allowEmployeeViewUsers ? 'bg-blue-600' : 'bg-gray-300'}`}
+                        >
+                          <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${allowEmployeeViewUsers ? 'right-1' : 'left-1'}`}></div>
                         </button>
                       </div>
 
@@ -8316,32 +8790,73 @@ const SettingsManagement = () => {
               <div className="space-y-4">
                 <h3 className="font-bold text-gray-800">Integrações</h3>
 
-                <nav className="flex overflow-x-auto pb-2 gap-2 no-scrollbar -mx-2 px-2">
-                  <button
-                    onClick={() => setActiveIntegrationTab('WHATSAPP')}
-                    className={`px-4 py-2 rounded-full text-xs sm:text-sm font-bold whitespace-nowrap transition-all ${
-                      activeIntegrationTab === 'WHATSAPP'
-                        ? 'bg-blue-600 text-white shadow-md shadow-blue-100'
-                        : 'bg-white border border-gray-200 text-gray-600'
-                    }`}
-                  >
-                    WhatsApp
-                  </button>
-                  <button
-                    onClick={() => setActiveIntegrationTab('EMAIL')}
-                    className={`px-4 py-2 rounded-full text-xs sm:text-sm font-bold whitespace-nowrap transition-all ${
-                      activeIntegrationTab === 'EMAIL'
-                        ? 'bg-blue-600 text-white shadow-md shadow-blue-100'
-                        : 'bg-white border border-gray-200 text-gray-600'
-                    }`}
-                  >
-                    Email
-                  </button>
-                </nav>
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 bg-blue-100 text-blue-600 rounded-lg"><MessageSquare size={20} /></div>
+                      <div>
+                        <p className="font-medium text-gray-900">Alertas por WhatsApp</p>
+                        <p className="text-xs text-gray-500">Ativa ou desativa o envio de alertas pelo canal WhatsApp</p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleToggleWhatsappAlerts}
+                      disabled={isLoadingAlertSettings || isSavingAlertSettings}
+                      className={`w-12 h-6 rounded-full relative transition-colors ${isWhatsappAlertsEnabled ? 'bg-blue-600' : 'bg-gray-300'}`}
+                      aria-label="Alternar alertas por WhatsApp"
+                    >
+                      <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${isWhatsappAlertsEnabled ? 'right-1' : 'left-1'}`}></div>
+                    </button>
+                  </div>
+
+                  <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 bg-blue-100 text-blue-600 rounded-lg"><Mail size={20} /></div>
+                      <div>
+                        <p className="font-medium text-gray-900">Alertas por E-mail</p>
+                        <p className="text-xs text-gray-500">Ativa ou desativa o envio de alertas pelo canal E-mail</p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleToggleEmailAlerts}
+                      disabled={isLoadingAlertSettings || isSavingAlertSettings}
+                      className={`w-12 h-6 rounded-full relative transition-colors ${isEmailAlertsEnabled ? 'bg-blue-600' : 'bg-gray-300'}`}
+                      aria-label="Alternar alertas por E-mail"
+                    >
+                      <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${isEmailAlertsEnabled ? 'right-1' : 'left-1'}`}></div>
+                    </button>
+                  </div>
+                </div>
+
+                {alertSettingsError && (
+                  <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                    {alertSettingsError}
+                  </div>
+                )}
+
+                {isLoadingAlertSettings && (
+                  <div className="text-sm text-gray-500">Carregando configuração de alertas...</div>
+                )}
+
               </div>
 
-              {activeIntegrationTab === 'WHATSAPP' && <WhatsAppIntegration />}
-              {activeIntegrationTab === 'EMAIL' && <EmailIntegration />}
+              {!isWhatsappAlertsEnabled && !isEmailAlertsEnabled ? (
+                <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-600">
+                  Todos os alertas estão desabilitados. Ative ao menos um canal para exibir a aba de configuração.
+                </div>
+              ) : (
+                <>
+                  {isWhatsappAlertsEnabled ? (
+                    <WhatsAppIntegration />
+                  ) : (
+                    <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-600">
+                      A integração do WhatsApp está desativada. O canal de E-mail (Resend) continua sendo controlado apenas pelo botão de ativar/desativar acima.
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           )}
 
@@ -8500,19 +9015,20 @@ const SettingsManagement = () => {
                     </div>
                     <div className="flex items-center gap-2">
                       <a
-                        href="https://wa.me/5511999999999"
+                        href="https://wa.me/5531995041815"
                         target="_blank"
                         rel="noopener noreferrer"
                         className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
                       >
                         WhatsApp
                       </a>
-                      <a
-                        href="mailto:suporte@agendefacil.com.br"
+                      <button
+                        type="button"
+                        onClick={openSupportEmailModal}
                         className="px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50"
                       >
                         E-mail
-                      </a>
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -8528,7 +9044,7 @@ const SettingsManagement = () => {
 
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                     <a
-                      href="https://wa.me/5511999999999"
+                      href="https://wa.me/5531995041815"
                       target="_blank"
                       rel="noopener noreferrer"
                       className="p-6 bg-white border border-gray-100 rounded-2xl shadow-sm hover:shadow-md hover:border-blue-200 transition-all group text-center"
@@ -8543,8 +9059,9 @@ const SettingsManagement = () => {
                       </div>
                     </a>
 
-                    <a
-                      href="mailto:suporte@agendefacil.com.br"
+                    <button
+                      type="button"
+                      onClick={openSupportEmailModal}
                       className="p-6 bg-white border border-gray-100 rounded-2xl shadow-sm hover:shadow-md hover:border-blue-200 transition-all group text-center"
                     >
                       <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform">
@@ -8555,7 +9072,7 @@ const SettingsManagement = () => {
                       <div className="flex items-center justify-center gap-2 text-blue-600 font-bold text-sm">
                         Enviar e-mail <ExternalLink size={14} />
                       </div>
-                    </a>
+                    </button>
 
                     <a
                       href="tel:+551140028922"
@@ -8597,6 +9114,91 @@ const SettingsManagement = () => {
                     </button>
                   </div>
                 </>
+              )}
+
+              {isSupportEmailModalOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+                  <div className="w-full max-w-lg rounded-2xl bg-white shadow-xl border border-gray-100 overflow-hidden">
+                    <div className="p-6 border-b border-gray-100 flex items-center justify-between">
+                      <h4 className="text-lg font-bold text-gray-900">Enviar e-mail ao suporte</h4>
+                      <button
+                        type="button"
+                        onClick={closeSupportEmailModal}
+                        disabled={isSendingSupportContact}
+                        className="p-1.5 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 disabled:opacity-50"
+                      >
+                        <X size={18} />
+                      </button>
+                    </div>
+
+                    <div className="p-6 space-y-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Nome da barbearia</label>
+                        <input
+                          type="text"
+                          value={supportContactBarbeariaName}
+                          readOnly
+                          className="w-full p-2.5 border border-gray-200 bg-gray-50 rounded-lg text-sm text-gray-700"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Seu nome</label>
+                        <input
+                          type="text"
+                          value={supportContactName}
+                          onChange={(e) => setSupportContactName(e.target.value)}
+                          maxLength={120}
+                          placeholder="Digite seu nome"
+                          className="w-full p-2.5 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Mensagem</label>
+                        <textarea
+                          value={supportContactMessage}
+                          onChange={(e) => setSupportContactMessage(e.target.value)}
+                          maxLength={6000}
+                          rows={6}
+                          placeholder="Descreva sua dúvida ou problema"
+                          className="w-full p-2.5 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                        />
+                        <p className="mt-1 text-xs text-gray-500 text-right">{supportContactMessage.length}/6000</p>
+                      </div>
+
+                      {supportContactError && (
+                        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                          {supportContactError}
+                        </div>
+                      )}
+                      {supportContactSuccess && (
+                        <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
+                          {supportContactSuccess}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="p-4 bg-gray-50 border-t border-gray-100 flex gap-3">
+                      <button
+                        type="button"
+                        onClick={closeSupportEmailModal}
+                        disabled={isSendingSupportContact}
+                        className="flex-1 py-2.5 rounded-xl border border-gray-200 text-gray-700 font-semibold hover:bg-white transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={submitSupportContact}
+                        disabled={isSendingSupportContact}
+                        className="flex-1 py-2.5 rounded-xl bg-blue-600 text-white font-semibold hover:bg-blue-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                      >
+                        {isSendingSupportContact ? 'Enviando...' : 'Enviar para suporte'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
               )}
             </div>
           )}
@@ -8685,9 +9287,7 @@ const SettingsManagement = () => {
                             <button
                               type="button"
                               onClick={() => {
-                                setIdentityForm(prev => ({ ...prev, logoUrl: undefined }));
-                                setIdentityError(null);
-                                setIdentitySuccess(null);
+                                updateIdentityForm(prev => ({ ...prev, logoUrl: undefined }));
                               }}
                               className="inline-flex items-center gap-2 px-3 py-2 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 w-fit disabled:opacity-50"
                               disabled={!identityForm.logoUrl}
@@ -8712,9 +9312,7 @@ const SettingsManagement = () => {
                                   key={item.id}
                                   type="button"
                                   onClick={() => {
-                                    setIdentityForm(prev => ({ ...prev, iconName: item.id, logoUrl: undefined }));
-                                    setIdentityError(null);
-                                    setIdentitySuccess(null);
+                                    updateIdentityForm(prev => ({ ...prev, iconName: item.id, logoUrl: undefined }));
                                   }}
                                   className={`w-10 h-10 rounded-lg flex items-center justify-center transition-all border ${identityForm.iconName === item.id && !identityForm.logoUrl ? 'bg-blue-50 border-blue-200 text-blue-600' : 'bg-white border-gray-200 text-gray-400 hover:border-gray-300 hover:text-gray-600'}`}
                                 >
@@ -8768,13 +9366,11 @@ const SettingsManagement = () => {
                                 key={palette.name}
                                 type="button"
                                 onClick={() => {
-                                  setIdentityForm(prev => ({
+                                  updateIdentityForm(prev => ({
                                     ...prev,
                                     primaryColor: palette.primary,
                                     secondaryColor: palette.secondary,
                                   }));
-                                  setIdentityError(null);
-                                  setIdentitySuccess(null);
                                 }}
                                 className={`p-3 rounded-xl border text-left transition-all group hover:shadow-md ${identityForm.primaryColor === palette.primary && identityForm.secondaryColor === palette.secondary ? 'border-blue-200 bg-blue-50/30 ring-1 ring-blue-100' : 'border-gray-100 bg-white hover:border-gray-200'}`}
                               >
@@ -8798,9 +9394,7 @@ const SettingsManagement = () => {
                                 type="text"
                                 value={identityForm.primaryColor || ''}
                                 onChange={(e) => {
-                                  setIdentityForm(prev => ({ ...prev, primaryColor: e.target.value }));
-                                  setIdentityError(null);
-                                  setIdentitySuccess(null);
+                                  updateIdentityForm(prev => ({ ...prev, primaryColor: e.target.value }));
                                 }}
                                 placeholder="#2563eb"
                                 className="w-full p-2 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 outline-none"
@@ -8812,9 +9406,7 @@ const SettingsManagement = () => {
                                 type="text"
                                 value={identityForm.secondaryColor || ''}
                                 onChange={(e) => {
-                                  setIdentityForm(prev => ({ ...prev, secondaryColor: e.target.value }));
-                                  setIdentityError(null);
-                                  setIdentitySuccess(null);
+                                  updateIdentityForm(prev => ({ ...prev, secondaryColor: e.target.value }));
                                 }}
                                 placeholder="#eff6ff"
                                 className="w-full p-2 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 outline-none"
@@ -8874,12 +9466,30 @@ const SettingsManagement = () => {
                       <input
                         type="text"
                         value={identityForm.name || ''}
-                        onChange={(e) => {
-                          setIdentityForm(prev => ({ ...prev, name: e.target.value }));
-                          setIdentityError(null);
-                          setIdentitySuccess(null);
-                        }}
+                        onChange={(e) => updateIdentityForm(prev => ({ ...prev, name: e.target.value }))}
                         className="w-full p-2 border rounded-lg"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Telefone</label>
+                      <input
+                        type="text"
+                        value={identityForm.phone || ''}
+                        onChange={(e) => updateIdentityForm(prev => ({ ...prev, phone: e.target.value }))}
+                        className="w-full p-2 border rounded-lg"
+                        placeholder="(00) 00000-0000"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Endereço</label>
+                      <input
+                        type="text"
+                        value={identityForm.city || ''}
+                        onChange={(e) => updateIdentityForm(prev => ({ ...prev, city: e.target.value }))}
+                        className="w-full p-2 border rounded-lg"
+                        placeholder="Cidade / Endereço"
                       />
                     </div>
 
@@ -8911,9 +9521,7 @@ const SettingsManagement = () => {
                           <button
                             type="button"
                             onClick={() => {
-                              setIdentityForm(prev => ({ ...prev, loginLogoUrl: undefined }));
-                              setIdentityError(null);
-                              setIdentitySuccess(null);
+                              updateIdentityForm(prev => ({ ...prev, loginLogoUrl: undefined }));
                             }}
                             className="inline-flex items-center gap-2 px-3 py-2 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 w-fit disabled:opacity-50"
                             disabled={!identityForm.loginLogoUrl}
@@ -8932,9 +9540,7 @@ const SettingsManagement = () => {
                                 key={item.id}
                                 type="button"
                                 onClick={() => {
-                                  setIdentityForm(prev => ({ ...prev, loginLogoUrl: item.url }));
-                                  setIdentityError(null);
-                                  setIdentitySuccess(null);
+                                  updateIdentityForm(prev => ({ ...prev, loginLogoUrl: item.url }));
                                 }}
                                 className={`h-12 rounded-lg border p-1 bg-white transition-all ${isSelected ? 'border-blue-500 ring-2 ring-blue-100' : 'border-gray-200 hover:border-gray-300'}`}
                                 title={item.name}
@@ -8968,9 +9574,7 @@ const SettingsManagement = () => {
                         <button
                           type="button"
                           onClick={() => {
-                            setIdentityForm(prev => ({ ...prev, loginBackgroundUrl: undefined }));
-                            setIdentityError(null);
-                            setIdentitySuccess(null);
+                            updateIdentityForm(prev => ({ ...prev, loginBackgroundUrl: undefined }));
                           }}
                           className="inline-flex items-center gap-2 px-3 py-2 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 w-fit disabled:opacity-50"
                           disabled={!identityForm.loginBackgroundUrl}
@@ -8996,9 +9600,7 @@ const SettingsManagement = () => {
                                 key={item.id}
                                 type="button"
                                 onClick={() => {
-                                  setIdentityForm(prev => ({ ...prev, loginBackgroundUrl: item.url }));
-                                  setIdentityError(null);
-                                  setIdentitySuccess(null);
+                                  updateIdentityForm(prev => ({ ...prev, loginBackgroundUrl: item.url }));
                                 }}
                                 className={`h-16 rounded-lg border overflow-hidden bg-white transition-all ${isSelected ? 'border-blue-500 ring-2 ring-blue-100' : 'border-gray-200 hover:border-gray-300'}`}
                                 title={item.name}
@@ -11368,8 +11970,10 @@ export const AdminDashboard: React.FC = () => {
   const isAdminUser = user?.role === 'ADMIN';
   const canEmployeeViewFinance = user?.role === 'EMPLOYEE' && Boolean(brandIdentity.allowEmployeeViewFinance);
   const canEmployeeViewReports = user?.role === 'EMPLOYEE' && Boolean(brandIdentity.allowEmployeeViewReports);
+  const canEmployeeViewUsers = user?.role === 'EMPLOYEE' && Boolean(brandIdentity.allowEmployeeViewUsers);
   const canAccessFinanceTab = isAdminUser || canEmployeeViewFinance;
   const canAccessReportsTab = isAdminUser || canEmployeeViewReports;
+  const canAccessUsersTab = isAdminUser || canEmployeeViewUsers;
   const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'USERS' | 'AGENDA' | 'APPOINTMENT_CENTER' | 'FINANCE' | 'REPORTS' | 'SETTINGS'>(isAdminUser ? 'DASHBOARD' : 'AGENDA');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [agendaNavigationRequest, setAgendaNavigationRequest] = useState<(AgendaNavigationPayload & { nonce: number }) | null>(null);
@@ -11409,7 +12013,7 @@ export const AdminDashboard: React.FC = () => {
   };
 
   useEffect(() => {
-    if (!isAdminUser && activeTab !== 'AGENDA' && activeTab !== 'APPOINTMENT_CENTER' && activeTab !== 'FINANCE' && activeTab !== 'REPORTS') {
+    if (!isAdminUser && activeTab !== 'AGENDA' && activeTab !== 'APPOINTMENT_CENTER' && activeTab !== 'FINANCE' && activeTab !== 'REPORTS' && activeTab !== 'USERS') {
       setActiveTab('AGENDA');
     }
     if (!canAccessFinanceTab && activeTab === 'FINANCE') {
@@ -11418,10 +12022,13 @@ export const AdminDashboard: React.FC = () => {
     if (!canAccessReportsTab && activeTab === 'REPORTS') {
       setActiveTab('AGENDA');
     }
-  }, [isAdminUser, canAccessFinanceTab, canAccessReportsTab, activeTab]);
+    if (!canAccessUsersTab && activeTab === 'USERS') {
+      setActiveTab('AGENDA');
+    }
+  }, [isAdminUser, canAccessFinanceTab, canAccessReportsTab, canAccessUsersTab, activeTab]);
 
   const handleTabChange = (tab: 'DASHBOARD' | 'USERS' | 'AGENDA' | 'APPOINTMENT_CENTER' | 'FINANCE' | 'REPORTS' | 'SETTINGS') => {
-    if (!isAdminUser && tab !== 'AGENDA' && tab !== 'APPOINTMENT_CENTER' && !(tab === 'FINANCE' && canEmployeeViewFinance) && !(tab === 'REPORTS' && canEmployeeViewReports)) {
+    if (!isAdminUser && tab !== 'AGENDA' && tab !== 'APPOINTMENT_CENTER' && !(tab === 'FINANCE' && canEmployeeViewFinance) && !(tab === 'REPORTS' && canEmployeeViewReports) && !(tab === 'USERS' && canEmployeeViewUsers)) {
       return;
     }
     setActiveTab(tab);
@@ -11510,14 +12117,16 @@ export const AdminDashboard: React.FC = () => {
               <BarChart3 size={20} /> Relatórios
             </button>
           )}
+          {canAccessUsersTab && (
+            <button 
+              onClick={() => handleTabChange('USERS')}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'USERS' ? 'bg-blue-50 text-blue-600 font-medium' : 'text-gray-600 hover:bg-gray-50'}`}
+            >
+              <Users size={20} /> Clientes
+            </button>
+          )}
           {isAdminUser && (
             <>
-              <button 
-                onClick={() => handleTabChange('USERS')}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'USERS' ? 'bg-blue-50 text-blue-600 font-medium' : 'text-gray-600 hover:bg-gray-50'}`}
-              >
-                <Users size={20} /> Clientes
-              </button>
               <button 
                 onClick={() => handleTabChange('SETTINGS')}
                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'SETTINGS' ? 'bg-blue-50 text-blue-600 font-medium' : 'text-gray-600 hover:bg-gray-50'}`}
@@ -11576,7 +12185,7 @@ export const AdminDashboard: React.FC = () => {
           {activeTab === 'DASHBOARD' && isAdminUser && <DashboardHome onViewAllRecent={handleViewAllRecent} />}
           {activeTab === 'FINANCE' && canAccessFinanceTab && <FinanceManagement />}
           {activeTab === 'REPORTS' && canAccessReportsTab && <ReportsManagement />}
-          {activeTab === 'USERS' && isAdminUser && <ClientsManagement />}
+          {activeTab === 'USERS' && canAccessUsersTab && <ClientsManagement />}
             {activeTab === 'AGENDA' && <CalendarManagement navigationRequest={agendaNavigationRequest} />}
           {activeTab === 'APPOINTMENT_CENTER' && <AppointmentCenterManagement onOpenAgenda={handleOpenAppointmentInAgenda} />}
           {activeTab === 'SETTINGS' && isAdminUser && <SettingsManagement />}

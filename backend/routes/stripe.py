@@ -4,6 +4,7 @@ import stripe
 from flask import Blueprint, current_app, request
 
 from backend.repositories.barbearia_repository import BarbeariaRepository
+from backend.services.master_runtime_config_service import MasterRuntimeConfigService
 from backend.utils.http import error, success
 
 stripe_bp = Blueprint("stripe", __name__, url_prefix="/stripe")
@@ -22,7 +23,7 @@ def _resolve_barbearia_id(event_data: dict) -> str | None:
     metadata = event_data.get("metadata") if isinstance(event_data, dict) else None
     metadata_slug = str((metadata or {}).get("barbearia_slug") or "").strip().lower()
 
-    slug = metadata_slug or str(current_app.config.get("STRIPE_WEBHOOK_BARBEARIA_SLUG") or "").strip().lower()
+    slug = metadata_slug or str(MasterRuntimeConfigService.get_runtime_value("STRIPE_WEBHOOK_BARBEARIA_SLUG", "") or "").strip().lower()
     if not slug:
         slug = str(current_app.config.get("DEFAULT_BARBEARIA_SLUG") or "").strip().lower()
 
@@ -33,8 +34,8 @@ def _resolve_barbearia_id(event_data: dict) -> str | None:
 
 
 def _cycle_from_price(price_id: str | None, interval: str | None):
-    monthly_price_id = str(current_app.config.get("STRIPE_PRICE_ID_MONTHLY") or "").strip()
-    yearly_price_id = str(current_app.config.get("STRIPE_PRICE_ID_YEARLY") or "").strip()
+    monthly_price_id = str(MasterRuntimeConfigService.get_runtime_value("STRIPE_PRICE_ID_MONTHLY", "") or "").strip()
+    yearly_price_id = str(MasterRuntimeConfigService.get_runtime_value("STRIPE_PRICE_ID_YEARLY", "") or "").strip()
 
     if price_id and monthly_price_id and price_id == monthly_price_id:
         return "MONTHLY", 3900
@@ -116,8 +117,8 @@ def _extract_subscription_payload(subscription):
 
 @stripe_bp.post("/webhook")
 def stripe_webhook():
-    secret_key = str(current_app.config.get("STRIPE_SECRET_KEY") or "").strip()
-    webhook_secret = str(current_app.config.get("STRIPE_WEBHOOK_SECRET") or "").strip()
+    secret_key = str(MasterRuntimeConfigService.get_runtime_value("STRIPE_SECRET_KEY", "") or "").strip()
+    webhook_secret = str(MasterRuntimeConfigService.get_runtime_value("STRIPE_WEBHOOK_SECRET", "") or "").strip()
 
     if not secret_key or not webhook_secret:
         return error("Stripe não configurado no servidor", 503)

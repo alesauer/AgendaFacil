@@ -49,6 +49,44 @@ class NotificationsRepository(BaseRepository):
         return data[0] if data else None
 
     @staticmethod
+    def upsert_active_provider_config(
+        barbearia_id: str,
+        channel: str,
+        provider_name: str,
+        config: dict[str, Any] | None = None,
+    ):
+        NotificationsRepository.require_tenant(barbearia_id)
+
+        if not is_supabase_ready():
+            return None
+
+        normalized_channel = str(channel or "").upper().strip()
+        normalized_provider = str(provider_name or "").upper().strip() or "EVOLUTION"
+        payload = {
+            "barbearia_id": barbearia_id,
+            "channel": normalized_channel,
+            "provider_name": normalized_provider,
+            "config": config or {},
+            "is_active": True,
+        }
+
+        existing = NotificationsRepository.get_active_provider_config(barbearia_id, normalized_channel)
+        supabase = get_supabase_client()
+        if existing and existing.get("id"):
+            response = (
+                supabase.table("notification_provider_configs")
+                .update(payload)
+                .eq("id", existing.get("id"))
+                .execute()
+            )
+            data = response.data or []
+            return data[0] if data else existing
+
+        response = supabase.table("notification_provider_configs").insert(payload).execute()
+        data = response.data or []
+        return data[0] if data else None
+
+    @staticmethod
     def get_dispatch_by_idempotency(barbearia_id: str, idempotency_key: str):
         NotificationsRepository.require_tenant(barbearia_id)
         if not idempotency_key or not is_supabase_ready():

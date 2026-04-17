@@ -39,3 +39,6 @@ backend/venv/
 
 # Environment files (secrets)
 .env
+
+# Local apt repo helper file (não versionar)
+docker.list

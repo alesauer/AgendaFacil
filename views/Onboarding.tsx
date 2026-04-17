@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createCategoriaApi, listCategoriasApi, updateCategoriaApi } from '../services/categoriasApi';
@@ -34,6 +34,20 @@ interface BusinessHour {
   end: string;
 }
 
+interface OnboardingDraft {
+  step: number;
+  barberData: {
+    name: string;
+    phone: string;
+    city: string;
+    logo: string | null;
+  };
+  professionals: Professional[];
+  services: Service[];
+  hours: BusinessHour[];
+  isWhatsAppConnected: boolean;
+}
+
 // --- Components ---
 
 const StepIndicator = ({ currentStep, totalSteps }: { currentStep: number, totalSteps: number }) => {
@@ -54,10 +68,6 @@ const StepIndicator = ({ currentStep, totalSteps }: { currentStep: number, total
 
 export const Onboarding: React.FC = () => {
   const navigate = useNavigate();
-  const [step, setStep] = useState(0);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
-  const [isLoadingInitial, setIsLoadingInitial] = useState(true);
 
   const getCurrentTenantSlug = () => {
     const pathSegment = window.location.pathname.split('/').filter(Boolean)[0];
@@ -88,10 +98,95 @@ export const Onboarding: React.FC = () => {
       localStorage.setItem('onboarding_completed_at', new Date().toISOString());
     }
     localStorage.removeItem('manual_onboarding_request');
+    localStorage.removeItem(`onboarding_draft:${tenantSlug}`);
+    if (tenantSlug === 'demo') {
+      localStorage.removeItem('onboarding_draft');
+    }
 
     const adminUrl = `${window.location.pathname}${window.location.search}#/admin`;
     window.location.replace(adminUrl);
   };
+
+  const tenantSlug = getCurrentTenantSlug();
+  const onboardingDraftKey = `onboarding_draft:${tenantSlug}`;
+
+  const defaultBarberData = {
+    name: '',
+    phone: '',
+    city: '',
+    logo: null as string | null,
+  };
+
+  const defaultProfessionals: Professional[] = [];
+  const defaultServices: Service[] = [];
+  const defaultHours: BusinessHour[] = [
+    { day: 'Segunda', open: true, start: '09:00', end: '18:00' },
+    { day: 'Terça', open: true, start: '09:00', end: '18:00' },
+    { day: 'Quarta', open: true, start: '09:00', end: '18:00' },
+    { day: 'Quinta', open: true, start: '09:00', end: '18:00' },
+    { day: 'Sexta', open: true, start: '09:00', end: '18:00' },
+    { day: 'Sábado', open: true, start: '09:00', end: '14:00' },
+    { day: 'Domingo', open: true, start: '09:00', end: '14:00' },
+  ];
+
+  const normalizeDayKey = (value: string) =>
+    value
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .trim();
+
+  const normalizeBusinessHours = (input: BusinessHour[] | undefined): BusinessHour[] => {
+    const orderedDefaults = defaultHours.map((item) => ({ ...item }));
+    if (!Array.isArray(input) || input.length === 0) {
+      return orderedDefaults;
+    }
+
+    const byDay = new Map<string, BusinessHour>();
+    input.forEach((item) => {
+      const key = normalizeDayKey(item.day || '');
+      if (!key) return;
+      byDay.set(key, {
+        day: item.day,
+        open: Boolean(item.open),
+        start: String(item.start || '00:00').slice(0, 5),
+        end: String(item.end || '00:00').slice(0, 5),
+      });
+    });
+
+    return orderedDefaults.map((fallback) => {
+      const current = byDay.get(normalizeDayKey(fallback.day));
+      if (!current) return fallback;
+      return {
+        day: fallback.day,
+        open: current.open,
+        start: current.start,
+        end: current.end,
+      };
+    });
+  };
+
+  const initialDraft = useMemo<OnboardingDraft | null>(() => {
+    try {
+      const tenantScopedRaw = localStorage.getItem(onboardingDraftKey);
+      const legacyRaw = tenantSlug === 'demo' ? localStorage.getItem('onboarding_draft') : null;
+      const raw = tenantScopedRaw || legacyRaw;
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as OnboardingDraft;
+      if (!parsed || typeof parsed !== 'object') return null;
+      return {
+        ...parsed,
+        hours: normalizeBusinessHours(parsed.hours),
+      };
+    } catch {
+      return null;
+    }
+  }, [onboardingDraftKey, tenantSlug]);
+
+  const [step, setStep] = useState(-1);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [isLoadingInitial, setIsLoadingInitial] = useState(true);
 
   const dayToWeekdayMap: Record<string, number> = {
     domingo: 0,
@@ -122,7 +217,7 @@ export const Onboarding: React.FC = () => {
   };
 
   const defaultHoursByDay: Record<number, { aberto: boolean; hora_inicio: string; hora_fim: string }> = {
-    0: { aberto: false, hora_inicio: '00:00', hora_fim: '00:00' },
+    0: { aberto: true, hora_inicio: '09:00', hora_fim: '14:00' },
     1: { aberto: true, hora_inicio: '09:00', hora_fim: '18:00' },
     2: { aberto: true, hora_inicio: '09:00', hora_fim: '18:00' },
     3: { aberto: true, hora_inicio: '09:00', hora_fim: '18:00' },
@@ -345,6 +440,12 @@ export const Onboarding: React.FC = () => {
     let cancelled = false;
 
     const loadOnboardingData = async () => {
+      if (initialDraft) {
+        setIsLoadingInitial(false);
+        setSubmitError(null);
+        return;
+      }
+
       setIsLoadingInitial(true);
       setSubmitError(null);
 
@@ -356,9 +457,7 @@ export const Onboarding: React.FC = () => {
         listHorariosFuncionamentoApi(),
       ]);
 
-      const professionalsResult = initialProfessionalsResult.success
-        ? initialProfessionalsResult
-        : await listProfissionaisApi();
+      const professionalsResult = initialProfessionalsResult;
 
       if (cancelled) return;
 
@@ -455,7 +554,7 @@ export const Onboarding: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [initialDraft]);
 
   const handleCompleteOnboarding = async () => {
     if (isSubmitting || isLoadingInitial) return;
@@ -479,30 +578,17 @@ export const Onboarding: React.FC = () => {
   };
   
   // Form States
-  const [barberData, setBarberData] = useState({
-    name: '',
-    phone: '',
-    city: '',
-    logo: null as string | null
-  });
+  const [barberData, setBarberData] = useState(() => initialDraft?.barberData || defaultBarberData);
 
-  const [professionals, setProfessionals] = useState<Professional[]>([]);
+  const [professionals, setProfessionals] = useState<Professional[]>(() => initialDraft?.professionals || defaultProfessionals);
   const [newPro, setNewPro] = useState<Professional>({ name: '', role: '', phone: '' });
 
-  const [services, setServices] = useState<Service[]>([]);
+  const [services, setServices] = useState<Service[]>(() => initialDraft?.services || defaultServices);
   const [newService, setNewService] = useState<Service>({ name: '', category: 'Cabelo', price: '', duration: '30' });
 
-  const [hours, setHours] = useState<BusinessHour[]>([
-    { day: 'Segunda', open: true, start: '09:00', end: '18:00' },
-    { day: 'Terça', open: true, start: '09:00', end: '18:00' },
-    { day: 'Quarta', open: true, start: '09:00', end: '18:00' },
-    { day: 'Quinta', open: true, start: '09:00', end: '18:00' },
-    { day: 'Sexta', open: true, start: '09:00', end: '18:00' },
-    { day: 'Sábado', open: true, start: '09:00', end: '14:00' },
-    { day: 'Domingo', open: false, start: '00:00', end: '00:00' },
-  ]);
+  const [hours, setHours] = useState<BusinessHour[]>(() => initialDraft?.hours || defaultHours);
 
-  const [isWhatsAppConnected, setIsWhatsAppConnected] = useState(false);
+  const [isWhatsAppConnected, setIsWhatsAppConnected] = useState(() => Boolean(initialDraft?.isWhatsAppConnected));
 
   const setWhatsAppConnected = (connected: boolean) => {
     const tenantSlug = getCurrentTenantSlug();
@@ -514,6 +600,26 @@ export const Onboarding: React.FC = () => {
     }
     setIsWhatsAppConnected(connected);
   };
+
+  useEffect(() => {
+    const draft: OnboardingDraft = {
+      step,
+      barberData,
+      professionals,
+      services,
+      hours,
+      isWhatsAppConnected,
+    };
+
+    try {
+      localStorage.setItem(onboardingDraftKey, JSON.stringify(draft));
+      if (tenantSlug === 'demo') {
+        localStorage.setItem('onboarding_draft', JSON.stringify(draft));
+      }
+    } catch {
+      // ignore storage errors
+    }
+  }, [barberData, hours, isWhatsAppConnected, onboardingDraftKey, professionals, services, step, tenantSlug]);
 
   // Handlers
   const nextStep = () => setStep(s => s + 1);
@@ -567,6 +673,40 @@ export const Onboarding: React.FC = () => {
   // Render Steps
   const renderStep = () => {
     switch (step) {
+      case -1:
+        return (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="text-center space-y-8 py-8"
+          >
+            <div className="space-y-3">
+              <h2 className="text-4xl font-black text-gray-900">Bem-vindo ao Barbeiros.app 👋</h2>
+              <p className="text-gray-500 text-lg max-w-xl mx-auto">
+                Este é seu primeiro acesso. Deseja fazer as configurações básicas da sua barbearia agora?
+              </p>
+            </div>
+
+            <div className="max-w-sm mx-auto space-y-3">
+              <button
+                onClick={nextStep}
+                disabled={isSubmitting || isLoadingInitial}
+                className="w-full bg-blue-600 text-white py-4 rounded-2xl font-bold hover:bg-blue-700 transition-all shadow-xl shadow-blue-100 flex items-center justify-center gap-2"
+              >
+                Configurar agora <ChevronRight size={18} />
+              </button>
+              <button
+                onClick={finishOnboarding}
+                disabled={isSubmitting || isLoadingInitial}
+                className="w-full border border-gray-300 text-gray-700 py-4 rounded-2xl font-bold hover:bg-gray-50 transition-all"
+              >
+                Pular por enquanto
+              </button>
+              <p className="text-xs text-gray-400">Leva cerca de 2 minutos e você pode alterar tudo depois no painel.</p>
+            </div>
+          </motion.div>
+        );
       case 0:
         return (
           <motion.div 
@@ -972,7 +1112,7 @@ export const Onboarding: React.FC = () => {
               <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-blue-100">
                 <Zap size={24} />
               </div>
-              <h1 className="text-xl font-black text-gray-900 tracking-tight">AgendeFácil</h1>
+              <h1 className="text-xl font-black text-gray-900 tracking-tight">Barbeiros.app</h1>
             </div>
             <button 
               onClick={finishOnboarding}
@@ -985,8 +1125,8 @@ export const Onboarding: React.FC = () => {
         )}
 
         {/* Wizard Card */}
-        <div className={`bg-white rounded-[2.5rem] shadow-2xl shadow-gray-200/50 overflow-hidden transition-all duration-500 ${step === 5 ? 'p-12' : 'p-8 md:p-12'}`}>
-          {step < 5 && (
+        <div className="bg-white rounded-[2.5rem] shadow-2xl shadow-gray-200/50 overflow-hidden transition-all duration-500 p-8 md:p-12">
+          {step >= 0 && step < 5 && (
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
               <StepIndicator currentStep={step} totalSteps={5} />
               <span className="text-xs font-black text-blue-600 uppercase tracking-widest bg-blue-50 px-3 py-1 rounded-full">
@@ -1010,7 +1150,7 @@ export const Onboarding: React.FC = () => {
           )}
 
           {/* Footer Actions */}
-          {step < 5 && (
+          {step >= 0 && step < 5 && (
             <div className="mt-12 flex items-center justify-between pt-8 border-t border-gray-100">
               <button 
                 onClick={prevStep}

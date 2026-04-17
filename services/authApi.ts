@@ -40,6 +40,23 @@ export type AuthResult = {
   user: AuthUser;
 };
 
+export type ForgotPasswordPayload = {
+  email: string;
+};
+
+export type ForgotPasswordResult = {
+  message: string;
+};
+
+export type ResetPasswordPayload = {
+  token: string;
+  new_password: string;
+};
+
+export type ResetPasswordResult = {
+  message: string;
+};
+
 export async function loginApi(payload: LoginPayload) {
   return apiRequest<AuthResult>('/auth/login', {
     method: 'POST',
@@ -96,5 +113,19 @@ export async function updateAuthUserApi(userId: string, payload: TeamUserPayload
 export async function deleteAuthUserApi(userId: string) {
   return apiRequest<{ id: string }>(`/auth/users/${userId}`, {
     method: 'DELETE',
+  });
+}
+
+export async function forgotPasswordApi(payload: ForgotPasswordPayload) {
+  return apiRequest<ForgotPasswordResult>('/auth/forgot-password', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function resetPasswordApi(payload: ResetPasswordPayload) {
+  return apiRequest<ResetPasswordResult>('/auth/reset-password', {
+    method: 'POST',
+    body: JSON.stringify(payload),
   });
 }

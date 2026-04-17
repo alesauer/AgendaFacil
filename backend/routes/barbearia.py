@@ -4,6 +4,7 @@ from flask import Blueprint, current_app, g, request
 
 from backend.middleware.auth import auth_required
 from backend.repositories.barbearia_repository import BarbeariaRepository
+from backend.services.master_runtime_config_service import MasterRuntimeConfigService
 from backend.utils.http import error, success
 
 barbearia_bp = Blueprint("barbearia", __name__, url_prefix="/barbearia")
@@ -83,6 +84,7 @@ def get_identidade_publica():
             "allow_employee_create_appointment": bool(item.get("allow_employee_create_appointment", True)),
             "allow_employee_view_finance": bool(item.get("allow_employee_view_finance", False)),
             "allow_employee_view_reports": bool(item.get("allow_employee_view_reports", False)),
+            "allow_employee_view_users": bool(item.get("allow_employee_view_users", False)),
             "icone_marca": item.get("icone_marca"),
             "cor_primaria": item.get("cor_primaria"),
             "cor_secundaria": item.get("cor_secundaria"),
@@ -173,6 +175,15 @@ def update_identidade():
             allow_employee_view_reports = bool(
                 current_item.get("allow_employee_view_reports", False)
             )
+        if "allow_employee_view_users" in payload:
+            allow_employee_view_users = _parse_bool(
+                payload.get("allow_employee_view_users"),
+                False,
+            )
+        else:
+            allow_employee_view_users = bool(
+                current_item.get("allow_employee_view_users", False)
+            )
         cor_primaria = _normalize_color(payload.get("cor_primaria"), "cor_primaria")
         cor_secundaria = _normalize_color(payload.get("cor_secundaria"), "cor_secundaria")
     except ValueError as exc:
@@ -191,6 +202,7 @@ def update_identidade():
         allow_employee_create_appointment,
         allow_employee_view_finance,
         allow_employee_view_reports,
+        allow_employee_view_users,
         icone_marca,
         cor_primaria,
         cor_secundaria,
@@ -213,8 +225,8 @@ def get_assinatura():
     ciclo = str(item.get("ciclo_cobranca") or "MONTHLY").upper()
     valor_centavos = int(item.get("valor_plano_centavos") or (3900 if ciclo == "MONTHLY" else 29700))
 
-    stripe_link_monthly = str(current_app.config.get("STRIPE_PAYMENT_LINK_MONTHLY") or "").strip()
-    stripe_link_yearly = str(current_app.config.get("STRIPE_PAYMENT_LINK_YEARLY") or "").strip()
+    stripe_link_monthly = str(MasterRuntimeConfigService.get_runtime_value("STRIPE_PAYMENT_LINK_MONTHLY", "") or "").strip()
+    stripe_link_yearly = str(MasterRuntimeConfigService.get_runtime_value("STRIPE_PAYMENT_LINK_YEARLY", "") or "").strip()
 
     return success(
         {

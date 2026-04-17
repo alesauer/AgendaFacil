@@ -324,25 +324,54 @@ class ProfissionaisRepository(BaseRepository):
     def delete(barbearia_id: str, profissional_id: str):
         ProfissionaisRepository.require_tenant(barbearia_id)
         if is_db_ready():
-            return query_one(
-                """
-                DELETE FROM profissionais
-                WHERE barbearia_id = %s AND id = %s
-                RETURNING id
-                """,
-                (barbearia_id, profissional_id),
-            )
+            candidates = [
+                (
+                    "UPDATE profissionais SET ativo = false WHERE barbearia_id = %s AND id = %s RETURNING id",
+                    (barbearia_id, profissional_id),
+                ),
+                (
+                    "DELETE FROM profissionais WHERE barbearia_id = %s AND id = %s RETURNING id",
+                    (barbearia_id, profissional_id),
+                ),
+            ]
+
+            last_exc = None
+            for sql, params in candidates:
+                try:
+                    return query_one(sql, params)
+                except Exception as exc:
+                    last_exc = exc
+                    if not ProfissionaisRepository._is_missing_profissionais_column_error(exc):
+                        raise
+
+            if last_exc:
+                raise last_exc
+            return None
 
         if is_supabase_ready():
             supabase = get_supabase_client()
-            response = (
-                supabase.table("profissionais")
-                .delete()
-                .eq("barbearia_id", barbearia_id)
-                .eq("id", profissional_id)
-                .execute()
-            )
-            data = response.data or []
-            return data[0] if data else None
+            try:
+                response = (
+                    supabase.table("profissionais")
+                    .update({"ativo": False})
+                    .eq("barbearia_id", barbearia_id)
+                    .eq("id", profissional_id)
+                    .execute()
+                )
+                data = response.data or []
+                return data[0] if data else None
+            except Exception as exc:
+                if not ProfissionaisRepository._is_missing_profissionais_column_error(exc):
+                    raise
+
+                response = (
+                    supabase.table("profissionais")
+                    .delete()
+                    .eq("barbearia_id", barbearia_id)
+                    .eq("id", profissional_id)
+                    .execute()
+                )
+                data = response.data or []
+                return data[0] if data else None
 
         return None

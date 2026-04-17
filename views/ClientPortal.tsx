@@ -797,7 +797,7 @@ export const ClientPortal: React.FC = () => {
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 space-y-5">
               <div>
                 <h2 className="text-xl font-bold text-gray-900">Complete seu cadastro</h2>
-                <p className="text-sm text-gray-500 mt-1">Antes de continuar, confirme seus dados para acessar seus agendamentos.</p>
+                <p className="text-sm text-gray-500 mt-1">Bem-vindo! Falta 1 minuto para liberar seus agendamentos.</p>
               </div>
 
               <form onSubmit={handleClientRegistration} className="space-y-4">

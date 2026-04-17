@@ -311,71 +311,32 @@ class ClientesRepository(BaseRepository):
 
         if is_supabase_ready():
             supabase = get_supabase_client()
+            insert_payload = {
+                "barbearia_id": barbearia_id,
+                "nome": nome,
+                "telefone": telefone,
+                "data_nascimento": data_nascimento,
+            }
+            if email is not None:
+                insert_payload["email"] = email
+
             try:
-                response = (
-                    supabase.table("clientes")
-                    .insert(
-                        {
-                            "barbearia_id": barbearia_id,
-                            "nome": nome,
-                            "telefone": telefone,
-                            "email": email,
-                            "data_nascimento": data_nascimento,
-                        }
-                    )
-                    .select("id,barbearia_id,nome,telefone,email,data_nascimento,cortes_count,total_gasto,ultima_visita")
-                    .execute()
-                )
+                response = supabase.table("clientes").insert(insert_payload).execute()
             except Exception as exc:
-                if ClientesRepository._is_missing_metrics_column_error(exc):
-                    try:
-                        response = (
-                            supabase.table("clientes")
-                            .insert(
-                                {
-                                    "barbearia_id": barbearia_id,
-                                    "nome": nome,
-                                    "telefone": telefone,
-                                    "email": email,
-                                    "data_nascimento": data_nascimento,
-                                }
-                            )
-                            .select("id,barbearia_id,nome,telefone,email,data_nascimento")
-                            .execute()
-                        )
-                    except Exception as nested_exc:
-                        if not ClientesRepository._is_missing_email_column_error(nested_exc):
-                            raise
-                        response = (
-                            supabase.table("clientes")
-                            .insert(
-                                {
-                                    "barbearia_id": barbearia_id,
-                                    "nome": nome,
-                                    "telefone": telefone,
-                                    "data_nascimento": data_nascimento,
-                                }
-                            )
-                            .execute()
-                        )
-                    data = response.data or []
-                    return data[0] if data else None
                 if not ClientesRepository._is_missing_email_column_error(exc):
                     raise
-                response = (
-                    supabase.table("clientes")
-                    .insert(
-                        {
-                            "barbearia_id": barbearia_id,
-                            "nome": nome,
-                            "telefone": telefone,
-                            "data_nascimento": data_nascimento,
-                        }
-                    )
-                    .execute()
-                )
+                insert_payload.pop("email", None)
+                response = supabase.table("clientes").insert(insert_payload).execute()
+
             data = response.data or []
-            return data[0] if data else None
+            if data:
+                created = data[0]
+                if isinstance(created, dict) and created.get("id"):
+                    hydrated = ClientesRepository.find_by_phone(barbearia_id, telefone)
+                    return hydrated or created
+                return created
+
+            return ClientesRepository.find_by_phone(barbearia_id, telefone)
 
         return None
 
@@ -439,75 +400,42 @@ class ClientesRepository(BaseRepository):
 
         if is_supabase_ready():
             supabase = get_supabase_client()
+            update_payload = {
+                "nome": nome,
+                "telefone": telefone,
+                "data_nascimento": data_nascimento,
+            }
+            if email is not None:
+                update_payload["email"] = email
+
             try:
                 response = (
                     supabase.table("clientes")
-                    .update(
-                        {
-                            "nome": nome,
-                            "telefone": telefone,
-                            "email": email,
-                            "data_nascimento": data_nascimento,
-                        }
-                    )
+                    .update(update_payload)
                     .eq("barbearia_id", barbearia_id)
                     .eq("id", cliente_id)
-                    .select("id,barbearia_id,nome,telefone,email,data_nascimento,cortes_count,total_gasto,ultima_visita")
                     .execute()
                 )
             except Exception as exc:
-                if ClientesRepository._is_missing_metrics_column_error(exc):
-                    try:
-                        response = (
-                            supabase.table("clientes")
-                            .update(
-                                {
-                                    "nome": nome,
-                                    "telefone": telefone,
-                                    "email": email,
-                                    "data_nascimento": data_nascimento,
-                                }
-                            )
-                            .eq("barbearia_id", barbearia_id)
-                            .eq("id", cliente_id)
-                            .select("id,barbearia_id,nome,telefone,email,data_nascimento")
-                            .execute()
-                        )
-                    except Exception as nested_exc:
-                        if not ClientesRepository._is_missing_email_column_error(nested_exc):
-                            raise
-                        response = (
-                            supabase.table("clientes")
-                            .update(
-                                {
-                                    "nome": nome,
-                                    "telefone": telefone,
-                                    "data_nascimento": data_nascimento,
-                                }
-                            )
-                            .eq("barbearia_id", barbearia_id)
-                            .eq("id", cliente_id)
-                            .execute()
-                        )
-                    data = response.data or []
-                    return data[0] if data else None
                 if not ClientesRepository._is_missing_email_column_error(exc):
                     raise
+                update_payload.pop("email", None)
                 response = (
                     supabase.table("clientes")
-                    .update(
-                        {
-                            "nome": nome,
-                            "telefone": telefone,
-                            "data_nascimento": data_nascimento,
-                        }
-                    )
+                    .update(update_payload)
                     .eq("barbearia_id", barbearia_id)
                     .eq("id", cliente_id)
                     .execute()
                 )
+
             data = response.data or []
-            return data[0] if data else None
+            if data:
+                updated = data[0]
+                if isinstance(updated, dict) and updated.get("id"):
+                    return ClientesRepository.find_by_phone(barbearia_id, telefone) or updated
+                return updated
+
+            return ClientesRepository.find_by_phone(barbearia_id, telefone)
 
         return None
 

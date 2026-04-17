@@ -25,6 +25,14 @@ class BarbeariaRepository(BaseRepository):
         )
 
     @staticmethod
+    def _is_missing_users_flag_column_error(exc: Exception) -> bool:
+        message = str(exc).lower()
+        return (
+            "allow_employee_view_users" in message
+            and ("column" in message or "does not exist" in message or "schema cache" in message)
+        )
+
+    @staticmethod
     def _is_missing_subscription_column_error(exc: Exception) -> bool:
         message = str(exc).lower()
         return (
@@ -173,6 +181,7 @@ class BarbeariaRepository(BaseRepository):
         base.setdefault("allow_employee_create_appointment", True)
         base.setdefault("allow_employee_view_finance", False)
         base.setdefault("allow_employee_view_reports", False)
+        base.setdefault("allow_employee_view_users", False)
         base.setdefault("icone_marca", None)
         base.setdefault("cor_primaria", None)
         base.setdefault("cor_secundaria", None)
@@ -192,6 +201,7 @@ class BarbeariaRepository(BaseRepository):
                                         allow_employee_create_appointment,
                                         allow_employee_view_finance,
                                         allow_employee_view_reports,
+                                     allow_employee_view_users,
                            icone_marca, cor_primaria, cor_secundaria
                     FROM barbearias
                     WHERE id = %s
@@ -200,6 +210,24 @@ class BarbeariaRepository(BaseRepository):
                 )
                 return BarbeariaRepository._coalesce_identity_fields(item)
             except Exception as exc:
+                if BarbeariaRepository._is_missing_users_flag_column_error(exc):
+                    item = query_one(
+                        """
+                        SELECT id, nome, slug, telefone, cidade,
+                               logo_url, login_logo_url, login_background_url,
+                               churn_risk_days_threshold,
+                               allow_employee_confirm_appointment,
+                               allow_employee_create_appointment,
+                               allow_employee_view_finance,
+                               allow_employee_view_reports,
+                               icone_marca, cor_primaria, cor_secundaria
+                        FROM barbearias
+                        WHERE id = %s
+                        """,
+                        (barbearia_id,),
+                    )
+                    return BarbeariaRepository._coalesce_identity_fields(item)
+
                 if BarbeariaRepository._is_missing_reports_flag_column_error(exc):
                     item = query_one(
                         """
@@ -228,6 +256,7 @@ class BarbeariaRepository(BaseRepository):
                            TRUE AS allow_employee_create_appointment,
                            FALSE AS allow_employee_view_finance,
                            FALSE AS allow_employee_view_reports,
+                           FALSE AS allow_employee_view_users,
                            NULL::text AS icone_marca,
                            NULL::text AS cor_primaria,
                            NULL::text AS cor_secundaria
@@ -243,7 +272,7 @@ class BarbeariaRepository(BaseRepository):
             try:
                 response = (
                     supabase.table("barbearias")
-                    .select("id,nome,slug,telefone,cidade,logo_url,login_logo_url,login_background_url,churn_risk_days_threshold,allow_employee_confirm_appointment,allow_employee_create_appointment,allow_employee_view_finance,allow_employee_view_reports,icone_marca,cor_primaria,cor_secundaria")
+                    .select("id,nome,slug,telefone,cidade,logo_url,login_logo_url,login_background_url,churn_risk_days_threshold,allow_employee_confirm_appointment,allow_employee_create_appointment,allow_employee_view_finance,allow_employee_view_reports,allow_employee_view_users,icone_marca,cor_primaria,cor_secundaria")
                     .eq("id", barbearia_id)
                     .limit(1)
                     .execute()
@@ -251,6 +280,17 @@ class BarbeariaRepository(BaseRepository):
                 data = response.data or []
                 return BarbeariaRepository._coalesce_identity_fields(data[0] if data else None)
             except Exception as exc:
+                if BarbeariaRepository._is_missing_users_flag_column_error(exc):
+                    response = (
+                        supabase.table("barbearias")
+                        .select("id,nome,slug,telefone,cidade,logo_url,login_logo_url,login_background_url,churn_risk_days_threshold,allow_employee_confirm_appointment,allow_employee_create_appointment,allow_employee_view_finance,allow_employee_view_reports,icone_marca,cor_primaria,cor_secundaria")
+                        .eq("id", barbearia_id)
+                        .limit(1)
+                        .execute()
+                    )
+                    data = response.data or []
+                    return BarbeariaRepository._coalesce_identity_fields(data[0] if data else None)
+
                 if BarbeariaRepository._is_missing_reports_flag_column_error(exc):
                     response = (
                         supabase.table("barbearias")
@@ -288,6 +328,7 @@ class BarbeariaRepository(BaseRepository):
         allow_employee_create_appointment: bool,
         allow_employee_view_finance: bool,
         allow_employee_view_reports: bool,
+        allow_employee_view_users: bool,
         icone_marca: str | None,
         cor_primaria: str | None,
         cor_secundaria: str | None,
@@ -309,6 +350,7 @@ class BarbeariaRepository(BaseRepository):
                         allow_employee_create_appointment = %s,
                         allow_employee_view_finance = %s,
                         allow_employee_view_reports = %s,
+                        allow_employee_view_users = %s,
                         icone_marca = %s,
                         cor_primaria = %s,
                         cor_secundaria = %s
@@ -320,6 +362,7 @@ class BarbeariaRepository(BaseRepository):
                               allow_employee_create_appointment,
                               allow_employee_view_finance,
                               allow_employee_view_reports,
+                              allow_employee_view_users,
                               icone_marca, cor_primaria, cor_secundaria
                     """,
                     (
@@ -334,6 +377,7 @@ class BarbeariaRepository(BaseRepository):
                         allow_employee_create_appointment,
                         allow_employee_view_finance,
                         allow_employee_view_reports,
+                        allow_employee_view_users,
                         icone_marca,
                         cor_primaria,
                         cor_secundaria,
@@ -342,6 +386,54 @@ class BarbeariaRepository(BaseRepository):
                 )
                 return BarbeariaRepository._coalesce_identity_fields(item)
             except Exception as exc:
+                if BarbeariaRepository._is_missing_users_flag_column_error(exc):
+                    item = query_one(
+                        """
+                        UPDATE barbearias
+                        SET nome = %s,
+                            telefone = %s,
+                            cidade = %s,
+                            logo_url = %s,
+                            login_logo_url = %s,
+                            login_background_url = %s,
+                            churn_risk_days_threshold = %s,
+                            allow_employee_confirm_appointment = %s,
+                            allow_employee_create_appointment = %s,
+                            allow_employee_view_finance = %s,
+                            allow_employee_view_reports = %s,
+                            icone_marca = %s,
+                            cor_primaria = %s,
+                            cor_secundaria = %s
+                        WHERE id = %s
+                        RETURNING id, nome, slug, telefone, cidade,
+                                  logo_url, login_logo_url, login_background_url,
+                                  churn_risk_days_threshold,
+                                  allow_employee_confirm_appointment,
+                                  allow_employee_create_appointment,
+                                  allow_employee_view_finance,
+                                  allow_employee_view_reports,
+                                  icone_marca, cor_primaria, cor_secundaria
+                        """,
+                        (
+                            nome,
+                            telefone,
+                            cidade,
+                            logo_url,
+                            login_logo_url,
+                            login_background_url,
+                            churn_risk_days_threshold,
+                            allow_employee_confirm_appointment,
+                            allow_employee_create_appointment,
+                            allow_employee_view_finance,
+                            allow_employee_view_reports,
+                            icone_marca,
+                            cor_primaria,
+                            cor_secundaria,
+                            barbearia_id,
+                        ),
+                    )
+                    return BarbeariaRepository._coalesce_identity_fields(item)
+
                 if BarbeariaRepository._is_missing_reports_flag_column_error(exc):
                     item = query_one(
                         """
@@ -429,6 +521,7 @@ class BarbeariaRepository(BaseRepository):
                             "allow_employee_create_appointment": bool(allow_employee_create_appointment),
                             "allow_employee_view_finance": bool(allow_employee_view_finance),
                             "allow_employee_view_reports": bool(allow_employee_view_reports),
+                            "allow_employee_view_users": bool(allow_employee_view_users),
                             "icone_marca": icone_marca,
                             "cor_primaria": cor_primaria,
                             "cor_secundaria": cor_secundaria,
@@ -440,6 +533,33 @@ class BarbeariaRepository(BaseRepository):
                 data = response.data or []
                 return BarbeariaRepository._coalesce_identity_fields(data[0] if data else None)
             except Exception as exc:
+                if BarbeariaRepository._is_missing_users_flag_column_error(exc):
+                    response = (
+                        supabase.table("barbearias")
+                        .update(
+                            {
+                                "nome": nome,
+                                "telefone": telefone,
+                                "cidade": cidade,
+                                "logo_url": logo_url,
+                                "login_logo_url": login_logo_url,
+                                "login_background_url": login_background_url,
+                                "churn_risk_days_threshold": int(churn_risk_days_threshold),
+                                "allow_employee_confirm_appointment": bool(allow_employee_confirm_appointment),
+                                "allow_employee_create_appointment": bool(allow_employee_create_appointment),
+                                "allow_employee_view_finance": bool(allow_employee_view_finance),
+                                "allow_employee_view_reports": bool(allow_employee_view_reports),
+                                "icone_marca": icone_marca,
+                                "cor_primaria": cor_primaria,
+                                "cor_secundaria": cor_secundaria,
+                            }
+                        )
+                        .eq("id", barbearia_id)
+                        .execute()
+                    )
+                    data = response.data or []
+                    return BarbeariaRepository._coalesce_identity_fields(data[0] if data else None)
+
                 if BarbeariaRepository._is_missing_reports_flag_column_error(exc):
                     response = (
                         supabase.table("barbearias")

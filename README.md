@@ -16,6 +16,92 @@ View your app in AI Studio: https://ai.studio/apps/c70d021a-d973-4e92-9972-78af0
 3. Run the app:
    `npm run dev`
 
+## Docker (frontend + backend)
+
+Estratégia recomendada: **3 containers**.
+
+- `frontend` (Vite build + Nginx) exposto em `http://localhost:3000`
+- `backend` (Flask + Gunicorn) exposto em `http://localhost:5000`
+- `notifications-worker` (fila assíncrona)
+
+O frontend usa proxy interno (`/api`) para o backend no Docker network.
+
+Observação: o build do frontend no Docker já aplica `legacy-peer-deps` (`npm ci --legacy-peer-deps`).
+
+### 1) Pré-requisitos
+
+- Docker
+- Docker Compose plugin
+- Arquivo `backend/.env` configurado (pode copiar de `backend/.env.example`)
+
+### 2) Subir stack principal
+
+```bash
+docker compose up --build -d
+```
+
+### 3) Acessos
+
+- Frontend: `http://localhost:3000`
+- Backend health: `http://localhost:5000/health`
+
+### 4) Logs
+
+```bash
+docker compose logs -f backend frontend
+```
+
+### 5) Parar tudo
+
+```bash
+docker compose down
+```
+
+## Deploy no VPS Hostinger com GitHub Actions
+
+Fluxo recomendado: GitHub Actions faz build das imagens, publica no GHCR e faz deploy via SSH no VPS.
+
+### Arquivos usados
+
+- `.github/workflows/deploy-hostinger.yml`
+- `docker-compose.prod.yml`
+
+### 1) Preparar VPS (uma vez)
+
+No VPS, clone o repositório e mantenha `backend/.env` com as variáveis de produção:
+
+```bash
+mkdir -p /opt/agendafacil
+cd /opt/agendafacil
+git clone <URL_DO_REPO> .
+cp backend/.env.example backend/.env  # se existir
+```
+
+Preencha `backend/.env` com credenciais reais (Supabase, Evolution, Resend, Stripe etc).
+
+### 2) Secrets no GitHub (Settings > Secrets and variables > Actions)
+
+- `VPS_HOST` (IP ou domínio do VPS)
+- `VPS_PORT` (geralmente `22`)
+- `VPS_USER` (usuário SSH)
+- `VPS_SSH_KEY` (chave privada para acesso SSH)
+- `VPS_APP_DIR` (ex.: `/opt/agendafacil`)
+- `GHCR_USERNAME` (seu usuário/org do GitHub com acesso ao pacote)
+- `GHCR_TOKEN` (PAT com escopo `read:packages`)
+
+### 3) Como dispara
+
+- Push na branch `main`, ou
+- Execução manual em **Actions > Deploy Hostinger VPS > Run workflow**
+
+### 4) O que o workflow faz
+
+1. Builda imagens `backend` e `frontend`
+2. Publica no `ghcr.io`
+3. Acessa VPS por SSH
+4. Executa `docker compose -f docker-compose.prod.yml pull && up -d`
+
+
 ## Backend (Flask + PostgreSQL/Supabase)
 
 1. Entre na pasta backend:
@@ -68,7 +154,7 @@ Depois configure no `backend/.env`:
 - `EMAIL_FROM_ADDRESS`
 - `EMAIL_FROM_NAME` (default: `AgendaFácil`)
 
-Endpoint interno de teste (somente ADMIN autenticado):
+Endpoint interno de teste (somente ADMIN autenticado, modo assíncrono: apenas enfileira):
 
 ```bash
 curl -X POST http://localhost:5000/internal/notifications/test-whatsapp \
@@ -107,6 +193,67 @@ python3 scripts/notifications_worker.py --once --limit 50
 python3 scripts/notifications_worker.py --limit 50 --poll-seconds 10
 ```
 
+### Troubleshooting WhatsApp (Evolution)
+
+Para evitar inconsistência de ambiente, execute backend e worker sempre com o Python do venv:
+
+```bash
+cd /var/www/html/agendafacil/AgendaFacil
+backend/venv/bin/python -m backend.app
+```
+
+```bash
+cd /var/www/html/agendafacil/AgendaFacil/backend
+../backend/venv/bin/python scripts/notifications_worker.py --limit 50 --poll-seconds 10
+```
+
+Checklist mínimo de configuração em `backend/.env`:
+
+- `EVOLUTION_API_BASE_URL`
+- `EVOLUTION_INSTANCE`
+- `EVOLUTION_API_KEY`
+- `EVOLUTION_API_KEY_HEADER` (ex.: `apikey`)
+- `NO_PROXY` incluindo host interno da Evolution quando necessário
+
+Teste ponta a ponta (enqueue + polling do dispatch):
+
+```bash
+set -e
+BASE="http://127.0.0.1:5000"
+TENANT="demo"
+PHONE="11999999999"
+PASS="admin123"
+TO="31995041815"
+
+TOKEN=$(curl -sS -X POST "$BASE/auth/login" \
+   -H "Content-Type: application/json" \
+   -H "X-Barbearia-Slug: $TENANT" \
+   -d "{\"telefone\":\"$PHONE\",\"senha\":\"$PASS\"}" \
+   | python3 -c 'import sys,json; print((json.load(sys.stdin).get("data") or {}).get("token") or "")')
+
+ENQUEUE=$(curl -sS -X POST "$BASE/internal/notifications/test-whatsapp" \
+   -H "Authorization: Bearer $TOKEN" \
+   -H "X-Barbearia-Slug: $TENANT" \
+   -H "Content-Type: application/json" \
+   -d "{\"to\":\"$TO\",\"template_key\":\"TEST_NOTIFICATION\",\"variables\":{\"message\":\"Teste WhatsApp async\"}}")
+
+DISPATCH_ID=$(echo "$ENQUEUE" | python3 -c 'import sys,json; print((json.load(sys.stdin).get("data") or {}).get("dispatch_id") or "")')
+echo "DISPATCH_ID=$DISPATCH_ID"
+
+for i in $(seq 1 20); do
+   LINE=$(curl -sS "$BASE/internal/notifications/dispatches?limit=150" \
+      -H "Authorization: Bearer $TOKEN" \
+      -H "X-Barbearia-Slug: $TENANT" \
+      | python3 -c 'import sys,json; d=json.load(sys.stdin).get("data") or []; t=sys.argv[1]; r=next((x for x in d if x.get("id")==t), {}); print("{}|{}|{}|{}".format(r.get("status"), r.get("attempts"), r.get("error_code"), r.get("error_message")))' "$DISPATCH_ID")
+   echo "[$i] $LINE"
+   STATUS=$(echo "$LINE" | cut -d'|' -f1)
+   if [ "$STATUS" = "SENT" ] || [ "$STATUS" = "FAILED" ]; then
+      break
+   fi
+   sleep 2
+done
+```
+
 ## Configurações globais no MASTER (proxy/e-mail/whatsapp/pagamentos)
 
 Para habilitar a nova área **Configurações Globais** no painel MASTER, execute também:
@@ -137,6 +284,7 @@ Endpoints internos (somente ADMIN):
 
 - `GET /internal/notifications/dispatches?status=FAILED&limit=100`
 - `POST /internal/notifications/dispatches/<dispatch_id>/retry`
+- `POST /internal/notifications/test-whatsapp`
 - `POST /internal/notifications/test-email`
 
 ### Variáveis frontend para API

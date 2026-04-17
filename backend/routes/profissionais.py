@@ -113,23 +113,15 @@ def update_profissional(profissional_id: str):
 @auth_required
 def delete_profissional(profissional_id: str):
     try:
-        if ProfissionaisRepository.has_linked_appointments(
-            g.barbearia_id, profissional_id
-        ):
-            return error(
-                "Este profissional possui agendamentos vinculados. Cancele/exclua os agendamentos antes de excluir o profissional.",
-                409,
-            )
-
         deleted = ProfissionaisRepository.delete(g.barbearia_id, profissional_id)
         if not deleted:
             return error("Profissional não encontrado", 404)
-        return success({"id": deleted["id"]})
+        return success({"id": deleted["id"], "inactivated": True})
     except Exception as exc:
         message = str(exc).lower()
         if "foreign key" in message or "fk_agendamentos_profissional_tenant" in message:
             return error(
-                "Este profissional possui agendamentos vinculados. Cancele/exclua os agendamentos antes de excluir o profissional.",
+                "Não foi possível inativar o profissional.",
                 409,
             )
-        return error("Falha interna ao excluir profissional.", 500)
+        return error("Falha interna ao inativar profissional.", 500)
