@@ -1,4 +1,5 @@
 import time
+import ipaddress
 
 from flask import current_app, g, request
 
@@ -15,6 +16,13 @@ def _extract_slug_from_host(host: str):
     host_no_port = host.split(":")[0].strip().lower()
     if not host_no_port:
         return None
+
+    try:
+        ipaddress.ip_address(host_no_port)
+        return None
+    except ValueError:
+        pass
+
     if host_no_port in {"localhost", "127.0.0.1"}:
         return None
     parts = host_no_port.split(".")
