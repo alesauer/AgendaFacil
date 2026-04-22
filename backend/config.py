@@ -38,6 +38,12 @@ class Config:
     MP_WEBHOOK_SECRET = ""
     MP_PLAN_ID_MONTHLY = ""
     MP_PLAN_ID_YEARLY = ""
+    MP_PLAN_ID_ESSENCIAL_MONTHLY = ""
+    MP_PLAN_ID_ESSENCIAL_YEARLY = ""
+    MP_PLAN_ID_PROFISSIONAL_MONTHLY = ""
+    MP_PLAN_ID_PROFISSIONAL_YEARLY = ""
+    MP_PLAN_ID_AVANCADO_MONTHLY = ""
+    MP_PLAN_ID_AVANCADO_YEARLY = ""
     MP_WEBHOOK_BARBEARIA_SLUG = ""
     SUSPENSION_WHATSAPP_URL = ""
     SUSPENSION_PORTAL_URL = ""
@@ -91,6 +97,12 @@ def _hydrate_from_env(config_cls):
     config_cls.MP_WEBHOOK_SECRET = os.getenv("MP_WEBHOOK_SECRET", "").strip()
     config_cls.MP_PLAN_ID_MONTHLY = os.getenv("MP_PLAN_ID_MONTHLY", "").strip()
     config_cls.MP_PLAN_ID_YEARLY = os.getenv("MP_PLAN_ID_YEARLY", "").strip()
+    config_cls.MP_PLAN_ID_ESSENCIAL_MONTHLY = os.getenv("MP_PLAN_ID_ESSENCIAL_MONTHLY", "").strip()
+    config_cls.MP_PLAN_ID_ESSENCIAL_YEARLY = os.getenv("MP_PLAN_ID_ESSENCIAL_YEARLY", "").strip()
+    config_cls.MP_PLAN_ID_PROFISSIONAL_MONTHLY = os.getenv("MP_PLAN_ID_PROFISSIONAL_MONTHLY", "").strip()
+    config_cls.MP_PLAN_ID_PROFISSIONAL_YEARLY = os.getenv("MP_PLAN_ID_PROFISSIONAL_YEARLY", "").strip()
+    config_cls.MP_PLAN_ID_AVANCADO_MONTHLY = os.getenv("MP_PLAN_ID_AVANCADO_MONTHLY", "").strip()
+    config_cls.MP_PLAN_ID_AVANCADO_YEARLY = os.getenv("MP_PLAN_ID_AVANCADO_YEARLY", "").strip()
     config_cls.MP_WEBHOOK_BARBEARIA_SLUG = os.getenv("MP_WEBHOOK_BARBEARIA_SLUG", "").strip()
     config_cls.SUSPENSION_WHATSAPP_URL = os.getenv("SUSPENSION_WHATSAPP_URL", "").strip()
     config_cls.SUSPENSION_PORTAL_URL = os.getenv("SUSPENSION_PORTAL_URL", "").strip()

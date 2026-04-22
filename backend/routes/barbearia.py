@@ -14,6 +14,7 @@ ALLOWED_ICONES = {"scissors", "store", "user", "sparkles", "heart", "zap"}
 MAX_IMAGE_URL_LENGTH = 300000
 MAX_LOGIN_BACKGROUND_URL_LENGTH = 3200000
 ALLOWED_BILLING_CYCLES = {"MONTHLY", "YEARLY"}
+ALLOWED_PLAN_TIERS = {"ESSENCIAL", "PROFISSIONAL", "AVANCADO"}
 
 
 def _parse_bool(value, default: bool = False) -> bool:
@@ -223,7 +224,7 @@ def get_assinatura():
         return error("Barbearia não encontrada", 404)
 
     ciclo = str(item.get("ciclo_cobranca") or "MONTHLY").upper()
-    valor_centavos = int(item.get("valor_plano_centavos") or (3900 if ciclo == "MONTHLY" else 29700))
+    valor_centavos = int(item.get("valor_plano_centavos") or (3990 if ciclo == "MONTHLY" else 35990))
 
     return success(
         {
@@ -241,19 +242,57 @@ def get_assinatura():
             "atualizado_assinatura_em": item.get("atualizado_assinatura_em"),
             "planos_disponiveis": [
                 {
-                    "codigo": "MENSAL_39",
+                    "codigo": "ESSENCIAL_MONTHLY",
+                    "plano_tier": "ESSENCIAL",
                     "ciclo_cobranca": "MONTHLY",
-                    "titulo": "Mensal",
-                    "valor_centavos": 3900,
-                    "descricao": "Comece agora sem compromisso e teste na prática.",
+                    "titulo": "Essencial",
+                    "valor_centavos": 2990,
+                    "descricao": "Para quem está começando ou tem base menor de clientes.",
                     "checkout_url": "/barbearia/assinatura/checkout",
                 },
                 {
-                    "codigo": "ANUAL_297",
+                    "codigo": "ESSENCIAL_YEARLY",
+                    "plano_tier": "ESSENCIAL",
                     "ciclo_cobranca": "YEARLY",
-                    "titulo": "Anual",
-                    "valor_centavos": 29700,
-                    "descricao": "Economize e tenha tranquilidade na gestão o ano inteiro.",
+                    "titulo": "Essencial",
+                    "valor_centavos": 26990,
+                    "descricao": "Para quem está começando ou tem base menor de clientes.",
+                    "checkout_url": "/barbearia/assinatura/checkout",
+                },
+                {
+                    "codigo": "PROFISSIONAL_MONTHLY",
+                    "plano_tier": "PROFISSIONAL",
+                    "ciclo_cobranca": "MONTHLY",
+                    "titulo": "Profissional",
+                    "valor_centavos": 3990,
+                    "descricao": "Para barbearias em crescimento.",
+                    "checkout_url": "/barbearia/assinatura/checkout",
+                },
+                {
+                    "codigo": "PROFISSIONAL_YEARLY",
+                    "plano_tier": "PROFISSIONAL",
+                    "ciclo_cobranca": "YEARLY",
+                    "titulo": "Profissional",
+                    "valor_centavos": 35990,
+                    "descricao": "Para barbearias em crescimento.",
+                    "checkout_url": "/barbearia/assinatura/checkout",
+                },
+                {
+                    "codigo": "AVANCADO_MONTHLY",
+                    "plano_tier": "AVANCADO",
+                    "ciclo_cobranca": "MONTHLY",
+                    "titulo": "Avançado",
+                    "valor_centavos": 4990,
+                    "descricao": "Para operações maiores ou em expansão.",
+                    "checkout_url": "/barbearia/assinatura/checkout",
+                },
+                {
+                    "codigo": "AVANCADO_YEARLY",
+                    "plano_tier": "AVANCADO",
+                    "ciclo_cobranca": "YEARLY",
+                    "titulo": "Avançado",
+                    "valor_centavos": 44990,
+                    "descricao": "Para operações maiores ou em expansão.",
                     "checkout_url": "/barbearia/assinatura/checkout",
                 },
             ],
@@ -298,6 +337,9 @@ def create_assinatura_checkout():
     ciclo_cobranca = str(payload.get("ciclo_cobranca") or "MONTHLY").strip().upper()
     if ciclo_cobranca not in ALLOWED_BILLING_CYCLES:
         return error("ciclo_cobranca inválido. Use MONTHLY ou YEARLY", 400)
+    plano_tier = str(payload.get("plano_tier") or payload.get("plano") or "PROFISSIONAL").strip().upper()
+    if plano_tier not in ALLOWED_PLAN_TIERS:
+        return error("plano_tier inválido. Use ESSENCIAL, PROFISSIONAL ou AVANCADO", 400)
 
     barbearia = BarbeariaRepository.get_identity(g.barbearia_id)
     if not barbearia:
@@ -314,6 +356,7 @@ def create_assinatura_checkout():
             payer_email=payer_email,
             barbearia_slug=barbearia_slug,
             back_url=back_url,
+            plano_tier=plano_tier,
         )
     except ValueError as exc:
         return error(str(exc), 503)

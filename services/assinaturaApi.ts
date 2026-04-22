@@ -2,6 +2,7 @@ import { apiRequest } from './apiClient';
 
 export type AssinaturaPlanoApi = {
   codigo: 'MENSAL_39' | 'ANUAL_297' | string;
+  plano_tier?: 'ESSENCIAL' | 'PROFISSIONAL' | 'AVANCADO' | string;
   ciclo_cobranca: 'MONTHLY' | 'YEARLY' | string;
   titulo: string;
   valor_centavos: number;
@@ -44,14 +45,14 @@ export async function saveAssinaturaApi(payload: { ciclo_cobranca: 'MONTHLY' | '
 
 export async function createCheckoutApi(payload: {
   ciclo_cobranca: 'MONTHLY' | 'YEARLY';
+  plano_tier?: 'ESSENCIAL' | 'PROFISSIONAL' | 'AVANCADO';
   email?: string;
-}): Promise<{ init_point: string; preapproval_id?: string }> {
-  const result = await apiRequest<{ init_point: string; preapproval_id?: string }>(
+}) {
+  return apiRequest<{ init_point: string; preapproval_id?: string | null }>(
     '/barbearia/assinatura/checkout',
     {
       method: 'POST',
       body: JSON.stringify(payload),
     }
   );
-  return result as { init_point: string; preapproval_id?: string };
 }

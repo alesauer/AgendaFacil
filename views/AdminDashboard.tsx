@@ -15,7 +15,7 @@ import {
   FinanceiroResumoApi,
 } from '../services/financeiroApi';
 import { DashboardInsightsApi, getDashboardInsightsApi } from '../services/dashboardApi';
-import { AssinaturaApi, getAssinaturaApi, saveAssinaturaApi } from '../services/assinaturaApi';
+import { AssinaturaApi, createCheckoutApi, getAssinaturaApi, saveAssinaturaApi } from '../services/assinaturaApi';
 import {
   cancelAssinaturaClienteApi,
   ClienteComAssinaturaApi,
@@ -39,6 +39,67 @@ import { getNotificationChannelSettingsApi, saveNotificationChannelSettingsApi }
 import { sendSupportContactApi } from '../services/supportApi';
 
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042'];
+
+type BillingCycle = 'MONTHLY' | 'YEARLY';
+type PlanTier = 'ESSENCIAL' | 'PROFISSIONAL' | 'AVANCADO';
+
+const PLAN_CARDS: Array<{
+  tier: PlanTier;
+  title: string;
+  subtitle: string;
+  monthlyCents: number;
+  yearlyCents: number;
+  limitLabel: string;
+  features: string[];
+  footer: string;
+  highlighted?: boolean;
+}> = [
+  {
+    tier: 'ESSENCIAL',
+    title: 'Essencial',
+    subtitle: 'Para quem está começando ou tem uma base menor de clientes',
+    monthlyCents: 2990,
+    yearlyCents: 26990,
+    limitLabel: 'Até 400 clientes cadastrados',
+    features: [
+      'Acesso a todas as funcionalidades',
+      'Agenda inteligente completa',
+      'Financeiro, CRM e relatórios',
+      'Notificações por WhatsApp e e-mail',
+      'Personalização da marca',
+    ],
+    footer: 'Ideal para organizar sua operação sem pagar além do necessário.',
+  },
+  {
+    tier: 'PROFISSIONAL',
+    title: 'Profissional',
+    subtitle: 'Para barbearias em crescimento',
+    monthlyCents: 3990,
+    yearlyCents: 35990,
+    limitLabel: 'Até 1000 clientes cadastrados',
+    features: [
+      'Todas as funcionalidades liberadas',
+      'Mais capacidade para crescer com segurança',
+      'Suporte prioritário',
+    ],
+    footer: 'O plano ideal para quem quer escalar sem limitações no curto prazo.',
+    highlighted: true,
+  },
+  {
+    tier: 'AVANCADO',
+    title: 'Avançado',
+    subtitle: 'Para operações maiores ou em expansão',
+    monthlyCents: 4990,
+    yearlyCents: 44990,
+    limitLabel: 'Clientes ilimitados',
+    features: [
+      'Todas as funcionalidades liberadas',
+      'Liberdade total para crescimento',
+      'Ideal para múltiplas unidades',
+    ],
+    footer: 'Perfeito para barbearias com alto volume ou múltiplas unidades.',
+  },
+];
 
 const LOGIN_LOGO_TEMPLATES = [
   {
@@ -4960,6 +5021,7 @@ const SettingsManagement = () => {
   const [isSavingAlertSettings, setIsSavingAlertSettings] = useState<boolean>(false);
   const [alertSettingsError, setAlertSettingsError] = useState<string | null>(null);
   const [activeBillingTab, setActiveBillingTab] = useState<'PLAN' | 'UTILIZATION' | 'PAYMENT' | 'INVOICING' | 'B2C'>('PLAN');
+  const [billingCycle, setBillingCycle] = useState<BillingCycle>('MONTHLY');
   const [activeSubscriptionsTab, setActiveSubscriptionsTab] = useState<'CREATE_PLANS' | 'LINK_PLANS' | 'CLIENTS_LIST'>('CREATE_PLANS');
   const [activeIdentityTab, setActiveIdentityTab] = useState<'LOGO' | 'COLORS' | 'OTHER_PREFERENCES' | 'DISCLOSURE'>('LOGO');
   const [isHelpCenterOpen, setIsHelpCenterOpen] = useState(false);
@@ -5519,20 +5581,34 @@ const SettingsManagement = () => {
     setIsSavingSubscription(false);
   };
 
-  const handleOpenPaymentLink = (cycle: 'MONTHLY' | 'YEARLY') => {
-    const plan = availablePlans.find((item) => String(item.ciclo_cobranca || '').toUpperCase() === cycle);
-    const link = String(plan?.link_pagamento || '').trim();
+  const handleOpenPaymentLink = async (tier: PlanTier) => {
+    if (isSavingSubscription || isLoadingSubscription) return;
 
+    setIsSavingSubscription(true);
     setSubscriptionError(null);
     setSubscriptionSuccess(null);
 
-    if (!link) {
-      setSubscriptionError(`Link de pagamento ${cycle === 'MONTHLY' ? 'mensal' : 'anual'} não configurado no backend.`);
+    const result = await createCheckoutApi({
+      ciclo_cobranca: billingCycle,
+      plano_tier: tier,
+    });
+
+    if (!result.success) {
+      setSubscriptionError(('error' in result && result.error) || 'Falha ao gerar checkout no Mercado Pago.');
+      setIsSavingSubscription(false);
       return;
     }
 
-    window.open(link, '_blank', 'noopener,noreferrer');
-    setSubscriptionSuccess('Checkout Stripe aberto em uma nova aba. Após pagamento confirmado, o status será atualizado no sistema.');
+    const initPoint = String(result.data?.init_point || '').trim();
+    if (!initPoint) {
+      setSubscriptionError('Checkout indisponível para o plano selecionado.');
+      setIsSavingSubscription(false);
+      return;
+    }
+
+    window.open(initPoint, '_blank', 'noopener,noreferrer');
+    setSubscriptionSuccess('Checkout Mercado Pago aberto em uma nova aba. Após pagamento confirmado, o status será atualizado no sistema.');
+    setIsSavingSubscription(false);
   };
 
   useEffect(() => {
@@ -5929,25 +6005,12 @@ const SettingsManagement = () => {
     setIsSavingB2c(false);
   };
 
-  const availablePlans = subscriptionData?.planos_disponiveis || [
-    {
-      codigo: 'MENSAL_39',
-      ciclo_cobranca: 'MONTHLY',
-      titulo: 'Mensal',
-      valor_centavos: 3900,
-      descricao: 'Comece agora sem compromisso e teste na prática.',
-    },
-    {
-      codigo: 'ANUAL_297',
-      ciclo_cobranca: 'YEARLY',
-      titulo: 'Anual',
-      valor_centavos: 29700,
-      descricao: 'Economize e tenha tranquilidade na gestão o ano inteiro.',
-    },
-  ];
-
-  const monthlyPlan = availablePlans.find((plan) => String(plan.ciclo_cobranca).toUpperCase() === 'MONTHLY') || availablePlans[0];
-  const yearlyPlan = availablePlans.find((plan) => String(plan.ciclo_cobranca).toUpperCase() === 'YEARLY') || availablePlans[1] || availablePlans[0];
+  const currentCycle = String(subscriptionData?.ciclo_cobranca || 'MONTHLY').toUpperCase() === 'YEARLY' ? 'YEARLY' : 'MONTHLY';
+  const currentValue = Number(subscriptionData?.valor_plano_centavos || 0);
+  const currentPlanCard = PLAN_CARDS.find((card) => {
+    if (currentCycle === 'MONTHLY') return card.monthlyCents === currentValue;
+    return card.yearlyCents === currentValue;
+  }) || PLAN_CARDS.find((card) => card.tier === 'PROFISSIONAL') || PLAN_CARDS[0];
   const effectiveStatus = subscriptionData?.assinatura_status_efetivo || subscriptionData?.assinatura_status;
   const isTrialRunning = String(effectiveStatus || '').toUpperCase() === 'TRIAL';
 
@@ -7498,8 +7561,9 @@ const SettingsManagement = () => {
                       <div>
                         <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Assinatura atual</p>
                         <p className="text-lg font-bold text-gray-800">
-                          {String(subscriptionData?.ciclo_cobranca || 'MONTHLY').toUpperCase() === 'YEARLY' ? 'Anual (R$ 297/ano)' : 'Mensal (R$ 39/mês)'}
+                          {`${currentPlanCard.title} (${currentCycle === 'YEARLY' ? '/ano' : '/mês'})`}
                         </p>
+                        <p className="text-sm text-gray-600 mt-1">{formatMoneyFromCents(currentValue || (currentCycle === 'YEARLY' ? currentPlanCard.yearlyCents : currentPlanCard.monthlyCents))}</p>
                         <p className="text-xs text-gray-500 mt-1">
                           Próxima cobrança: {subscriptionData?.proxima_cobranca_em ? safeDateBr(String(subscriptionData.proxima_cobranca_em).slice(0, 10)) : 'Não definida'}
                         </p>
@@ -7515,37 +7579,66 @@ const SettingsManagement = () => {
                     )}
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                    <div className="p-6 bg-white border border-gray-200 rounded-2xl shadow-sm">
-                      <p className="text-xs text-gray-500 uppercase tracking-wider font-bold">💰 Escolha como pagar</p>
-                      <h4 className="text-2xl font-bold text-gray-900 mt-1">Mensal</h4>
-                      <p className="text-sm text-gray-600 mt-2">Comece agora sem compromisso e teste na prática.</p>
-                      <p className="text-3xl font-extrabold text-gray-900 mt-4">{formatMoneyFromCents(Number(monthlyPlan?.valor_centavos || 3900))}<span className="text-base font-semibold text-gray-500">/mês</span></p>
-                      <p className="text-sm text-gray-700 mt-3">👉 Ideal para quem quer validar e já organizar a barbearia</p>
+                  <div className="flex justify-center">
+                    <div className="inline-flex bg-white border border-gray-200 rounded-full p-1">
                       <button
-                        onClick={() => handleOpenPaymentLink('MONTHLY')}
-                        disabled={isLoadingSubscription}
-                        className="mt-6 w-full py-2.5 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+                        type="button"
+                        onClick={() => setBillingCycle('MONTHLY')}
+                        className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all ${billingCycle === 'MONTHLY' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:text-gray-800'}`}
                       >
-                        Assinar Mensal no Stripe
+                        Mensal
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setBillingCycle('YEARLY')}
+                        className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all ${billingCycle === 'YEARLY' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:text-gray-800'}`}
+                      >
+                        Anual
                       </button>
                     </div>
+                  </div>
 
-                    <div className="p-6 bg-white border border-gray-200 rounded-2xl shadow-sm">
-                      <p className="text-xs text-gray-500 uppercase tracking-wider font-bold">💳 Anual (mais vantajoso)</p>
-                      <h4 className="text-2xl font-bold text-gray-900 mt-1">Anual</h4>
-                      <p className="text-sm text-gray-600 mt-2">Economize e tenha tranquilidade na gestão o ano inteiro.</p>
-                      <p className="text-3xl font-extrabold text-gray-900 mt-4">{formatMoneyFromCents(Number(yearlyPlan?.valor_centavos || 29700))}<span className="text-base font-semibold text-gray-500">/ano</span></p>
-                      <p className="text-sm text-gray-500 mt-1">(equivalente a R$ 24/mês)</p>
-                      <p className="text-sm text-gray-700 mt-3">👉 Você economiza e ainda garante estabilidade no seu negócio</p>
-                      <button
-                        onClick={() => handleOpenPaymentLink('YEARLY')}
-                        disabled={isLoadingSubscription}
-                        className="mt-6 w-full py-2.5 bg-gray-900 text-white rounded-xl font-bold hover:bg-black transition-all disabled:opacity-60 disabled:cursor-not-allowed"
-                      >
-                        Assinar Anual no Stripe
-                      </button>
-                    </div>
+                  <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
+                    {PLAN_CARDS.map((plan) => {
+                      const amount = billingCycle === 'YEARLY' ? plan.yearlyCents : plan.monthlyCents;
+                      return (
+                        <div
+                          key={plan.tier}
+                          className={`p-6 rounded-2xl border ${plan.highlighted ? 'border-blue-300 bg-blue-50/30' : 'border-gray-200 bg-white'} shadow-sm`}
+                        >
+                          {plan.highlighted && (
+                            <span className="inline-flex items-center rounded-full bg-blue-600 text-white text-[11px] font-bold px-3 py-1 mb-3">
+                              Mais escolhido
+                            </span>
+                          )}
+                          <h4 className="text-2xl font-bold text-gray-900">{plan.title}</h4>
+                          <p className="text-sm text-gray-600 mt-1">{plan.subtitle}</p>
+                          <p className="text-3xl font-extrabold text-gray-900 mt-4">
+                            {formatMoneyFromCents(amount)}
+                            <span className="text-base font-semibold text-gray-500">/{billingCycle === 'YEARLY' ? 'ano' : 'mês'}</span>
+                          </p>
+                          <div className="mt-4 px-3 py-2 bg-blue-50 rounded-lg border border-blue-100 text-blue-700 text-sm font-bold text-center">
+                            {plan.limitLabel}
+                          </div>
+                          <ul className="mt-4 space-y-2 text-sm text-gray-700">
+                            {plan.features.map((feature) => (
+                              <li key={feature} className="flex items-start gap-2">
+                                <span className="text-blue-600 font-bold">✓</span>
+                                <span>{feature}</span>
+                              </li>
+                            ))}
+                          </ul>
+                          <p className="mt-4 text-sm text-gray-600 italic">{plan.footer}</p>
+                          <button
+                            onClick={() => handleOpenPaymentLink(plan.tier)}
+                            disabled={isLoadingSubscription || isSavingSubscription}
+                            className={`mt-6 w-full py-2.5 rounded-xl font-bold text-white transition-all disabled:opacity-60 disabled:cursor-not-allowed ${plan.highlighted ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-900 hover:bg-black'}`}
+                          >
+                            {isSavingSubscription ? 'Abrindo checkout...' : 'Começar teste grátis'}
+                          </button>
+                        </div>
+                      );
+                    })}
                   </div>
 
                   <div className="p-4 rounded-xl border border-blue-100 bg-blue-50">

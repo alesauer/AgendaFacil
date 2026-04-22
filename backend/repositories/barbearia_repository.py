@@ -7,13 +7,13 @@ from backend.supabase_client import get_supabase_client, is_supabase_ready
 
 class BarbeariaRepository(BaseRepository):
     _SUBSCRIPTION_PRICES = {
-        "MONTHLY": 3900,
-        "YEARLY": 29700,
+        "MONTHLY": 3990,
+        "YEARLY": 35990,
     }
 
     _SUBSCRIPTION_PLAN_CODE = {
-        "MONTHLY": "MENSAL_39",
-        "YEARLY": "ANUAL_297",
+        "MONTHLY": "PROFISSIONAL_MONTHLY",
+        "YEARLY": "PROFISSIONAL_YEARLY",
     }
 
     @staticmethod
@@ -49,6 +49,14 @@ class BarbeariaRepository(BaseRepository):
         message = str(exc).lower()
         return (
             "payment_" in message
+            and ("column" in message or "does not exist" in message or "schema cache" in message)
+        )
+
+    @staticmethod
+    def _is_missing_stripe_column_error(exc: Exception) -> bool:
+        message = str(exc).lower()
+        return (
+            "stripe_" in message
             and ("column" in message or "does not exist" in message or "schema cache" in message)
         )
 
@@ -130,8 +138,8 @@ class BarbeariaRepository(BaseRepository):
         base["payment_plan_id"] = base.get("payment_plan_id")
         base["payment_last_event_id"] = base.get("payment_last_event_id")
         base["payment_last_event_type"] = base.get("payment_last_event_type")
-        base["stripe_last_event_at"] = BarbeariaRepository._to_iso(base.get("stripe_last_event_at"))
-        base["stripe_webhook_updated_at"] = BarbeariaRepository._to_iso(base.get("stripe_webhook_updated_at"))
+        base["payment_last_event_at"] = BarbeariaRepository._to_iso(base.get("payment_last_event_at"))
+        base["payment_webhook_updated_at"] = BarbeariaRepository._to_iso(base.get("payment_webhook_updated_at"))
 
         return base
 
@@ -610,8 +618,8 @@ class BarbeariaRepository(BaseRepository):
                            trial_usado, trial_inicio_em, trial_fim_em,
                            assinatura_inicio_em, proxima_cobranca_em,
                            atualizado_assinatura_em,
-                           stripe_customer_id, stripe_subscription_id, stripe_price_id,
-                           stripe_last_event_id, stripe_last_event_type, stripe_last_event_at, stripe_webhook_updated_at
+                           payment_customer_id, payment_subscription_id, payment_plan_id,
+                           payment_last_event_id, payment_last_event_type, payment_last_event_at, payment_webhook_updated_at
                     FROM barbearias
                     WHERE id = %s
                     """,
@@ -619,29 +627,33 @@ class BarbeariaRepository(BaseRepository):
                 )
                 return BarbeariaRepository._coalesce_subscription_fields(item)
             except Exception as exc:
-                if not (BarbeariaRepository._is_missing_subscription_column_error(exc) or BarbeariaRepository._is_missing_stripe_column_error(exc)):
+                if not (
+                    BarbeariaRepository._is_missing_subscription_column_error(exc)
+                    or BarbeariaRepository._is_missing_payment_column_error(exc)
+                    or BarbeariaRepository._is_missing_stripe_column_error(exc)
+                ):
                     raise
 
                 item = query_one(
                     """
                     SELECT id, nome,
-                           COALESCE(plano, 'MENSAL_39') AS plano,
+                           COALESCE(plano, 'PROFISSIONAL_MONTHLY') AS plano,
                            COALESCE(assinatura_status, 'ACTIVE') AS assinatura_status,
                            'MONTHLY'::text AS ciclo_cobranca,
-                           3900::int AS valor_plano_centavos,
+                           3990::int AS valor_plano_centavos,
                            FALSE AS trial_usado,
                            NULL::timestamptz AS trial_inicio_em,
                            NULL::timestamptz AS trial_fim_em,
                            NULL::timestamptz AS assinatura_inicio_em,
                            NULL::timestamptz AS proxima_cobranca_em,
                               NOW()::timestamptz AS atualizado_assinatura_em,
-                              NULL::text AS stripe_customer_id,
-                              NULL::text AS stripe_subscription_id,
-                              NULL::text AS stripe_price_id,
-                              NULL::text AS stripe_last_event_id,
-                              NULL::text AS stripe_last_event_type,
-                              NULL::timestamptz AS stripe_last_event_at,
-                              NULL::timestamptz AS stripe_webhook_updated_at
+                              NULL::text AS payment_customer_id,
+                              NULL::text AS payment_subscription_id,
+                              NULL::text AS payment_plan_id,
+                              NULL::text AS payment_last_event_id,
+                              NULL::text AS payment_last_event_type,
+                              NULL::timestamptz AS payment_last_event_at,
+                              NULL::timestamptz AS payment_webhook_updated_at
                     FROM barbearias
                     WHERE id = %s
                     """,
@@ -654,7 +666,7 @@ class BarbeariaRepository(BaseRepository):
             try:
                 response = (
                     supabase.table("barbearias")
-                    .select("id,nome,plano,assinatura_status,ciclo_cobranca,valor_plano_centavos,trial_usado,trial_inicio_em,trial_fim_em,assinatura_inicio_em,proxima_cobranca_em,atualizado_assinatura_em,stripe_customer_id,stripe_subscription_id,stripe_price_id,stripe_last_event_id,stripe_last_event_type,stripe_last_event_at,stripe_webhook_updated_at")
+                    .select("id,nome,plano,assinatura_status,ciclo_cobranca,valor_plano_centavos,trial_usado,trial_inicio_em,trial_fim_em,assinatura_inicio_em,proxima_cobranca_em,atualizado_assinatura_em,payment_customer_id,payment_subscription_id,payment_plan_id,payment_last_event_id,payment_last_event_type,payment_last_event_at,payment_webhook_updated_at")
                     .eq("id", barbearia_id)
                     .limit(1)
                     .execute()
@@ -662,7 +674,11 @@ class BarbeariaRepository(BaseRepository):
                 data = response.data or []
                 return BarbeariaRepository._coalesce_subscription_fields(data[0] if data else None)
             except Exception as exc:
-                if not (BarbeariaRepository._is_missing_subscription_column_error(exc) or BarbeariaRepository._is_missing_stripe_column_error(exc)):
+                if not (
+                    BarbeariaRepository._is_missing_subscription_column_error(exc)
+                    or BarbeariaRepository._is_missing_payment_column_error(exc)
+                    or BarbeariaRepository._is_missing_stripe_column_error(exc)
+                ):
                     raise
 
                 response = (

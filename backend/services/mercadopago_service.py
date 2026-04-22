@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 MP_API_BASE = "https://api.mercadopago.com"
 MP_API_TIMEOUT = 15
+VALID_PLAN_TIERS = {"ESSENCIAL", "PROFISSIONAL", "AVANCADO"}
 
 
 def _get_access_token() -> str:
@@ -33,12 +34,27 @@ def _get_webhook_secret() -> str:
     return str(MasterRuntimeConfigService.get_runtime_value("MP_WEBHOOK_SECRET", "") or "").strip()
 
 
-def _get_plan_id(ciclo: str) -> str:
-    if ciclo == "YEARLY":
-        plan_id = str(MasterRuntimeConfigService.get_runtime_value("MP_PLAN_ID_YEARLY", "") or "").strip()
-    else:
-        plan_id = str(MasterRuntimeConfigService.get_runtime_value("MP_PLAN_ID_MONTHLY", "") or "").strip()
-    return plan_id
+def _normalize_plan_tier(value: str | None) -> str:
+    tier = str(value or "PROFISSIONAL").strip().upper()
+    if tier not in VALID_PLAN_TIERS:
+        return "PROFISSIONAL"
+    return tier
+
+
+def _get_plan_id(ciclo: str, plano_tier: str | None) -> str:
+    tier = _normalize_plan_tier(plano_tier)
+    cycle = "YEARLY" if str(ciclo or "").strip().upper() == "YEARLY" else "MONTHLY"
+
+    specific_env = f"MP_PLAN_ID_{tier}_{cycle}"
+    plan_id = str(MasterRuntimeConfigService.get_runtime_value(specific_env, "") or "").strip()
+    if plan_id:
+        return plan_id
+
+    if tier == "PROFISSIONAL":
+        legacy_env = "MP_PLAN_ID_YEARLY" if cycle == "YEARLY" else "MP_PLAN_ID_MONTHLY"
+        return str(MasterRuntimeConfigService.get_runtime_value(legacy_env, "") or "").strip()
+
+    return ""
 
 
 def validate_webhook_signature(x_signature: str, x_request_id: str, data_id: str) -> bool:
@@ -89,6 +105,7 @@ def create_preapproval_link(
     payer_email: str | None,
     barbearia_slug: str,
     back_url: str,
+    plano_tier: str | None = None,
 ) -> dict:
     """
     Cria uma assinatura (preapproval) no MP e retorna a URL de checkout (init_point).
@@ -96,10 +113,12 @@ def create_preapproval_link(
     Retorna: {"init_point": "https://www.mercadopago.com.br/subscriptions/checkout?..."}
     """
     token = _get_access_token()
-    plan_id = _get_plan_id(ciclo)
+    tier = _normalize_plan_tier(plano_tier)
+    plan_id = _get_plan_id(ciclo, tier)
 
     if not plan_id:
-        plan_var = "MP_PLAN_ID_YEARLY" if ciclo == "YEARLY" else "MP_PLAN_ID_MONTHLY"
+        cycle = "YEARLY" if str(ciclo or "").strip().upper() == "YEARLY" else "MONTHLY"
+        plan_var = f"MP_PLAN_ID_{tier}_{cycle}"
         raise ValueError(f"{plan_var} não configurado")
 
     query_params: dict[str, str] = {
@@ -127,10 +146,10 @@ def extract_subscription_details(preapproval: dict) -> dict:
     freq_type = str(auto.get("frequency_type") or "months").lower()
     if freq_type == "months" and freq >= 12:
         cycle = "YEARLY"
-        amount_cents = 29700
+        amount_cents = 35990
     else:
         cycle = "MONTHLY"
-        amount_cents = 3900
+        amount_cents = 3990
 
     # Override por amount
     raw_amount = auto.get("transaction_amount")
