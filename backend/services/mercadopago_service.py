@@ -10,6 +10,7 @@ import hashlib
 import hmac
 import logging
 from datetime import datetime, timezone
+from urllib.parse import urlencode
 
 import requests
 
@@ -97,38 +98,21 @@ def create_preapproval_link(
     token = _get_access_token()
     plan_id = _get_plan_id(ciclo)
 
-    payload: dict = {
+    if not plan_id:
+        plan_var = "MP_PLAN_ID_YEARLY" if ciclo == "YEARLY" else "MP_PLAN_ID_MONTHLY"
+        raise ValueError(f"{plan_var} não configurado")
+
+    query_params: dict[str, str] = {
+        "preapproval_plan_id": plan_id,
         "external_reference": barbearia_slug,
-        "back_url": back_url,
     }
-
-    if plan_id:
-        # Associa ao plano pré-criado
-        payload["preapproval_plan_id"] = plan_id
-    else:
-        # Fallback: define recorrência inline
-        amount = 39.00 if ciclo != "YEARLY" else 297.00
-        frequency = 1 if ciclo != "YEARLY" else 12
-        payload["reason"] = "Barbeiros App - Plano " + ("Anual" if ciclo == "YEARLY" else "Mensal")
-        payload["auto_recurring"] = {
-            "frequency": frequency,
-            "frequency_type": "months",
-            "transaction_amount": amount,
-            "currency_id": "BRL",
-        }
-
     if payer_email:
-        payload["payer_email"] = payer_email
+        query_params["payer_email"] = payer_email
+    if back_url:
+        query_params["back_url"] = back_url
 
-    resp = requests.post(
-        f"{MP_API_BASE}/preapproval",
-        json=payload,
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-        timeout=MP_API_TIMEOUT,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    return {"init_point": data.get("init_point"), "preapproval_id": data.get("id")}
+    init_point = f"https://www.mercadopago.com.br/subscriptions/checkout?{urlencode(query_params)}"
+    return {"init_point": init_point, "preapproval_id": None}
 
 
 def extract_subscription_details(preapproval: dict) -> dict:
