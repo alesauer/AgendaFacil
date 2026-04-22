@@ -148,7 +148,7 @@ demo1
         📡 Serviços Externos Integrados
 
    ┌───────────────┐     ┌───────────────┐
-   │   Resend      │     │   Stripe      │
+   │   Resend      │     │ MercadoPago   │
    │ (Email API)   │     │ (Pagamentos)  │
    └───────────────┘     └───────────────┘
 
@@ -189,3 +189,7 @@ Na prática, a sua barbearia fica na mão dos clientes: eles consultam horários
 
 Com isso, você melhora a experiência do cliente, reduz falhas de comunicação e acelera o crescimento da operação.
 Para começar agora, clique em “Começar teste grátis” e veja na prática como o Barbeiros irá transformar a gestão da sua barbearia
+
+
+-------------------------
+Mercado Pago

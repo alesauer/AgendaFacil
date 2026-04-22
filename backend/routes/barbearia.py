@@ -225,9 +225,6 @@ def get_assinatura():
     ciclo = str(item.get("ciclo_cobranca") or "MONTHLY").upper()
     valor_centavos = int(item.get("valor_plano_centavos") or (3900 if ciclo == "MONTHLY" else 29700))
 
-    stripe_link_monthly = str(MasterRuntimeConfigService.get_runtime_value("STRIPE_PAYMENT_LINK_MONTHLY", "") or "").strip()
-    stripe_link_yearly = str(MasterRuntimeConfigService.get_runtime_value("STRIPE_PAYMENT_LINK_YEARLY", "") or "").strip()
-
     return success(
         {
             "plano": item.get("plano"),
@@ -249,7 +246,7 @@ def get_assinatura():
                     "titulo": "Mensal",
                     "valor_centavos": 3900,
                     "descricao": "Comece agora sem compromisso e teste na prática.",
-                    "link_pagamento": stripe_link_monthly or None,
+                    "checkout_url": "/barbearia/assinatura/checkout",
                 },
                 {
                     "codigo": "ANUAL_297",
@@ -257,7 +254,7 @@ def get_assinatura():
                     "titulo": "Anual",
                     "valor_centavos": 29700,
                     "descricao": "Economize e tenha tranquilidade na gestão o ano inteiro.",
-                    "link_pagamento": stripe_link_yearly or None,
+                    "checkout_url": "/barbearia/assinatura/checkout",
                 },
             ],
             "trial": {
@@ -286,3 +283,41 @@ def update_assinatura():
         return error("Barbearia não encontrada", 404)
 
     return success(item)
+
+
+@barbearia_bp.post("/assinatura/checkout")
+@auth_required
+def create_assinatura_checkout():
+    """Gera um link de checkout Mercado Pago para assinatura."""
+    if str(getattr(g, "user_role", "")).upper() != "ADMIN":
+        return error("Acesso negado", 403)
+
+    from backend.services import mercadopago_service as mp
+
+    payload = request.get_json(silent=True) or {}
+    ciclo_cobranca = str(payload.get("ciclo_cobranca") or "MONTHLY").strip().upper()
+    if ciclo_cobranca not in ALLOWED_BILLING_CYCLES:
+        return error("ciclo_cobranca inválido. Use MONTHLY ou YEARLY", 400)
+
+    barbearia = BarbeariaRepository.get_identity(g.barbearia_id)
+    if not barbearia:
+        return error("Barbearia não encontrada", 404)
+
+    barbearia_slug = str(barbearia.get("slug") or "").strip()
+    payer_email = str(payload.get("email") or "").strip() or None
+    frontend_url = str(current_app.config.get("FRONTEND_APP_URL") or "").strip().rstrip("/")
+    back_url = f"{frontend_url}/assinatura?status=success" if frontend_url else "https://app.barbeiros.app/assinatura?status=success"
+
+    try:
+        result = mp.create_preapproval_link(
+            ciclo=ciclo_cobranca,
+            payer_email=payer_email,
+            barbearia_slug=barbearia_slug,
+            back_url=back_url,
+        )
+    except ValueError as exc:
+        return error(str(exc), 503)
+    except Exception as exc:
+        return error(f"Erro ao criar checkout no Mercado Pago: {exc}", 502)
+
+    return success(result)

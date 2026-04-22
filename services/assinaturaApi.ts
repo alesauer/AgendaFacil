@@ -6,7 +6,7 @@ export type AssinaturaPlanoApi = {
   titulo: string;
   valor_centavos: number;
   descricao?: string;
-  link_pagamento?: string | null;
+  checkout_url?: string | null;
 };
 
 export type AssinaturaApi = {
@@ -40,4 +40,18 @@ export async function saveAssinaturaApi(payload: { ciclo_cobranca: 'MONTHLY' | '
     method: 'PUT',
     body: JSON.stringify(payload),
   });
+}
+
+export async function createCheckoutApi(payload: {
+  ciclo_cobranca: 'MONTHLY' | 'YEARLY';
+  email?: string;
+}): Promise<{ init_point: string; preapproval_id?: string }> {
+  const result = await apiRequest<{ init_point: string; preapproval_id?: string }>(
+    '/barbearia/assinatura/checkout',
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }
+  );
+  return result as { init_point: string; preapproval_id?: string };
 }

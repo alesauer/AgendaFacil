@@ -45,10 +45,10 @@ class BarbeariaRepository(BaseRepository):
         ) and ("column" in message or "does not exist" in message or "schema cache" in message)
 
     @staticmethod
-    def _is_missing_stripe_column_error(exc: Exception) -> bool:
+    def _is_missing_payment_column_error(exc: Exception) -> bool:
         message = str(exc).lower()
         return (
-            "stripe_" in message
+            "payment_" in message
             and ("column" in message or "does not exist" in message or "schema cache" in message)
         )
 
@@ -125,11 +125,11 @@ class BarbeariaRepository(BaseRepository):
         base["assinatura_inicio_em"] = BarbeariaRepository._to_iso(base.get("assinatura_inicio_em"))
         base["proxima_cobranca_em"] = BarbeariaRepository._to_iso(base.get("proxima_cobranca_em"))
         base["atualizado_assinatura_em"] = BarbeariaRepository._to_iso(base.get("atualizado_assinatura_em"))
-        base["stripe_customer_id"] = base.get("stripe_customer_id")
-        base["stripe_subscription_id"] = base.get("stripe_subscription_id")
-        base["stripe_price_id"] = base.get("stripe_price_id")
-        base["stripe_last_event_id"] = base.get("stripe_last_event_id")
-        base["stripe_last_event_type"] = base.get("stripe_last_event_type")
+        base["payment_customer_id"] = base.get("payment_customer_id")
+        base["payment_subscription_id"] = base.get("payment_subscription_id")
+        base["payment_plan_id"] = base.get("payment_plan_id")
+        base["payment_last_event_id"] = base.get("payment_last_event_id")
+        base["payment_last_event_type"] = base.get("payment_last_event_type")
         base["stripe_last_event_at"] = BarbeariaRepository._to_iso(base.get("stripe_last_event_at"))
         base["stripe_webhook_updated_at"] = BarbeariaRepository._to_iso(base.get("stripe_webhook_updated_at"))
 
@@ -688,9 +688,10 @@ class BarbeariaRepository(BaseRepository):
         valor_plano_centavos: int | None = None,
         proxima_cobranca_em=None,
         assinatura_inicio_em=None,
-        stripe_customer_id: str | None = None,
-        stripe_subscription_id: str | None = None,
-        stripe_price_id: str | None = None,
+        payment_customer_id: str | None = None,
+        payment_subscription_id: str | None = None,
+        payment_plan_id: str | None = None,
+        payment_provider: str = "mercadopago",
     ):
         BarbeariaRepository.require_tenant(barbearia_id)
 
@@ -698,7 +699,7 @@ class BarbeariaRepository(BaseRepository):
         if not current:
             return None
 
-        if str(current.get("stripe_last_event_id") or "") == str(event_id or "") and event_id:
+        if str(current.get("payment_last_event_id") or "") == str(event_id or "") and event_id:
             return current
 
         now = datetime.now(timezone.utc)
@@ -717,13 +718,14 @@ class BarbeariaRepository(BaseRepository):
             "assinatura_inicio_em": BarbeariaRepository._to_iso(assinatura_inicio_em) or current.get("assinatura_inicio_em") or BarbeariaRepository._to_iso(now),
             "proxima_cobranca_em": BarbeariaRepository._to_iso(proxima_cobranca_em) or current.get("proxima_cobranca_em"),
             "atualizado_assinatura_em": BarbeariaRepository._to_iso(now),
-            "stripe_customer_id": stripe_customer_id or current.get("stripe_customer_id"),
-            "stripe_subscription_id": stripe_subscription_id or current.get("stripe_subscription_id"),
-            "stripe_price_id": stripe_price_id or current.get("stripe_price_id"),
-            "stripe_last_event_id": event_id,
-            "stripe_last_event_type": event_type,
-            "stripe_last_event_at": BarbeariaRepository._to_iso(now),
-            "stripe_webhook_updated_at": BarbeariaRepository._to_iso(now),
+            "payment_customer_id": payment_customer_id or current.get("payment_customer_id"),
+            "payment_subscription_id": payment_subscription_id or current.get("payment_subscription_id"),
+            "payment_plan_id": payment_plan_id or current.get("payment_plan_id"),
+            "payment_last_event_id": event_id,
+            "payment_last_event_type": event_type,
+            "payment_last_event_at": BarbeariaRepository._to_iso(now),
+            "payment_webhook_updated_at": BarbeariaRepository._to_iso(now),
+            "payment_provider": payment_provider,
         }
 
         if is_db_ready():
@@ -741,21 +743,23 @@ class BarbeariaRepository(BaseRepository):
                         assinatura_inicio_em = %s,
                         proxima_cobranca_em = %s,
                         atualizado_assinatura_em = %s,
-                        stripe_customer_id = %s,
-                        stripe_subscription_id = %s,
-                        stripe_price_id = %s,
-                        stripe_last_event_id = %s,
-                        stripe_last_event_type = %s,
-                        stripe_last_event_at = %s,
-                        stripe_webhook_updated_at = %s
+                        payment_customer_id = %s,
+                        payment_subscription_id = %s,
+                        payment_plan_id = %s,
+                        payment_last_event_id = %s,
+                        payment_last_event_type = %s,
+                        payment_last_event_at = %s,
+                        payment_webhook_updated_at = %s,
+                        payment_provider = %s
                     WHERE id = %s
                     RETURNING id, nome, plano, assinatura_status,
                               ciclo_cobranca, valor_plano_centavos,
                               trial_usado, trial_inicio_em, trial_fim_em,
                               assinatura_inicio_em, proxima_cobranca_em,
                               atualizado_assinatura_em,
-                              stripe_customer_id, stripe_subscription_id, stripe_price_id,
-                              stripe_last_event_id, stripe_last_event_type, stripe_last_event_at, stripe_webhook_updated_at
+                              payment_customer_id, payment_subscription_id, payment_plan_id,
+                              payment_last_event_id, payment_last_event_type,
+                              payment_last_event_at, payment_webhook_updated_at, payment_provider
                     """,
                     (
                         payload["plano"],
@@ -768,20 +772,21 @@ class BarbeariaRepository(BaseRepository):
                         payload["assinatura_inicio_em"],
                         payload["proxima_cobranca_em"],
                         payload["atualizado_assinatura_em"],
-                        payload["stripe_customer_id"],
-                        payload["stripe_subscription_id"],
-                        payload["stripe_price_id"],
-                        payload["stripe_last_event_id"],
-                        payload["stripe_last_event_type"],
-                        payload["stripe_last_event_at"],
-                        payload["stripe_webhook_updated_at"],
+                        payload["payment_customer_id"],
+                        payload["payment_subscription_id"],
+                        payload["payment_plan_id"],
+                        payload["payment_last_event_id"],
+                        payload["payment_last_event_type"],
+                        payload["payment_last_event_at"],
+                        payload["payment_webhook_updated_at"],
+                        payload["payment_provider"],
                         barbearia_id,
                     ),
                 )
                 return BarbeariaRepository._coalesce_subscription_fields(item)
             except Exception as exc:
                 if not (
-                    BarbeariaRepository._is_missing_stripe_column_error(exc)
+                    BarbeariaRepository._is_missing_payment_column_error(exc)
                     or BarbeariaRepository._is_missing_subscription_column_error(exc)
                 ):
                     raise
@@ -800,7 +805,7 @@ class BarbeariaRepository(BaseRepository):
                     return BarbeariaRepository._coalesce_subscription_fields(data[0])
             except Exception as exc:
                 if not (
-                    BarbeariaRepository._is_missing_stripe_column_error(exc)
+                    BarbeariaRepository._is_missing_payment_column_error(exc)
                     or BarbeariaRepository._is_missing_subscription_column_error(exc)
                 ):
                     raise
