@@ -9,6 +9,7 @@ Responsabilidades:
 import hashlib
 import hmac
 import logging
+import os
 from datetime import datetime, timezone
 from urllib.parse import urlencode
 
@@ -28,6 +29,10 @@ def _get_access_token() -> str:
     if not token:
         raise ValueError("MP_ACCESS_TOKEN não configurado")
     return token
+
+
+def _get_sandbox_payer_email() -> str:
+    return str(os.getenv("MP_SANDBOX_PAYER_EMAIL", "") or "").strip()
 
 
 def _get_webhook_secret() -> str:
@@ -121,12 +126,16 @@ def create_preapproval_link(
         plan_var = f"MP_PLAN_ID_{tier}_{cycle}"
         raise ValueError(f"{plan_var} não configurado")
 
+    resolved_payer_email = str(payer_email or "").strip() or None
+    if token.startswith("TEST-") and not resolved_payer_email:
+        resolved_payer_email = _get_sandbox_payer_email() or None
+
     query_params: dict[str, str] = {
         "preapproval_plan_id": plan_id,
         "external_reference": barbearia_slug,
     }
-    if payer_email:
-        query_params["payer_email"] = payer_email
+    if resolved_payer_email:
+        query_params["payer_email"] = resolved_payer_email
     if back_url:
         query_params["back_url"] = back_url
 
