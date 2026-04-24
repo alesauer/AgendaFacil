@@ -33,6 +33,7 @@ class Config:
     MASTER_LOGIN = "master"
     MASTER_PASSWORD = ""
     MASTER_NAME = "Master SaaS"
+    PAYMENT_PROVIDER = "mercadopago"
     MP_ACCESS_TOKEN = ""
     MP_ACCESS_TOKEN_TEST = ""
     MP_WEBHOOK_SECRET = ""
@@ -45,6 +46,12 @@ class Config:
     MP_PLAN_ID_AVANCADO_MONTHLY = ""
     MP_PLAN_ID_AVANCADO_YEARLY = ""
     MP_WEBHOOK_BARBEARIA_SLUG = ""
+    ASAAS_API_KEY = ""
+    ASAAS_BASE_URL = "https://sandbox.asaas.com/api/v3"
+    ASAAS_BILLING_TYPE = "UNDEFINED"
+    ASAAS_SANDBOX_CUSTOMER_EMAIL = ""
+    ASAAS_SANDBOX_CUSTOMER_NAME = ""
+    ASAAS_SANDBOX_CUSTOMER_PHONE = ""
     SUSPENSION_WHATSAPP_URL = ""
     SUSPENSION_PORTAL_URL = ""
     SUSPENSION_BILLING_EMAIL = ""
@@ -92,6 +99,7 @@ def _hydrate_from_env(config_cls):
     config_cls.MASTER_LOGIN = os.getenv("MASTER_LOGIN", "master")
     config_cls.MASTER_PASSWORD = os.getenv("MASTER_PASSWORD", "admin123")
     config_cls.MASTER_NAME = os.getenv("MASTER_NAME", "Master SaaS")
+    config_cls.PAYMENT_PROVIDER = os.getenv("PAYMENT_PROVIDER", "mercadopago").strip().lower()
     config_cls.MP_ACCESS_TOKEN = os.getenv("MP_ACCESS_TOKEN", "").strip()
     config_cls.MP_ACCESS_TOKEN_TEST = os.getenv("MP_ACCESS_TOKEN_TEST", "").strip()
     config_cls.MP_WEBHOOK_SECRET = os.getenv("MP_WEBHOOK_SECRET", "").strip()
@@ -104,6 +112,12 @@ def _hydrate_from_env(config_cls):
     config_cls.MP_PLAN_ID_AVANCADO_MONTHLY = os.getenv("MP_PLAN_ID_AVANCADO_MONTHLY", "").strip()
     config_cls.MP_PLAN_ID_AVANCADO_YEARLY = os.getenv("MP_PLAN_ID_AVANCADO_YEARLY", "").strip()
     config_cls.MP_WEBHOOK_BARBEARIA_SLUG = os.getenv("MP_WEBHOOK_BARBEARIA_SLUG", "").strip()
+    config_cls.ASAAS_API_KEY = os.getenv("ASAAS_API_KEY", "").strip()
+    config_cls.ASAAS_BASE_URL = os.getenv("ASAAS_BASE_URL", "https://sandbox.asaas.com/api/v3").strip().rstrip("/")
+    config_cls.ASAAS_BILLING_TYPE = os.getenv("ASAAS_BILLING_TYPE", "UNDEFINED").strip().upper()
+    config_cls.ASAAS_SANDBOX_CUSTOMER_EMAIL = os.getenv("ASAAS_SANDBOX_CUSTOMER_EMAIL", "").strip()
+    config_cls.ASAAS_SANDBOX_CUSTOMER_NAME = os.getenv("ASAAS_SANDBOX_CUSTOMER_NAME", "").strip()
+    config_cls.ASAAS_SANDBOX_CUSTOMER_PHONE = os.getenv("ASAAS_SANDBOX_CUSTOMER_PHONE", "").strip()
     config_cls.SUSPENSION_WHATSAPP_URL = os.getenv("SUSPENSION_WHATSAPP_URL", "").strip()
     config_cls.SUSPENSION_PORTAL_URL = os.getenv("SUSPENSION_PORTAL_URL", "").strip()
     config_cls.SUSPENSION_BILLING_EMAIL = os.getenv("SUSPENSION_BILLING_EMAIL", "").strip()

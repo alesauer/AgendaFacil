@@ -1,4 +1,5 @@
 import re
+import os
 
 from flask import Blueprint, current_app, g, request
 
@@ -327,11 +328,9 @@ def update_assinatura():
 @barbearia_bp.post("/assinatura/checkout")
 @auth_required
 def create_assinatura_checkout():
-    """Gera um link de checkout Mercado Pago para assinatura."""
+    """Gera um link de checkout de assinatura no provedor configurado."""
     if str(getattr(g, "user_role", "")).upper() != "ADMIN":
         return error("Acesso negado", 403)
-
-    from backend.services import mercadopago_service as mp
 
     payload = request.get_json(silent=True) or {}
     ciclo_cobranca = str(payload.get("ciclo_cobranca") or "MONTHLY").strip().upper()
@@ -349,18 +348,39 @@ def create_assinatura_checkout():
     payer_email = str(payload.get("email") or "").strip() or None
     frontend_url = str(current_app.config.get("FRONTEND_APP_URL") or "").strip().rstrip("/")
     back_url = f"{frontend_url}/assinatura?status=success" if frontend_url else "https://app.barbeiros.app/assinatura?status=success"
+    payment_provider = str(
+        current_app.config.get("PAYMENT_PROVIDER")
+        or os.getenv("PAYMENT_PROVIDER")
+        or "mercadopago"
+    ).strip().lower()
 
     try:
-        result = mp.create_preapproval_link(
-            ciclo=ciclo_cobranca,
-            payer_email=payer_email,
-            barbearia_slug=barbearia_slug,
-            back_url=back_url,
-            plano_tier=plano_tier,
-        )
+        if payment_provider == "asaas":
+            from backend.services import asaas_service
+
+            result = asaas_service.create_subscription_checkout_link(
+                ciclo=ciclo_cobranca,
+                payer_email=payer_email,
+                barbearia_slug=barbearia_slug,
+                plano_tier=plano_tier,
+                payer_name=str(barbearia.get("nome") or "").strip() or None,
+                payer_phone=str(barbearia.get("telefone") or "").strip() or None,
+                payer_document=str(payload.get("cpf_cnpj") or payload.get("documento") or "").strip() or None,
+            )
+        else:
+            from backend.services import mercadopago_service as mp
+
+            result = mp.create_preapproval_link(
+                ciclo=ciclo_cobranca,
+                payer_email=payer_email,
+                barbearia_slug=barbearia_slug,
+                back_url=back_url,
+                plano_tier=plano_tier,
+            )
     except ValueError as exc:
         return error(str(exc), 503)
     except Exception as exc:
-        return error(f"Erro ao criar checkout no Mercado Pago: {exc}", 502)
+        provider_label = "Asaas" if payment_provider == "asaas" else "Mercado Pago"
+        return error(f"Erro ao criar checkout no {provider_label}: {exc}", 502)
 
     return success(result)
