@@ -142,6 +142,15 @@ def _extract_invoice_url(subscription_id: str) -> str:
     raise ValueError("Asaas não retornou URL de cobrança para a assinatura")
 
 
+def _extract_payment_url(payment_id: str) -> str:
+    payment = _http("GET", f"/payments/{payment_id}")
+    for key in ("invoiceUrl", "bankSlipUrl"):
+        value = str((payment or {}).get(key) or "").strip()
+        if value:
+            return value
+    raise ValueError("Asaas não retornou URL da cobrança parcelada")
+
+
 def create_subscription_checkout_link(
     *,
     ciclo: str,
@@ -178,6 +187,41 @@ def create_subscription_checkout_link(
     value = _get_plan_value(tier, cycle)
     next_due_date = (date.today() + timedelta(days=1)).isoformat()
     billing_type = str(os.getenv("ASAAS_BILLING_TYPE", "UNDEFINED") or "UNDEFINED").strip().upper()
+
+    yearly_split_enabled = str(os.getenv("ASAAS_YEARLY_SPLIT_ENABLED", "true") or "true").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "sim",
+    }
+    yearly_installments = int(str(os.getenv("ASAAS_YEARLY_INSTALLMENT_COUNT", "12") or "12").strip() or "12")
+    if yearly_installments < 2:
+        yearly_installments = 2
+    if yearly_installments > 12:
+        yearly_installments = 12
+
+    if cycle == "YEARLY" and yearly_split_enabled:
+        payment_payload = {
+            "customer": customer_id,
+            "billingType": billing_type,
+            "dueDate": next_due_date,
+            "value": value,
+            "description": f"AgendaFacil - {tier.title()} Anual ({yearly_installments}x)",
+            "externalReference": external_reference,
+            "installmentCount": yearly_installments,
+            "totalValue": value,
+        }
+
+        created_payment = _http("POST", "/payments", payload=payment_payload)
+        payment_id = str(created_payment.get("id") or "").strip()
+        if not payment_id:
+            raise ValueError("Asaas não retornou id da cobrança anual parcelada")
+
+        init_point = str(created_payment.get("invoiceUrl") or created_payment.get("bankSlipUrl") or "").strip()
+        if not init_point:
+            init_point = _extract_payment_url(payment_id)
+
+        return {"init_point": init_point, "preapproval_id": payment_id}
 
     subscription_payload = {
         "customer": customer_id,
