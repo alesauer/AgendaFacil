@@ -5592,9 +5592,27 @@ const SettingsManagement = () => {
     setSubscriptionError(null);
     setSubscriptionSuccess(null);
 
+    let installmentCount: number | undefined;
+    if (billingCycle === 'YEARLY') {
+      const rawInstallments = window.prompt('Em quantas parcelas deseja dividir o anual? (1 a 12)', '12');
+      if (rawInstallments === null) {
+        setIsSavingSubscription(false);
+        return;
+      }
+
+      const parsedInstallments = Number.parseInt(rawInstallments, 10);
+      if (!Number.isInteger(parsedInstallments) || parsedInstallments < 1 || parsedInstallments > 12) {
+        setSubscriptionError('Informe uma quantidade de parcelas válida entre 1 e 12.');
+        setIsSavingSubscription(false);
+        return;
+      }
+      installmentCount = parsedInstallments;
+    }
+
     const result = await createCheckoutApi({
       ciclo_cobranca: billingCycle,
       plano_tier: tier,
+      installment_count: installmentCount,
     });
 
     if (!result.success) {
@@ -5611,7 +5629,8 @@ const SettingsManagement = () => {
     }
 
     window.open(initPoint, '_blank', 'noopener,noreferrer');
-    setSubscriptionSuccess('Checkout Mercado Pago aberto em uma nova aba. Após pagamento confirmado, o status será atualizado no sistema.');
+    const parcelaLabel = billingCycle === 'YEARLY' && installmentCount ? ` (${installmentCount}x)` : '';
+    setSubscriptionSuccess(`Checkout aberto em uma nova aba${parcelaLabel}. Após pagamento confirmado, o status será atualizado no sistema.`);
     setIsSavingSubscription(false);
   };
 

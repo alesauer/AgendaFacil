@@ -160,6 +160,7 @@ def create_subscription_checkout_link(
     payer_name: str | None = None,
     payer_phone: str | None = None,
     payer_document: str | None = None,
+    installment_count: int | None = None,
 ) -> dict:
     tier = _normalize_tier(plano_tier)
     cycle = _normalize_cycle(ciclo)
@@ -194,13 +195,16 @@ def create_subscription_checkout_link(
         "yes",
         "sim",
     }
-    yearly_installments = int(str(os.getenv("ASAAS_YEARLY_INSTALLMENT_COUNT", "12") or "12").strip() or "12")
-    if yearly_installments < 2:
-        yearly_installments = 2
+    if installment_count is not None:
+        yearly_installments = int(installment_count)
+    else:
+        yearly_installments = int(str(os.getenv("ASAAS_YEARLY_INSTALLMENT_COUNT", "12") or "12").strip() or "12")
+    if yearly_installments < 1:
+        yearly_installments = 1
     if yearly_installments > 12:
         yearly_installments = 12
 
-    if cycle == "YEARLY" and yearly_split_enabled:
+    if cycle == "YEARLY" and (yearly_split_enabled or installment_count is not None):
         payment_payload = {
             "customer": customer_id,
             "billingType": billing_type,
@@ -208,9 +212,10 @@ def create_subscription_checkout_link(
             "value": value,
             "description": f"AgendaFacil - {tier.title()} Anual ({yearly_installments}x)",
             "externalReference": external_reference,
-            "installmentCount": yearly_installments,
-            "totalValue": value,
         }
+        if yearly_installments > 1:
+            payment_payload["installmentCount"] = yearly_installments
+            payment_payload["totalValue"] = value
 
         created_payment = _http("POST", "/payments", payload=payment_payload)
         payment_id = str(created_payment.get("id") or "").strip()

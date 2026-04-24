@@ -47,6 +47,7 @@ export async function createCheckoutApi(payload: {
   ciclo_cobranca: 'MONTHLY' | 'YEARLY';
   plano_tier?: 'ESSENCIAL' | 'PROFISSIONAL' | 'AVANCADO';
   email?: string;
+  installment_count?: number;
 }) {
   return apiRequest<{ init_point: string; preapproval_id?: string | null }>(
     '/barbearia/assinatura/checkout',

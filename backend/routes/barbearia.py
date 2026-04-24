@@ -339,6 +339,15 @@ def create_assinatura_checkout():
     plano_tier = str(payload.get("plano_tier") or payload.get("plano") or "PROFISSIONAL").strip().upper()
     if plano_tier not in ALLOWED_PLAN_TIERS:
         return error("plano_tier inválido. Use ESSENCIAL, PROFISSIONAL ou AVANCADO", 400)
+    raw_installment_count = payload.get("installment_count")
+    installment_count = None
+    if raw_installment_count is not None:
+        try:
+            installment_count = int(raw_installment_count)
+        except (TypeError, ValueError):
+            return error("installment_count inválido. Use inteiro entre 1 e 12", 400)
+        if installment_count < 1 or installment_count > 12:
+            return error("installment_count inválido. Use inteiro entre 1 e 12", 400)
 
     barbearia = BarbeariaRepository.get_identity(g.barbearia_id)
     if not barbearia:
@@ -366,6 +375,7 @@ def create_assinatura_checkout():
                 payer_name=str(barbearia.get("nome") or "").strip() or None,
                 payer_phone=str(barbearia.get("telefone") or "").strip() or None,
                 payer_document=str(payload.get("cpf_cnpj") or payload.get("documento") or "").strip() or None,
+                installment_count=installment_count,
             )
         else:
             from backend.services import mercadopago_service as mp
