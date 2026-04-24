@@ -245,3 +245,42 @@ def create_subscription_checkout_link(
 
     init_point = _extract_invoice_url(subscription_id)
     return {"init_point": init_point, "preapproval_id": subscription_id}
+
+
+def list_recent_payments(*, external_reference: str, limit: int = 12) -> list[dict]:
+    normalized_limit = max(1, min(int(limit or 12), 50))
+    response = _http(
+        "GET",
+        "/payments",
+        params={
+            "externalReference": str(external_reference or "").strip(),
+            "limit": normalized_limit,
+            "offset": 0,
+        },
+    )
+
+    items = response.get("data") or []
+    results: list[dict] = []
+    for item in items:
+        raw_value = item.get("value")
+        try:
+            value_cents = int(round(float(raw_value or 0) * 100))
+        except Exception:
+            value_cents = 0
+
+        results.append(
+            {
+                "id": str(item.get("id") or "").strip(),
+                "status": str(item.get("status") or "").strip().upper(),
+                "billing_type": str(item.get("billingType") or "").strip().upper(),
+                "valor_centavos": value_cents,
+                "vencimento_em": item.get("dueDate"),
+                "pago_em": item.get("paymentDate") or item.get("clientPaymentDate"),
+                "invoice_url": item.get("invoiceUrl"),
+                "boleto_url": item.get("bankSlipUrl"),
+                "installment_id": item.get("installment"),
+                "installment_number": int(item.get("installmentNumber") or 0),
+            }
+        )
+
+    return results

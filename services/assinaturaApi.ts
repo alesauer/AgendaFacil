@@ -16,6 +16,25 @@ export type AssinaturaApi = {
   assinatura_status_efetivo?: 'ACTIVE' | 'TRIAL' | 'PAST_DUE' | 'CANCELLED' | 'SUSPENDED' | string;
   ciclo_cobranca: 'MONTHLY' | 'YEARLY' | string;
   valor_plano_centavos: number;
+  payment_provider?: string;
+  pagamentos_recentes?: Array<{
+    id: string;
+    status: string;
+    billing_type?: string;
+    valor_centavos: number;
+    vencimento_em?: string | null;
+    pago_em?: string | null;
+    invoice_url?: string | null;
+    boleto_url?: string | null;
+    installment_id?: string | null;
+    installment_number?: number;
+  }>;
+  resumo_pagamentos?: {
+    total: number;
+    paid: number;
+    pending: number;
+    overdue: number;
+  };
   trial_usado?: boolean;
   trial_inicio_em?: string | null;
   trial_fim_em?: string | null;

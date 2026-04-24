@@ -226,6 +226,44 @@ def get_assinatura():
 
     ciclo = str(item.get("ciclo_cobranca") or "MONTHLY").upper()
     valor_centavos = int(item.get("valor_plano_centavos") or (3990 if ciclo == "MONTHLY" else 35990))
+    payment_provider = str(
+        item.get("payment_provider")
+        or current_app.config.get("PAYMENT_PROVIDER")
+        or os.getenv("PAYMENT_PROVIDER")
+        or "mercadopago"
+    ).strip().lower()
+
+    pagamentos_recentes = []
+    resumo_pagamentos = {
+        "total": 0,
+        "paid": 0,
+        "pending": 0,
+        "overdue": 0,
+    }
+
+    if payment_provider == "asaas":
+        try:
+            from backend.services import asaas_service
+
+            identity = BarbeariaRepository.get_identity(g.barbearia_id) or {}
+            barbearia_slug = str(identity.get("slug") or "").strip()
+            if barbearia_slug:
+                pagamentos_recentes = asaas_service.list_recent_payments(
+                    external_reference=barbearia_slug,
+                    limit=12,
+                )
+
+                resumo_pagamentos["total"] = len(pagamentos_recentes)
+                for payment in pagamentos_recentes:
+                    status = str(payment.get("status") or "").upper()
+                    if status in {"RECEIVED", "RECEIVED_IN_CASH", "CONFIRMED"}:
+                        resumo_pagamentos["paid"] += 1
+                    elif status in {"OVERDUE"}:
+                        resumo_pagamentos["overdue"] += 1
+                    else:
+                        resumo_pagamentos["pending"] += 1
+        except Exception:
+            pagamentos_recentes = []
 
     return success(
         {
@@ -234,6 +272,9 @@ def get_assinatura():
             "assinatura_status_efetivo": item.get("assinatura_status_efetivo"),
             "ciclo_cobranca": ciclo,
             "valor_plano_centavos": valor_centavos,
+            "payment_provider": payment_provider,
+            "pagamentos_recentes": pagamentos_recentes,
+            "resumo_pagamentos": resumo_pagamentos,
             "trial_usado": bool(item.get("trial_usado", False)),
             "trial_inicio_em": item.get("trial_inicio_em"),
             "trial_fim_em": item.get("trial_fim_em"),

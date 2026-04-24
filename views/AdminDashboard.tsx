@@ -5526,6 +5526,33 @@ const SettingsManagement = () => {
     return 'bg-gray-100 text-gray-700';
   };
 
+  const formatAsaasPaymentStatusLabel = (status?: string) => {
+    const key = String(status || '').toUpperCase();
+    if (key === 'RECEIVED' || key === 'RECEIVED_IN_CASH' || key === 'CONFIRMED') return 'Pago';
+    if (key === 'PENDING') return 'Pendente';
+    if (key === 'OVERDUE') return 'Vencido';
+    if (key === 'REFUNDED') return 'Estornado';
+    return key || 'Indefinido';
+  };
+
+  const formatAsaasPaymentStatusClass = (status?: string) => {
+    const key = String(status || '').toUpperCase();
+    if (key === 'RECEIVED' || key === 'RECEIVED_IN_CASH' || key === 'CONFIRMED') return 'bg-emerald-100 text-emerald-700';
+    if (key === 'PENDING') return 'bg-blue-100 text-blue-700';
+    if (key === 'OVERDUE') return 'bg-amber-100 text-amber-700';
+    if (key === 'REFUNDED') return 'bg-slate-200 text-slate-700';
+    return 'bg-gray-100 text-gray-700';
+  };
+
+  const formatBillingTypeLabel = (billingType?: string) => {
+    const key = String(billingType || '').toUpperCase();
+    if (key === 'CREDIT_CARD') return 'Cartão de crédito';
+    if (key === 'BOLETO') return 'Boleto';
+    if (key === 'PIX') return 'PIX';
+    if (key === 'UNDEFINED') return 'A definir';
+    return key || 'Não informado';
+  };
+
   const formatB2cStatusLabel = (status?: string) => {
     const key = String(status || '').toUpperCase();
     if (key === 'ACTIVE') return 'Ativa';
@@ -7864,23 +7891,63 @@ const SettingsManagement = () => {
                       <CreditCard size={18} className="text-gray-500" />
                       <h4 className="font-bold text-gray-700">Métodos de Pagamento</h4>
                     </div>
-                    <button className="text-blue-600 text-xs font-bold hover:underline flex items-center gap-1">
-                      <Plus size={14} /> Adicionar Novo
-                    </button>
+                    <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">
+                      Provedor: {String(subscriptionData?.payment_provider || 'mercadopago').toUpperCase()}
+                    </span>
                   </div>
-                  <div className="p-4 border border-blue-100 bg-blue-50/30 rounded-xl flex items-center justify-between">
-                    <div className="flex items-center gap-4">
-                      <div className="w-12 h-8 bg-white border border-gray-200 rounded flex items-center justify-center shadow-sm">
-                        <span className="text-[10px] font-black italic text-blue-800">VISA</span>
-                      </div>
-                      <div>
-                        <p className="text-sm font-bold text-gray-800">Visa terminando em 4242</p>
-                        <p className="text-xs text-gray-500">Expira em 12/2026 • Principal</p>
-                      </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                    <div className="p-3 rounded-xl border border-gray-100 bg-white">
+                      <p className="text-xs text-gray-500">Total cobranças</p>
+                      <p className="text-lg font-bold text-gray-900">{subscriptionData?.resumo_pagamentos?.total || 0}</p>
                     </div>
-                    <button className="text-gray-400 hover:text-gray-600">
-                      <Edit size={16} />
-                    </button>
+                    <div className="p-3 rounded-xl border border-emerald-100 bg-emerald-50">
+                      <p className="text-xs text-emerald-700">Pagas</p>
+                      <p className="text-lg font-bold text-emerald-700">{subscriptionData?.resumo_pagamentos?.paid || 0}</p>
+                    </div>
+                    <div className="p-3 rounded-xl border border-blue-100 bg-blue-50">
+                      <p className="text-xs text-blue-700">Pendentes</p>
+                      <p className="text-lg font-bold text-blue-700">{subscriptionData?.resumo_pagamentos?.pending || 0}</p>
+                    </div>
+                    <div className="p-3 rounded-xl border border-amber-100 bg-amber-50">
+                      <p className="text-xs text-amber-700">Vencidas</p>
+                      <p className="text-lg font-bold text-amber-700">{subscriptionData?.resumo_pagamentos?.overdue || 0}</p>
+                    </div>
+                  </div>
+
+                  <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-sm min-w-[640px]">
+                        <thead>
+                          <tr className="text-gray-400 text-[10px] font-bold uppercase tracking-wider border-b border-gray-100">
+                            <th className="px-4 py-3 font-bold">Cobrança</th>
+                            <th className="px-4 py-3 font-bold">Método</th>
+                            <th className="px-4 py-3 font-bold">Vencimento</th>
+                            <th className="px-4 py-3 font-bold">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-50">
+                          {(subscriptionData?.pagamentos_recentes || []).slice(0, 6).map((payment) => (
+                            <tr key={payment.id}>
+                              <td className="px-4 py-3 text-gray-700 font-medium">{payment.id}</td>
+                              <td className="px-4 py-3 text-gray-700">{formatBillingTypeLabel(payment.billing_type)}</td>
+                              <td className="px-4 py-3 text-gray-700">
+                                {payment.vencimento_em ? safeDateBr(String(payment.vencimento_em).slice(0, 10)) : '-'}
+                              </td>
+                              <td className="px-4 py-3">
+                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${formatAsaasPaymentStatusClass(payment.status)}`}>
+                                  {formatAsaasPaymentStatusLabel(payment.status)}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                          {(!subscriptionData?.pagamentos_recentes || subscriptionData.pagamentos_recentes.length === 0) && (
+                            <tr>
+                              <td colSpan={4} className="px-4 py-6 text-center text-gray-500">Nenhum pagamento recente encontrado.</td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 </div>
               )}
@@ -7902,26 +7969,37 @@ const SettingsManagement = () => {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-50">
-                        {[
-                          { date: '15 Mar, 2024', amount: 'R$ 89,90', status: 'Pago' },
-                          { date: '15 Fev, 2024', amount: 'R$ 89,90', status: 'Pago' },
-                          { date: '15 Jan, 2024', amount: 'R$ 89,90', status: 'Pago' }
-                        ].map((invoice, i) => (
-                          <tr key={i} className="group">
-                            <td className="py-4 font-medium text-gray-700">{invoice.date}</td>
-                            <td className="py-4 font-bold text-gray-900">{invoice.amount}</td>
+                        {(subscriptionData?.pagamentos_recentes || []).map((invoice) => (
+                          <tr key={invoice.id} className="group">
+                            <td className="py-4 font-medium text-gray-700">
+                              {invoice.vencimento_em ? safeDateBr(String(invoice.vencimento_em).slice(0, 10)) : '-'}
+                            </td>
+                            <td className="py-4 font-bold text-gray-900">{formatMoneyFromCents(Number(invoice.valor_centavos || 0))}</td>
                             <td className="py-4">
-                              <span className="px-2 py-0.5 bg-green-100 text-green-700 rounded-full text-[10px] font-bold">
-                                {invoice.status}
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${formatAsaasPaymentStatusClass(invoice.status)}`}>
+                                {formatAsaasPaymentStatusLabel(invoice.status)}
                               </span>
                             </td>
                             <td className="py-4 text-right">
-                              <button className="text-gray-400 hover:text-blue-600 transition-colors">
-                                <Receipt size={16} />
-                              </button>
+                              {invoice.invoice_url ? (
+                                <button
+                                  type="button"
+                                  onClick={() => window.open(String(invoice.invoice_url), '_blank', 'noopener,noreferrer')}
+                                  className="text-gray-400 hover:text-blue-600 transition-colors"
+                                >
+                                  <Receipt size={16} />
+                                </button>
+                              ) : (
+                                <span className="text-xs text-gray-400">-</span>
+                              )}
                             </td>
                           </tr>
                         ))}
+                        {(!subscriptionData?.pagamentos_recentes || subscriptionData.pagamentos_recentes.length === 0) && (
+                          <tr>
+                            <td colSpan={4} className="py-6 text-center text-gray-500">Sem histórico de faturamento para exibir.</td>
+                          </tr>
+                        )}
                       </tbody>
                     </table>
                   </div>
