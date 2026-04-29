@@ -5616,6 +5616,16 @@ const SettingsManagement = () => {
   const handleOpenPaymentLink = async (tier: PlanTier) => {
     if (isSavingSubscription || isLoadingSubscription) return;
 
+    const currentStatus = String(subscriptionData?.assinatura_status_efetivo || subscriptionData?.assinatura_status || '').toUpperCase();
+    const hasActiveSubscription = ['ACTIVE', 'TRIAL'].includes(currentStatus);
+    const currentPlanCode = String(subscriptionData?.plano || '').toUpperCase();
+    const requestedPlanCode = `${tier}_${billingCycle}`;
+    if (hasActiveSubscription && currentPlanCode === requestedPlanCode) {
+      setSubscriptionError('Este plano já está vigente para sua barbearia.');
+      setSubscriptionSuccess(null);
+      return;
+    }
+
     setIsSavingSubscription(true);
     setSubscriptionError(null);
     setSubscriptionSuccess(null);
@@ -5664,9 +5674,9 @@ const SettingsManagement = () => {
 
   useEffect(() => {
     if (activeSubTab !== 'BILLING') return;
-    if (subscriptionData) return;
+    if (activeBillingTab !== 'PLAN') return;
     loadSubscription();
-  }, [activeSubTab]);
+  }, [activeSubTab, activeBillingTab]);
 
   const loadB2cPlans = async () => {
     if (isLoadingB2cPlans) return;
@@ -6056,14 +6066,31 @@ const SettingsManagement = () => {
     setIsSavingB2c(false);
   };
 
-  const currentCycle = String(subscriptionData?.ciclo_cobranca || 'MONTHLY').toUpperCase() === 'YEARLY' ? 'YEARLY' : 'MONTHLY';
+  const currentPlanCode = String(subscriptionData?.plano || '').toUpperCase();
+  const planCodeParts = currentPlanCode.split('_');
+  const planTierFromCode = (planCodeParts[0] || '') as PlanTier;
+  const cycleFromCode = (planCodeParts[1] || '') as BillingCycle;
+
+  const currentCycle = (cycleFromCode === 'YEARLY' || cycleFromCode === 'MONTHLY')
+    ? cycleFromCode
+    : (String(subscriptionData?.ciclo_cobranca || 'MONTHLY').toUpperCase() === 'YEARLY' ? 'YEARLY' : 'MONTHLY');
+
   const currentValue = Number(subscriptionData?.valor_plano_centavos || 0);
-  const currentPlanCard = PLAN_CARDS.find((card) => {
-    if (currentCycle === 'MONTHLY') return card.monthlyCents === currentValue;
-    return card.yearlyCents === currentValue;
-  }) || PLAN_CARDS.find((card) => card.tier === 'PROFISSIONAL') || PLAN_CARDS[0];
+  const currentPlanCard = PLAN_CARDS.find((card) => card.tier === planTierFromCode)
+    || PLAN_CARDS.find((card) => {
+      if (currentCycle === 'MONTHLY') return card.monthlyCents === currentValue;
+      return card.yearlyCents === currentValue;
+    })
+    || PLAN_CARDS.find((card) => card.tier === 'PROFISSIONAL')
+    || PLAN_CARDS[0];
   const effectiveStatus = subscriptionData?.assinatura_status_efetivo || subscriptionData?.assinatura_status;
   const isTrialRunning = String(effectiveStatus || '').toUpperCase() === 'TRIAL';
+  const hasVigenteSubscription = ['ACTIVE', 'TRIAL'].includes(String(effectiveStatus || '').toUpperCase());
+  const isCurrentPlanForCycle = (tier: PlanTier, cycle: BillingCycle) => {
+    const currentPlanCode = String(subscriptionData?.plano || '').toUpperCase();
+    return currentPlanCode === `${tier}_${cycle}`;
+  };
+  const isCheckoutBlockedForPlan = (tier: PlanTier) => hasVigenteSubscription && isCurrentPlanForCycle(tier, billingCycle);
   const billingPlansList = useMemo(() => {
     const term = String(billingPlanSearchTerm || '').trim().toLowerCase();
     const list = PLAN_CARDS
@@ -7729,10 +7756,12 @@ const SettingsManagement = () => {
                             </button>
                             <button
                               onClick={() => handleOpenPaymentLink(plan.tier)}
-                              disabled={isLoadingSubscription || isSavingSubscription}
+                              disabled={isLoadingSubscription || isSavingSubscription || isCheckoutBlockedForPlan(plan.tier)}
                               className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed"
                             >
-                              {isSavingSubscription ? 'Abrindo...' : 'Assinar Agora'}
+                              {isCheckoutBlockedForPlan(plan.tier)
+                                ? 'Plano atual'
+                                : (isSavingSubscription ? 'Abrindo...' : 'Assinar Agora')}
                             </button>
                           </div>
                         </div>
@@ -7766,7 +7795,11 @@ const SettingsManagement = () => {
                                 <td className="px-6 py-4 text-gray-800 font-semibold">{formatMoneyFromCents(plan.price)}</td>
                                 <td className="px-6 py-4 text-gray-700">{plan.limitLabel}</td>
                                 <td className="px-6 py-4">
-                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700">Disponível</span>
+                                  {isCheckoutBlockedForPlan(plan.tier) ? (
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-700">Plano atual</span>
+                                  ) : (
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700">Disponível</span>
+                                  )}
                                 </td>
                                 <td className="px-6 py-4">
                                   <div className="flex items-center justify-end gap-3">
@@ -7775,10 +7808,12 @@ const SettingsManagement = () => {
                                     </button>
                                     <button
                                       onClick={() => handleOpenPaymentLink(plan.tier)}
-                                      disabled={isLoadingSubscription || isSavingSubscription}
+                                      disabled={isLoadingSubscription || isSavingSubscription || isCheckoutBlockedForPlan(plan.tier)}
                                       className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed"
                                     >
-                                      {isSavingSubscription ? 'Abrindo...' : 'Assinar Agora'}
+                                      {isCheckoutBlockedForPlan(plan.tier)
+                                        ? 'Plano atual'
+                                        : (isSavingSubscription ? 'Abrindo...' : 'Assinar Agora')}
                                     </button>
                                   </div>
                                 </td>

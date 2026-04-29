@@ -16,6 +16,33 @@ class BarbeariaRepository(BaseRepository):
         "YEARLY": "PROFISSIONAL_YEARLY",
     }
 
+    _SUBSCRIPTION_PLAN_CODE_BY_PRICE = {
+        ("MONTHLY", 2990): "ESSENCIAL_MONTHLY",
+        ("YEARLY", 26990): "ESSENCIAL_YEARLY",
+        ("MONTHLY", 3990): "PROFISSIONAL_MONTHLY",
+        ("YEARLY", 35990): "PROFISSIONAL_YEARLY",
+        ("MONTHLY", 4990): "AVANCADO_MONTHLY",
+        ("YEARLY", 44990): "AVANCADO_YEARLY",
+    }
+
+    @staticmethod
+    def _infer_subscription_plan_code(cycle: str, price_cents: int, current_plan: str | None = None) -> str:
+        normalized_cycle = BarbeariaRepository._normalize_cycle(cycle)
+
+        by_price = BarbeariaRepository._SUBSCRIPTION_PLAN_CODE_BY_PRICE.get((normalized_cycle, int(price_cents or 0)))
+        if by_price:
+            return by_price
+
+        normalized_current = str(current_plan or "").strip().upper()
+        if normalized_current.endswith(f"_{normalized_cycle}") and normalized_current.split("_")[0] in {
+            "ESSENCIAL",
+            "PROFISSIONAL",
+            "AVANCADO",
+        }:
+            return normalized_current
+
+        return BarbeariaRepository._SUBSCRIPTION_PLAN_CODE[normalized_cycle]
+
     @staticmethod
     def _is_missing_reports_flag_column_error(exc: Exception) -> bool:
         message = str(exc).lower()
@@ -120,7 +147,7 @@ class BarbeariaRepository(BaseRepository):
         trial_end = base.get("trial_fim_em")
         days_left = BarbeariaRepository._days_left_for_trial(trial_end) if effective_status == "TRIAL" else 0
 
-        base["plano"] = base.get("plano") or BarbeariaRepository._SUBSCRIPTION_PLAN_CODE[cycle]
+        base["plano"] = BarbeariaRepository._infer_subscription_plan_code(cycle, price, base.get("plano"))
         base["ciclo_cobranca"] = cycle
         base["valor_plano_centavos"] = price
         base["trial_usado"] = bool(base.get("trial_usado", False))
@@ -721,7 +748,7 @@ class BarbeariaRepository(BaseRepository):
         now = datetime.now(timezone.utc)
         cycle = BarbeariaRepository._normalize_cycle(ciclo_cobranca or current.get("ciclo_cobranca"))
         price = int(valor_plano_centavos or current.get("valor_plano_centavos") or BarbeariaRepository._SUBSCRIPTION_PRICES[cycle])
-        plan_code = BarbeariaRepository._SUBSCRIPTION_PLAN_CODE[cycle]
+        plan_code = BarbeariaRepository._infer_subscription_plan_code(cycle, price, current.get("plano"))
 
         payload = {
             "plano": plan_code,

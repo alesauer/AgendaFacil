@@ -234,12 +234,12 @@ def pick_status_for_day(day: date, today: date, rng: random.Random) -> str:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Gera carga de agendamentos aleatórios sem conflito para uma janela de 7 dias atrás e 7 dias à frente.",
+        description="Gera carga de agendamentos aleatórios sem conflito para uma janela de 30 dias atrás e 30 dias à frente.",
     )
     parser.add_argument("--barbearia-id", help="ID da barbearia alvo", default=None)
     parser.add_argument("--slug", help="Slug da barbearia alvo", default=None)
     parser.add_argument("--target", type=int, default=900, help="Quantidade máxima de agendamentos a inserir")
-    parser.add_argument("--window-days", type=int, default=7, help="Janela em dias para trás e para frente")
+    parser.add_argument("--window-days", type=int, default=30, help="Janela em dias para trás e para frente")
     parser.add_argument("--step-min", type=int, default=15, help="Passo de grade em minutos")
     parser.add_argument("--seed", type=int, default=20260319, help="Seed para aleatoriedade reproduzível")
     parser.add_argument("--batch-size", type=int, default=200, help="Tamanho do lote para inserção")
