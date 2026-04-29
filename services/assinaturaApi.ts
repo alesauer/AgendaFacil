@@ -35,6 +35,22 @@ export type AssinaturaApi = {
     pending: number;
     overdue: number;
   };
+  utilization_metrics?: {
+    consumo_plano?: {
+      tier?: string;
+      clientes_cadastrados?: number;
+      limite_clientes?: number | null;
+      percentual?: number | null;
+    };
+    agendamentos_mes?: number;
+    atendimentos_concluidos_mes?: number;
+    faturamento_mes_centavos?: number;
+    custo_por_atendimento_centavos?: number | null;
+    ticket_medio_centavos?: number | null;
+    taxa_ocupacao_percentual?: number;
+    horas_ocupadas?: number;
+    horas_disponiveis?: number;
+  };
   trial_usado?: boolean;
   trial_inicio_em?: string | null;
   trial_fim_em?: string | null;

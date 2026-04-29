@@ -729,7 +729,7 @@ const DashboardHome = ({ onViewAllRecent }: { onViewAllRecent: () => void }) => 
         <div className="bg-white rounded-xl shadow-sm p-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="font-bold text-gray-800">Top 5 Clientes Frequentes</h3>
-            <button onClick={onViewAllRecent} className="text-xs text-blue-600 hover:underline">Ver agenda</button>
+                <button type="button" onClick={onViewAllRecent} className="text-xs text-blue-600 hover:underline">Ver agenda</button>
           </div>
           <div className="space-y-2">
             {insights.top_clientes_frequentes.map((item, index) => (
@@ -896,11 +896,12 @@ const ServicesManagement = () => {
                   <p className="text-sm text-gray-500 mt-1">Arraste e solte pela alça para definir a ordem exibida ao cliente.</p>
                 </div>
                 <button 
+                  type="button"
                   onClick={() => {
                     setSelectedServiceId(null);
                     setIsModalOpen(true);
                   }}
-                    className="w-full sm:w-auto bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center justify-center gap-2 hover:bg-blue-700 transition-colors shadow-sm"
+                  className="w-full sm:w-auto bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center justify-center gap-2 hover:bg-blue-700 transition-colors shadow-sm"
                 >
                     <Plus size={18} /> Novo Serviço
                 </button>
@@ -912,7 +913,7 @@ const ServicesManagement = () => {
                     <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-fade-in">
                         <div className="px-6 py-4 border-b flex justify-between items-center bg-gray-50">
                             <h3 className="font-bold text-gray-900">{selectedServiceId ? 'Editar Serviço' : 'Criar Novo Serviço'}</h3>
-                            <button onClick={() => {
+                            <button type="button" onClick={() => {
                               setIsModalOpen(false);
                               setSelectedServiceId(null);
                             }} className="text-gray-400 hover:text-gray-600">
@@ -7861,23 +7862,85 @@ const SettingsManagement = () => {
                     <BarChart3 size={18} className="text-gray-500" />
                     <h4 className="font-bold text-gray-700">Uso do Sistema (Mês Atual)</h4>
                   </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                    <div className="p-4 bg-white border border-gray-100 rounded-xl">
+                      <p className="text-xs text-gray-500 uppercase font-bold tracking-wider">Consumo do plano</p>
+                      <p className="mt-2 text-lg font-bold text-gray-900">
+                        {subscriptionData?.utilization_metrics?.consumo_plano?.clientes_cadastrados || 0}
+                        {typeof subscriptionData?.utilization_metrics?.consumo_plano?.limite_clientes === 'number'
+                          ? ` / ${subscriptionData?.utilization_metrics?.consumo_plano?.limite_clientes}`
+                          : ' / Ilimitado'}
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {typeof subscriptionData?.utilization_metrics?.consumo_plano?.percentual === 'number'
+                          ? `${subscriptionData.utilization_metrics.consumo_plano.percentual.toFixed(1)}% usado`
+                          : 'Sem limite de clientes'}
+                      </p>
+                    </div>
+                    <div className="p-4 bg-white border border-gray-100 rounded-xl">
+                      <p className="text-xs text-gray-500 uppercase font-bold tracking-wider">Custo por atendimento</p>
+                      <p className="mt-2 text-lg font-bold text-gray-900">
+                        {typeof subscriptionData?.utilization_metrics?.custo_por_atendimento_centavos === 'number'
+                          ? formatMoneyFromCents(subscriptionData.utilization_metrics.custo_por_atendimento_centavos)
+                          : '—'}
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {subscriptionData?.utilization_metrics?.atendimentos_concluidos_mes || 0} concluído(s) no mês
+                      </p>
+                    </div>
+                    <div className="p-4 bg-white border border-gray-100 rounded-xl">
+                      <p className="text-xs text-gray-500 uppercase font-bold tracking-wider">Ticket médio</p>
+                      <p className="mt-2 text-lg font-bold text-gray-900">
+                        {typeof subscriptionData?.utilization_metrics?.ticket_medio_centavos === 'number'
+                          ? formatMoneyFromCents(subscriptionData.utilization_metrics.ticket_medio_centavos)
+                          : '—'}
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        Faturamento mês: {formatMoneyFromCents(Number(subscriptionData?.utilization_metrics?.faturamento_mes_centavos || 0))}
+                      </p>
+                    </div>
+                    <div className="p-4 bg-white border border-gray-100 rounded-xl">
+                      <p className="text-xs text-gray-500 uppercase font-bold tracking-wider">Taxa de ocupação</p>
+                      <p className="mt-2 text-lg font-bold text-gray-900">
+                        {Number(subscriptionData?.utilization_metrics?.taxa_ocupacao_percentual || 0).toFixed(1)}%
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {Number(subscriptionData?.utilization_metrics?.horas_ocupadas || 0).toFixed(1)}h / {Number(subscriptionData?.utilization_metrics?.horas_disponiveis || 0).toFixed(1)}h
+                      </p>
+                    </div>
+                  </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div className="p-4 bg-white border border-gray-100 rounded-xl space-y-3">
                       <div className="flex justify-between text-xs font-bold">
                         <span className="text-gray-600">Agendamentos</span>
-                        <span className="text-blue-600">452 / ∞</span>
+                        <span className="text-blue-600">
+                          {subscriptionData?.utilization_metrics?.agendamentos_mes || 0}
+                          {typeof subscriptionData?.utilization_metrics?.consumo_plano?.limite_clientes === 'number'
+                            ? ` / ${subscriptionData?.utilization_metrics?.consumo_plano?.limite_clientes}`
+                            : ' / ∞'}
+                        </span>
                       </div>
                       <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                        <div className="h-full bg-blue-500 rounded-full" style={{ width: '45%' }} />
+                        <div
+                          className="h-full bg-blue-500 rounded-full"
+                          style={{
+                            width: `${Math.max(0, Math.min(100, Number(subscriptionData?.utilization_metrics?.consumo_plano?.percentual || 0)))}%`,
+                          }}
+                        />
                       </div>
                     </div>
                     <div className="p-4 bg-white border border-gray-100 rounded-xl space-y-3">
                       <div className="flex justify-between text-xs font-bold">
-                        <span className="text-gray-600">Profissionais Ativos</span>
-                        <span className="text-blue-600">3 / 5</span>
+                        <span className="text-gray-600">Atendimentos concluídos</span>
+                        <span className="text-blue-600">{subscriptionData?.utilization_metrics?.atendimentos_concluidos_mes || 0}</span>
                       </div>
                       <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                        <div className="h-full bg-blue-500 rounded-full" style={{ width: '60%' }} />
+                        <div
+                          className="h-full bg-blue-500 rounded-full"
+                          style={{
+                            width: `${Math.max(0, Math.min(100, Number(subscriptionData?.utilization_metrics?.taxa_ocupacao_percentual || 0)))}%`,
+                          }}
+                        />
                       </div>
                     </div>
                   </div>

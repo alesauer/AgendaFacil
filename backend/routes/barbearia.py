@@ -1,10 +1,15 @@
 import re
 import os
+from datetime import date, datetime, timedelta
 
 from flask import Blueprint, current_app, g, request
 
 from backend.middleware.auth import auth_required
+from backend.repositories.agendamentos_repository import AgendamentosRepository
 from backend.repositories.barbearia_repository import BarbeariaRepository
+from backend.repositories.clientes_repository import ClientesRepository
+from backend.repositories.horarios_repository import HorariosFuncionamentoRepository
+from backend.repositories.profissionais_repository import ProfissionaisRepository
 from backend.services.master_runtime_config_service import MasterRuntimeConfigService
 from backend.utils.http import error, success
 
@@ -16,6 +21,136 @@ MAX_IMAGE_URL_LENGTH = 300000
 MAX_LOGIN_BACKGROUND_URL_LENGTH = 3200000
 ALLOWED_BILLING_CYCLES = {"MONTHLY", "YEARLY"}
 ALLOWED_PLAN_TIERS = {"ESSENCIAL", "PROFISSIONAL", "AVANCADO"}
+
+PLAN_CLIENT_LIMITS = {
+    "ESSENCIAL": 400,
+    "PROFISSIONAL": 1000,
+    "AVANCADO": None,
+}
+
+
+def _parse_date(value: str | None):
+    try:
+        return datetime.strptime(str(value or "")[:10], "%Y-%m-%d").date()
+    except Exception:
+        return None
+
+
+def _parse_time(value: str | None):
+    try:
+        return datetime.strptime(str(value or "")[:5], "%H:%M")
+    except Exception:
+        return None
+
+
+def _infer_plan_tier_from_price(valor_centavos: int) -> str:
+    if valor_centavos in {2990, 26990}:
+        return "ESSENCIAL"
+    if valor_centavos in {3990, 35990}:
+        return "PROFISSIONAL"
+    return "AVANCADO"
+
+
+def _compute_utilization_metrics(barbearia_id: str, valor_plano_centavos: int, ciclo: str) -> dict:
+    today = date.today()
+    month_start = today.replace(day=1)
+
+    agendamentos = AgendamentosRepository.list_all(barbearia_id) or []
+    profissionais = ProfissionaisRepository.list_all(barbearia_id) or []
+    horarios = HorariosFuncionamentoRepository.list_all(barbearia_id) or []
+    clientes = ClientesRepository.list_all(barbearia_id) or []
+
+    active_profissionais = [p for p in profissionais if bool(p.get("ativo", True))]
+    active_profissionais_count = max(1, len(active_profissionais))
+
+    month_items = []
+    for item in agendamentos:
+        item_date = _parse_date(item.get("data"))
+        if not item_date:
+            continue
+        if item_date < month_start or item_date > today:
+            continue
+        month_items.append(item)
+
+    valid_items = [
+        item
+        for item in month_items
+        if str(item.get("status") or "").upper() not in {"CANCELLED", "BLOCKED"}
+    ]
+    completed_items = [
+        item
+        for item in month_items
+        if str(item.get("status") or "").upper() == "COMPLETED_FIN"
+    ]
+
+    faturamento_centavos = 0
+    for item in completed_items:
+        try:
+            faturamento_centavos += int(round(float(item.get("valor_final") or 0) * 100))
+        except Exception:
+            continue
+
+    booked_minutes = 0
+    for item in valid_items:
+        start_dt = _parse_time(item.get("hora_inicio"))
+        end_dt = _parse_time(item.get("hora_fim"))
+        if not start_dt or not end_dt or end_dt <= start_dt:
+            continue
+        booked_minutes += int((end_dt - start_dt).total_seconds() // 60)
+
+    schedule_by_weekday = {int(row.get("dia_semana")): row for row in horarios if row is not None}
+    available_minutes = 0
+    cursor = month_start
+    while cursor <= today:
+        weekday = int(cursor.weekday() + 1) % 7
+        row = schedule_by_weekday.get(weekday)
+        if row and bool(row.get("aberto")):
+            start_dt = _parse_time(row.get("hora_inicio"))
+            end_dt = _parse_time(row.get("hora_fim"))
+            if start_dt and end_dt and end_dt > start_dt:
+                base_minutes = int((end_dt - start_dt).total_seconds() // 60)
+                available_minutes += base_minutes * active_profissionais_count
+        cursor += timedelta(days=1)
+
+    taxa_ocupacao = 0.0
+    if available_minutes > 0:
+        taxa_ocupacao = round((booked_minutes / available_minutes) * 100, 2)
+
+    atendimentos_concluidos = len(completed_items)
+    custo_por_atendimento_centavos = None
+    monthly_plan_equivalent = int(valor_plano_centavos)
+    if str(ciclo).upper() == "YEARLY":
+        monthly_plan_equivalent = int(round(valor_plano_centavos / 12))
+    if atendimentos_concluidos > 0:
+        custo_por_atendimento_centavos = int(round(monthly_plan_equivalent / atendimentos_concluidos))
+
+    ticket_medio_centavos = None
+    if atendimentos_concluidos > 0:
+        ticket_medio_centavos = int(round(faturamento_centavos / atendimentos_concluidos))
+
+    inferred_tier = _infer_plan_tier_from_price(valor_plano_centavos)
+    client_limit = PLAN_CLIENT_LIMITS.get(inferred_tier)
+    clientes_count = len(clientes)
+    consumo_percentual = None
+    if isinstance(client_limit, int) and client_limit > 0:
+        consumo_percentual = round((clientes_count / client_limit) * 100, 2)
+
+    return {
+        "consumo_plano": {
+            "tier": inferred_tier,
+            "clientes_cadastrados": clientes_count,
+            "limite_clientes": client_limit,
+            "percentual": consumo_percentual,
+        },
+        "agendamentos_mes": len(valid_items),
+        "atendimentos_concluidos_mes": atendimentos_concluidos,
+        "faturamento_mes_centavos": faturamento_centavos,
+        "custo_por_atendimento_centavos": custo_por_atendimento_centavos,
+        "ticket_medio_centavos": ticket_medio_centavos,
+        "taxa_ocupacao_percentual": taxa_ocupacao,
+        "horas_ocupadas": round(booked_minutes / 60, 2),
+        "horas_disponiveis": round(available_minutes / 60, 2),
+    }
 
 
 def _parse_bool(value, default: bool = False) -> bool:
@@ -265,6 +400,12 @@ def get_assinatura():
         except Exception:
             pagamentos_recentes = []
 
+    utilization_metrics = {}
+    try:
+        utilization_metrics = _compute_utilization_metrics(g.barbearia_id, valor_centavos, ciclo)
+    except Exception:
+        utilization_metrics = {}
+
     return success(
         {
             "plano": item.get("plano"),
@@ -275,6 +416,7 @@ def get_assinatura():
             "payment_provider": payment_provider,
             "pagamentos_recentes": pagamentos_recentes,
             "resumo_pagamentos": resumo_pagamentos,
+            "utilization_metrics": utilization_metrics,
             "trial_usado": bool(item.get("trial_usado", False)),
             "trial_inicio_em": item.get("trial_inicio_em"),
             "trial_fim_em": item.get("trial_fim_em"),

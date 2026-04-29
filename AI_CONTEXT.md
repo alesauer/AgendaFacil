@@ -1,368 +1,136 @@
-# AI Context — AgendaFácil
+# AI_CONTEXT — AgendaFácil
 
-Este arquivo descreve o contexto completo do sistema AgendaFácil para auxiliar ferramentas de IA a gerar código consistente com a arquitetura do projeto.
+Este arquivo é o contexto de referência para assistentes de código no projeto.
 
-Este documento deve ser considerado **a principal fonte de contexto para geração de código**.
+## 1) Produto e escopo
 
----
+AgendaFácil é um SaaS multi-tenant para barbearias com os domínios:
 
-# Sobre o Produto
+- autenticação e usuários
+- agenda e disponibilidade
+- profissionais, serviços e categorias
+- clientes e assinaturas B2C
+- financeiro
+- notificações (WhatsApp/e-mail)
+- administração master de tenants
 
-AgendaFácil é um SaaS de gestão de barbearias que permite:
+## 2) Stack atual (fonte de verdade)
 
-- agendamento online
-- gestão de profissionais
-- gestão de serviços
-- CRM de clientes
-- dashboard financeiro
-- notificações automáticas
-- integração WhatsApp
-- cobrança recorrente
+### Frontend
 
-Cada barbearia possui um ambiente isolado dentro da plataforma.
+- React 19 + TypeScript + Vite
+- clientes de API em `services/*.ts`
+- telas em `views/*.tsx`
 
-Exemplo:
+### Backend
 
-joaobarber.agendafacil.com  
-centralbarber.agendafacil.com
+- Flask 3 com blueprints por módulo (`backend/routes`)
+- configuração central em `backend/config.py`
+- criação da app em `backend/app.py`
+- middleware de tenant em `backend/middleware/tenant.py`
 
----
+### Banco e dados
 
-# Arquitetura
+- Supabase PostgreSQL
+- migrações SQL versionadas em `backend/migrations`
+- modo operacional padrão: `SUPABASE_ONLY=true`
 
-Frontend
+### Notificações e integrações
 
-React + TypeScript
+- WhatsApp: Evolution API
+- E-mail: Resend
+- Pagamentos: Mercado Pago (ativo), Asaas (configurável)
 
-Backend
+## 3) Regras essenciais de multi-tenant
 
-Python + Flask
+- O tenant é resolvido por subdomínio quando disponível.
+- Em localhost/dev, o backend aceita `X-Barbearia-Slug`.
+- Se não houver subdomínio/header, usa `DEFAULT_BARBEARIA_SLUG` quando configurado.
+- Toda query de negócio deve filtrar por `barbearia_id`.
+- Nunca retornar dados cruzando tenants.
 
-Banco
+Exceções no tenant guard (sem slug obrigatório):
 
-Supabase PostgreSQL
+- `GET /health`
+- `POST /mercadopago/webhook`
+- rotas `/master` e `/auth/master`
 
-Infraestrutura
+## 4) Padrões de API
 
-Nginx  
-Gunicorn  
-Redis  
-Celery
+- Sucesso: `{ "success": true, "data": ... }`
+- Erro: `{ "success": false, "error": "mensagem", ... }`
+- Autenticação por Bearer JWT nas rotas privadas.
 
-Integrações
+Endpoints e agrupamentos atualizados estão em `API_SPEC.md`.
 
-Stripe Billing  
-Baileys WhatsApp
+## 5) Módulos de backend (registrados)
 
----
+- `auth`
+- `barbearia`
+- `clientes`
+- `clientes_assinaturas`
+- `categorias`
+- `profissionais`
+- `servicos`
+- `agendamentos`
+- `horarios`
+- `dashboard`
+- `financeiro`
+- `notifications`
+- `master`
+- `master_settings`
+- `mercadopago`
 
-# Multi-Tenant
+Observação: `backend/routes/stripe.py` existe, porém não está registrado em `backend/routes/__init__.py`.
 
-O sistema é multi-tenant por subdomínio.
+## 6) Organização do repositório
 
-Exemplo:
+- `backend/routes`: endpoints HTTP por domínio
+- `backend/repositories`: acesso a dados
+- `backend/services`: regras de negócio e integrações
+- `backend/scripts`: jobs e workers
+- `backend/tests`: testes backend
+- `services`: clientes frontend para API
+- `http.test`: cenários de teste manual
 
-joaobarber.agendafacil.com
+## 7) Agenda e disponibilidade
 
-O backend identifica a barbearia pelo subdomínio.
+- disponibilidade calculada por serviço/profissional/horários/bloqueios
+- operações públicas e privadas de agendamento coexistem
+- controle de status e auditoria via tabelas específicas
 
-Exemplo:
+## 8) Notificações
 
-host = request.host  
-subdomain = host.split('.')[0]
+Arquitetura:
 
-Esse valor corresponde ao campo `slug` da tabela `barbearias`.
+- API enfileira dispatches em tabela
+- worker (`backend/scripts/notifications_worker.py`) processa `QUEUED`/`RETRYING`
+- suporte a reenvio manual por endpoint interno
 
-Todas as queries devem obrigatoriamente incluir:
+Endpoints internos principais:
 
-barbearia_id
+- `/internal/notifications/test-whatsapp`
+- `/internal/notifications/test-email`
+- `/internal/notifications/dispatches`
+- `/internal/notifications/dispatches/<dispatch_id>/retry`
 
-Nunca retornar dados sem filtrar por barbearia_id.
+## 9) Banco e migrações
 
----
+- Fonte primária do schema: arquivos SQL em `backend/migrations`
+- Cobertura atual: módulos `001` a `028`
+- Entidades e relações resumidas em `DATABASE_SCHEMA.md`
 
-# Modelo da Agenda
+## 10) Diretrizes para alterações de código por IA
 
-A agenda utiliza intervalos base de 15 minutos.
+- preservar isolamento por tenant em toda alteração
+- não introduzir hardcode de credenciais/segredos
+- manter padrão de resposta HTTP (`success/data` e `success/error`)
+- priorizar mudanças pequenas e localizadas
+- alinhar documentação quando mudar contrato de API/schema
 
-Slots:
+## 11) Checklist mínimo antes de entregar mudanças
 
-09:00  
-09:15  
-09:30  
-09:45  
-
-A disponibilidade deve considerar:
-
-- horário de funcionamento
-- duração do serviço
-- agenda do profissional
-- bloqueios
-- agendamentos existentes
-
-Regra de conflito:
-
-slot_start < existing_end  
-AND  
-slot_end > existing_start
-
-Constraint obrigatória:
-
-UNIQUE(profissional_id, data, hora_inicio)
-
----
-
-# Estrutura do Banco
-
-Tabelas principais:
-
-barbearias  
-usuarios  
-profissionais  
-clientes  
-categorias  
-servicos  
-agendamentos  
-bloqueios  
-horarios_funcionamento  
-config_agenda  
-config_notificacoes  
-whatsapp_sessions  
-assinaturas  
-mensagens  
-
-Todas possuem barbearia_id.
-
----
-
-# Estrutura Backend
-
-backend/
-
-app.py  
-config.py  
-
-routes/
-
-auth.py  
-clientes.py  
-profissionais.py  
-servicos.py  
-agendamentos.py  
-
-models/
-
-barbearia.py  
-cliente.py  
-profissional.py  
-servico.py  
-agendamento.py  
-
-services/
-
-agenda_service.py  
-stripe_service.py  
-whatsapp_service.py  
-
-middleware/
-
-tenant.py  
-auth.py  
-
----
-
-# Estrutura Frontend
-
-frontend/
-
-components/  
-pages/  
-services/  
-hooks/  
-contexts/  
-locales/  
-
----
-
-# Padrões de API
-
-Endpoints seguem padrão REST.
-
-Exemplo:
-
-GET /clientes  
-POST /clientes  
-PUT /clientes/:id  
-DELETE /clientes/:id  
-
-Respostas da API devem seguir padrão:
-
-success response:
-
-{
- "success": true,
- "data": {}
-}
-
-error response:
-
-{
- "success": false,
- "error": "mensagem"
-}
-
----
-
-# Segurança
-
-Todas as rotas privadas devem exigir autenticação JWT.
-
-O token deve incluir:
-
-user_id  
-barbearia_id  
-role  
-
-Nunca confiar no frontend para determinar a barbearia.
-
-Sempre usar o middleware tenant.
-
----
-
-# Fluxo de Onboarding
-
-Landing Page  
-↓  
-Escolher plano  
-↓  
-Criar conta  
-↓  
-Stripe Checkout  
-↓  
-Pagamento aprovado  
-↓  
-Onboarding Wizard  
-↓  
-Configuração da barbearia  
-↓  
-Dashboard  
-
----
-
-# Wizard de Configuração
-
-Passo 1  
-Dados da barbearia
-
-Passo 2  
-Adicionar profissionais
-
-Passo 3  
-Adicionar serviços
-
-Passo 4  
-Horário de funcionamento
-
-Passo 5  
-Conectar WhatsApp
-
-Tempo esperado: 2 minutos.
-
----
-
-# Notificações
-
-Tipos:
-
-confirmação de agendamento  
-lembrete de agendamento  
-cancelamento  
-
-Podem ser enviadas por:
-
-WhatsApp  
-Email
-
----
-
-# Integração WhatsApp
-
-A integração utiliza Baileys.
-
-Fluxo:
-
-Configurações  
-↓  
-Conectar WhatsApp  
-↓  
-Gerar QR Code  
-↓  
-Escanear com celular  
-↓  
-Sessão ativa
-
----
-
-# Assinaturas
-
-Sistema usa Stripe Billing.
-
-Fluxo:
-
-Escolher plano  
-↓  
-Checkout Stripe  
-↓  
-Webhook  
-↓  
-Criar assinatura  
-↓  
-Liberar acesso
-
-Se assinatura estiver inativa, bloquear acesso ao sistema.
-
----
-
-# Internacionalização
-
-Frontend preparado para múltiplos idiomas.
-
-Biblioteca:
-
-react-i18next
-
-Idiomas planejados:
-
-pt-BR  
-en  
-es  
-
-Idioma padrão:
-
-Português
-
----
-
-# Escalabilidade
-
-O sistema deve suportar:
-
-- milhares de barbearias
-- milhares de agendamentos por dia
-
-Para isso:
-
-usar Redis para cache  
-usar Celery para tarefas assíncronas  
-usar Gunicorn com múltiplos workers
-
----
-
-# Objetivo do Projeto
-
-Criar uma plataforma SaaS escalável para gestão de barbearias com foco em:
-
-- simplicidade
-- automação
-- experiência do cliente
-- expansão internacional
+- endpoint novo aparece em `API_SPEC.md`?
+- mudança de tabela/campo aparece em `DATABASE_SCHEMA.md`?
+- impacto operacional foi refletido no `README.md`?
+- configuração nova foi adicionada ao `backend/.env.example`?
