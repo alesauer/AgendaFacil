@@ -150,21 +150,35 @@ class MasterRepository:
         if is_supabase_ready():
             supabase = get_supabase_client()
 
-            try:
+            tenants_response = MasterRepository._supabase_execute_with_retries(
+                lambda: (
+                    supabase.table("barbearias")
+                    .select(
+                        "id,nome,slug,telefone,cidade,plano,assinatura_status,ciclo_cobranca,valor_plano_centavos,"
+                        "assinatura_inicio_em,proxima_cobranca_em,stripe_last_event_type,"
+                        "stripe_webhook_updated_at,created_at"
+                    )
+                    .order("created_at", desc=True)
+                    .execute()
+                ),
+                None,
+            )
+
+            if tenants_response is None:
                 tenants_response = MasterRepository._supabase_execute_with_retries(
                     lambda: (
                         supabase.table("barbearias")
                         .select(
                             "id,nome,slug,telefone,cidade,plano,assinatura_status,ciclo_cobranca,valor_plano_centavos,"
-                            "assinatura_inicio_em,proxima_cobranca_em,stripe_last_event_type,"
-                            "stripe_webhook_updated_at,created_at"
+                            "assinatura_inicio_em,proxima_cobranca_em,created_at"
                         )
                         .order("created_at", desc=True)
                         .execute()
                     ),
                     None,
                 )
-            except Exception:
+
+            if tenants_response is None:
                 tenants_response = MasterRepository._supabase_execute_with_retries(
                     lambda: (
                         supabase.table("barbearias")
@@ -174,6 +188,9 @@ class MasterRepository:
                     ),
                     None,
                 )
+
+            if tenants_response is None:
+                raise RuntimeError("Falha ao consultar barbearias no Supabase")
 
             tenants = (tenants_response.data or []) if tenants_response else []
             if not tenants:

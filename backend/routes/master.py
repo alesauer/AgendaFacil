@@ -15,7 +15,10 @@ master_bp = Blueprint("master", __name__, url_prefix="/master")
 def list_tenants():
     search = request.args.get("search")
     status = request.args.get("status")
-    data = MasterRepository.list_tenants_metrics(search=search, status=status)
+    try:
+        data = MasterRepository.list_tenants_metrics(search=search, status=status)
+    except Exception as exc:
+        return error(f"Falha ao carregar barbearias: {exc}", 503)
     return success(data)
 
 
@@ -24,7 +27,10 @@ def list_tenants():
 def overview():
     search = request.args.get("search")
     status = request.args.get("status")
-    data = MasterRepository.get_overview(search=search, status=status)
+    try:
+        data = MasterRepository.get_overview(search=search, status=status)
+    except Exception as exc:
+        return error(f"Falha ao carregar visão geral MASTER: {exc}", 503)
     return success(data)
 
 
