@@ -40,7 +40,7 @@ Documento de referência dos principais endpoints expostos pelo backend Flask.
 - `PUT /barbearia/identidade`
 - `GET /barbearia/assinatura`
 - `PUT /barbearia/assinatura`
-- `POST /barbearia/assinatura/checkout`
+- `POST /barbearia/assinatura/checkout` (fluxo SaaS da barbearia; checkout principal via Asaas)
 
 ## Catálogo e pessoas
 
@@ -117,6 +117,8 @@ Documento de referência dos principais endpoints expostos pelo backend Flask.
 
 ## Assinaturas B2C de clientes
 
+Fluxo separado da assinatura SaaS da barbearia. Nesta etapa, permanece interno/manual e sem integração obrigatória com gateway.
+
 - `GET /clientes/assinaturas/planos`
 - `POST /clientes/assinaturas/planos`
 - `PUT /clientes/assinaturas/planos/<plano_id>`
@@ -168,5 +170,6 @@ Documento de referência dos principais endpoints expostos pelo backend Flask.
 
 ## Webhooks de pagamento
 
-- `POST /mercadopago/webhook` (registrado no app)
-- `POST /stripe/webhook` (arquivo existente, não registrado em `backend/routes/__init__.py`)
+- `POST /asaas/webhook` (webhook oficial do SaaS da barbearia)
+- `POST /mercadopago/webhook` (legado/fallback transitório)
+- `POST /stripe/webhook` (legado; arquivo existente, não registrado em `backend/routes/__init__.py`)

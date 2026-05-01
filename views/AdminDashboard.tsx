@@ -5086,6 +5086,7 @@ const SettingsManagement = () => {
   const [isSavingSubscription, setIsSavingSubscription] = useState(false);
   const [subscriptionError, setSubscriptionError] = useState<string | null>(null);
   const [subscriptionSuccess, setSubscriptionSuccess] = useState<string | null>(null);
+  const [subscriptionCpfCnpj, setSubscriptionCpfCnpj] = useState('');
   const [b2cPlans, setB2cPlans] = useState<AssinaturaClientePlanoApi[]>([]);
   const [isLoadingB2cPlans, setIsLoadingB2cPlans] = useState(false);
   const [b2cMessage, setB2cMessage] = useState<string | null>(null);
@@ -5587,6 +5588,7 @@ const SettingsManagement = () => {
     }
 
     setSubscriptionData(result.data);
+    setSubscriptionCpfCnpj('');
     setIsLoadingSubscription(false);
   };
 
@@ -5596,10 +5598,9 @@ const SettingsManagement = () => {
     setSubscriptionError(null);
     setSubscriptionSuccess(null);
 
-    const shouldStartTrial = Boolean(!subscriptionData?.trial_usado && !subscriptionData?.trial_inicio_em);
     const result = await saveAssinaturaApi({
       ciclo_cobranca: cycle,
-      iniciar_trial: shouldStartTrial,
+      iniciar_trial: false,
     });
 
     if (!result.success) {
@@ -5609,7 +5610,7 @@ const SettingsManagement = () => {
     }
 
     setSubscriptionData(result.data);
-    setSubscriptionSuccess(shouldStartTrial ? 'Plano selecionado com trial de 7 dias iniciado.' : 'Plano atualizado com sucesso.');
+    setSubscriptionSuccess('Plano atualizado com sucesso.');
     setIsSavingSubscription(false);
   };
 
@@ -5622,6 +5623,13 @@ const SettingsManagement = () => {
     const requestedPlanCode = `${tier}_${billingCycle}`;
     if (hasActiveSubscription && currentPlanCode === requestedPlanCode) {
       setSubscriptionError('Este plano já está vigente para sua barbearia.');
+      setSubscriptionSuccess(null);
+      return;
+    }
+
+    const normalizedDocument = subscriptionCpfCnpj.replace(/\D/g, '');
+    if (!normalizedDocument) {
+      setSubscriptionError('Informe o CPF ou CNPJ do responsável para gerar o checkout no Asaas.');
       setSubscriptionSuccess(null);
       return;
     }
@@ -5650,11 +5658,12 @@ const SettingsManagement = () => {
     const result = await createCheckoutApi({
       ciclo_cobranca: billingCycle,
       plano_tier: tier,
+      cpf_cnpj: normalizedDocument,
       installment_count: installmentCount,
     });
 
     if (!result.success) {
-      setSubscriptionError(('error' in result && result.error) || 'Falha ao gerar checkout no Mercado Pago.');
+      setSubscriptionError(('error' in result && result.error) || 'Falha ao gerar checkout de assinatura no Asaas.');
       setIsSavingSubscription(false);
       return;
     }
@@ -7688,6 +7697,26 @@ const SettingsManagement = () => {
                   </div>
 
                   <div className="space-y-4">
+                    <div className="rounded-xl border border-blue-100 bg-blue-50 p-4 space-y-3">
+                      <div>
+                        <h4 className="font-semibold text-blue-900">Checkout SaaS via Asaas</h4>
+                        <p className="text-sm text-blue-800">Informe o CPF ou CNPJ do responsável financeiro antes de abrir o checkout. As assinaturas B2C de clientes continuam separadas deste fluxo.</p>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-[minmax(0,280px)_1fr] gap-3 items-end">
+                        <div>
+                          <label className="block text-xs font-semibold uppercase tracking-wide text-blue-900 mb-1">CPF ou CNPJ do responsável</label>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            placeholder="Somente números"
+                            value={subscriptionCpfCnpj}
+                            onChange={(e) => setSubscriptionCpfCnpj(e.target.value.replace(/\D/g, ''))}
+                            className="w-full px-3 py-2 border border-blue-200 rounded-lg bg-white text-gray-900 focus:ring-2 focus:ring-blue-500 outline-none"
+                          />
+                        </div>
+                        <p className="text-xs text-blue-800">No plano anual, o checkout pode abrir cobrança parcelada conforme a configuração do Asaas.</p>
+                      </div>
+                    </div>
                     <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
                       <h4 className="font-bold text-gray-800">Planos cadastrados</h4>
                       <div className="flex flex-col sm:flex-row gap-3 w-full lg:w-auto">
@@ -7875,13 +7904,13 @@ const SettingsManagement = () => {
 
                   <div className="p-4 rounded-xl border border-blue-100 bg-blue-50">
                     <p className="text-sm font-bold text-blue-900">🎁 Teste grátis por 7 dias</p>
-                    <p className="text-sm text-blue-800 mt-1">Use todas as funcionalidades, sem cartão e sem compromisso.</p>
+                    <p className="text-sm text-blue-800 mt-1">O trial começa automaticamente no primeiro login de administrador da barbearia. Após o vencimento, será necessário pagar manualmente para continuar usando o sistema.</p>
                     <button
                       onClick={() => handleChoosePlan('MONTHLY')}
-                      disabled={isSavingSubscription || isLoadingSubscription || Boolean(subscriptionData?.trial_usado)}
+                      disabled={isSavingSubscription || isLoadingSubscription}
                       className="mt-3 px-4 py-2 bg-white border border-blue-200 text-blue-700 rounded-lg text-sm font-bold hover:bg-blue-100 disabled:opacity-60 disabled:cursor-not-allowed"
                     >
-                      {subscriptionData?.trial_usado ? 'Trial já utilizado' : (isSavingSubscription ? 'Ativando trial...' : 'Ativar trial agora')}
+                      {isSavingSubscription ? 'Salvando plano...' : 'Selecionar plano mensal'}
                     </button>
                   </div>
 
@@ -7990,7 +8019,7 @@ const SettingsManagement = () => {
                       <h4 className="font-bold text-gray-700">Métodos de Pagamento</h4>
                     </div>
                     <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">
-                      Provedor: {String(subscriptionData?.payment_provider || 'mercadopago').toUpperCase()}
+                      Provedor: {String(subscriptionData?.payment_provider || 'asaas').toUpperCase()}
                     </span>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">

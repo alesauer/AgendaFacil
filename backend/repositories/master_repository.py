@@ -127,8 +127,8 @@ class MasterRepository:
                                     b.valor_plano_centavos,
                                     b.assinatura_inicio_em,
                                     b.proxima_cobranca_em,
-                                    b.stripe_last_event_type,
-                                    b.stripe_webhook_updated_at,
+                                    b.payment_last_event_type,
+                                    b.payment_webhook_updated_at,
                   b.created_at,
                   COALESCE(c.total, 0) AS clientes_30d,
                   COALESCE(a.total, 0) AS agendamentos_30d,
@@ -155,8 +155,8 @@ class MasterRepository:
                     supabase.table("barbearias")
                     .select(
                         "id,nome,slug,telefone,cidade,plano,assinatura_status,ciclo_cobranca,valor_plano_centavos,"
-                        "assinatura_inicio_em,proxima_cobranca_em,stripe_last_event_type,"
-                        "stripe_webhook_updated_at,created_at"
+                        "assinatura_inicio_em,proxima_cobranca_em,payment_last_event_type,"
+                        "payment_webhook_updated_at,payment_provider,created_at"
                     )
                     .order("created_at", desc=True)
                     .execute()
@@ -245,8 +245,9 @@ class MasterRepository:
                     "valor_plano_centavos": tenant.get("valor_plano_centavos"),
                     "assinatura_inicio_em": tenant.get("assinatura_inicio_em"),
                     "proxima_cobranca_em": tenant.get("proxima_cobranca_em"),
-                    "stripe_last_event_type": tenant.get("stripe_last_event_type"),
-                    "stripe_webhook_updated_at": tenant.get("stripe_webhook_updated_at"),
+                    "payment_last_event_type": tenant.get("payment_last_event_type"),
+                    "payment_webhook_updated_at": tenant.get("payment_webhook_updated_at"),
+                    "payment_provider": tenant.get("payment_provider"),
                     "created_at": tenant.get("created_at"),
                     "clientes_30d": 0,
                     "agendamentos_30d": 0,
@@ -339,18 +340,20 @@ class MasterRepository:
         pagamentos_ok_7d = [
             item
             for item in tenants
-            if str(item.get("stripe_last_event_type") or "").lower() == "invoice.paid"
+            if str(item.get("payment_last_event_type") or "").lower()
+            in {"invoice.paid", "payment_received", "payment_confirmed", "payment_restored"}
             and (lambda updated: updated is not None and updated >= seven_days_ago)(
-                MasterRepository._as_datetime(item.get("stripe_webhook_updated_at"))
+                MasterRepository._as_datetime(item.get("payment_webhook_updated_at"))
             )
         ]
 
         falhas_7d = [
             item
             for item in tenants
-            if str(item.get("stripe_last_event_type") or "").lower() == "invoice.payment_failed"
+            if str(item.get("payment_last_event_type") or "").lower()
+            in {"invoice.payment_failed", "payment_overdue", "subscription_inactivated", "subscription_deleted"}
             and (lambda updated: updated is not None and updated >= seven_days_ago)(
-                MasterRepository._as_datetime(item.get("stripe_webhook_updated_at"))
+                MasterRepository._as_datetime(item.get("payment_webhook_updated_at"))
             )
         ]
 
@@ -358,7 +361,7 @@ class MasterRepository:
             item
             for item in tenants
             if (lambda updated: updated is None or updated < day_ago)(
-                MasterRepository._as_datetime(item.get("stripe_webhook_updated_at"))
+                MasterRepository._as_datetime(item.get("payment_webhook_updated_at"))
             )
         ]
 

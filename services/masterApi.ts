@@ -12,8 +12,9 @@ export type MasterTenantRow = {
   valor_plano_centavos?: number | null;
   assinatura_inicio_em?: string | null;
   proxima_cobranca_em?: string | null;
-  stripe_last_event_type?: string | null;
-  stripe_webhook_updated_at?: string | null;
+  payment_last_event_type?: string | null;
+  payment_webhook_updated_at?: string | null;
+  payment_provider?: string | null;
   clientes_30d: number;
   agendamentos_30d: number;
   mensagens_30d: number;

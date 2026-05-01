@@ -8,7 +8,7 @@ Plataforma SaaS para gestão de barbearias com agenda, clientes, profissionais, 
 - Backend: Flask (Python) com CORS e autenticação JWT
 - Banco: Supabase (modo de execução atual: `SUPABASE_ONLY=true`)
 - Mensageria/notificações: Evolution (WhatsApp) + Resend (e-mail) + worker Python
-- Pagamentos: Mercado Pago (ativo), Asaas (configurável), Stripe (rota existente, não registrada no app)
+- Pagamentos: Asaas (provider principal do SaaS da barbearia), Mercado Pago (legado/fallback transitório), Stripe (legado, fora do fluxo oficial)
 
 ## Estrutura do repositório
 
@@ -116,7 +116,7 @@ Blocos críticos:
 - Tenant default local: `DEFAULT_BARBEARIA_SLUG`
 - Auth/master: `SECRET_KEY`, `MASTER_LOGIN`, `MASTER_PASSWORD`
 - Notificações: `EVOLUTION_*`, `RESEND_*`, `EMAIL_*`
-- Pagamentos: `PAYMENT_PROVIDER`, `MP_*`, `ASAAS_*`
+- Pagamentos SaaS: `PAYMENT_PROVIDER=asaas`, `ASAAS_*` e, durante a transição, `MP_*` como fallback legado
 
 ### Frontend
 
@@ -150,6 +150,7 @@ npm run lint
 Backend (sanidade de execução):
 
 - subir API e validar `/health`
+- validar `GET /barbearia/assinatura`, `POST /barbearia/assinatura/checkout` e `POST /asaas/webhook`
 - executar cenários em `http.test/`
 
 ## Multi-tenant e autenticação

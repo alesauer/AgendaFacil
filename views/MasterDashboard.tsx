@@ -26,8 +26,8 @@ export const MasterDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }
     | 'valor_plano_centavos'
     | 'assinatura_inicio_em'
     | 'proxima_cobranca_em'
-    | 'stripe_last_event_type'
-    | 'stripe_webhook_updated_at'
+    | 'payment_last_event_type'
+    | 'payment_webhook_updated_at'
     | 'clientes_30d'
     | 'agendamentos_30d'
     | 'mensagens_30d'
@@ -399,11 +399,11 @@ export const MasterDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }
         case 'proxima_cobranca_em':
           result = parseDateValue(a.proxima_cobranca_em) - parseDateValue(b.proxima_cobranca_em);
           break;
-        case 'stripe_last_event_type':
-          result = textCompare(String(a.stripe_last_event_type || ''), String(b.stripe_last_event_type || ''));
+        case 'payment_last_event_type':
+          result = textCompare(String(a.payment_last_event_type || ''), String(b.payment_last_event_type || ''));
           break;
-        case 'stripe_webhook_updated_at':
-          result = parseDateValue(a.stripe_webhook_updated_at) - parseDateValue(b.stripe_webhook_updated_at);
+        case 'payment_webhook_updated_at':
+          result = parseDateValue(a.payment_webhook_updated_at) - parseDateValue(b.payment_webhook_updated_at);
           break;
         case 'clientes_30d':
           result = Number(a.clientes_30d || 0) - Number(b.clientes_30d || 0);
@@ -557,8 +557,8 @@ export const MasterDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }
                   <th className="px-4 py-3"><button type="button" onClick={() => handleSort('valor_plano_centavos')} className="inline-flex items-center gap-1 hover:text-gray-900">Valor plano <span className="text-[11px]">{sortIndicator('valor_plano_centavos')}</span></button></th>
                   <th className="px-4 py-3"><button type="button" onClick={() => handleSort('assinatura_inicio_em')} className="inline-flex items-center gap-1 hover:text-gray-900">Início assinatura <span className="text-[11px]">{sortIndicator('assinatura_inicio_em')}</span></button></th>
                   <th className="px-4 py-3"><button type="button" onClick={() => handleSort('proxima_cobranca_em')} className="inline-flex items-center gap-1 hover:text-gray-900">Próxima cobrança <span className="text-[11px]">{sortIndicator('proxima_cobranca_em')}</span></button></th>
-                  <th className="px-4 py-3"><button type="button" onClick={() => handleSort('stripe_last_event_type')} className="inline-flex items-center gap-1 hover:text-gray-900">Último evento Stripe <span className="text-[11px]">{sortIndicator('stripe_last_event_type')}</span></button></th>
-                  <th className="px-4 py-3"><button type="button" onClick={() => handleSort('stripe_webhook_updated_at')} className="inline-flex items-center gap-1 hover:text-gray-900">Webhook atualizado em <span className="text-[11px]">{sortIndicator('stripe_webhook_updated_at')}</span></button></th>
+                  <th className="px-4 py-3"><button type="button" onClick={() => handleSort('payment_last_event_type')} className="inline-flex items-center gap-1 hover:text-gray-900">Último evento de pagamento <span className="text-[11px]">{sortIndicator('payment_last_event_type')}</span></button></th>
+                  <th className="px-4 py-3"><button type="button" onClick={() => handleSort('payment_webhook_updated_at')} className="inline-flex items-center gap-1 hover:text-gray-900">Webhook atualizado em <span className="text-[11px]">{sortIndicator('payment_webhook_updated_at')}</span></button></th>
                   <th className="px-4 py-3"><button type="button" onClick={() => handleSort('clientes_30d')} className="inline-flex items-center gap-1 hover:text-gray-900">Clientes (30d) <span className="text-[11px]">{sortIndicator('clientes_30d')}</span></button></th>
                   <th className="px-4 py-3"><button type="button" onClick={() => handleSort('agendamentos_30d')} className="inline-flex items-center gap-1 hover:text-gray-900">Agendamentos (30d) <span className="text-[11px]">{sortIndicator('agendamentos_30d')}</span></button></th>
                   <th className="px-4 py-3"><button type="button" onClick={() => handleSort('mensagens_30d')} className="inline-flex items-center gap-1 hover:text-gray-900">Mensagens (30d) <span className="text-[11px]">{sortIndicator('mensagens_30d')}</span></button></th>
@@ -584,8 +584,8 @@ export const MasterDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }
                     </td>
                     <td className="px-4 py-3 text-gray-600">{row.assinatura_inicio_em ? new Date(row.assinatura_inicio_em).toLocaleString('pt-BR') : 'N/A'}</td>
                     <td className="px-4 py-3 text-gray-600">{row.proxima_cobranca_em ? new Date(row.proxima_cobranca_em).toLocaleString('pt-BR') : 'N/A'}</td>
-                    <td className="px-4 py-3 text-gray-600">{row.stripe_last_event_type || 'N/A'}</td>
-                    <td className="px-4 py-3 text-gray-600">{row.stripe_webhook_updated_at ? new Date(row.stripe_webhook_updated_at).toLocaleString('pt-BR') : 'N/A'}</td>
+                    <td className="px-4 py-3 text-gray-600">{row.payment_last_event_type || 'N/A'}</td>
+                    <td className="px-4 py-3 text-gray-600">{row.payment_webhook_updated_at ? new Date(row.payment_webhook_updated_at).toLocaleString('pt-BR') : 'N/A'}</td>
                     <td className="px-4 py-3 text-gray-700">{Number(row.clientes_30d || 0)}</td>
                     <td className="px-4 py-3 text-gray-700">{Number(row.agendamentos_30d || 0)}</td>
                     <td className="px-4 py-3 text-gray-700">{Number(row.mensagens_30d || 0)}</td>

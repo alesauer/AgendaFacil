@@ -17,6 +17,11 @@ from backend.utils.http import error, success
 
 asaas_bp = Blueprint("asaas", __name__, url_prefix="/asaas")
 
+
+def _runtime_value(env_key: str, fallback: str = "") -> str:
+    return str(MasterRuntimeConfigService.get_runtime_value(env_key, fallback) or fallback).strip()
+
+
 SUPPORTED_EVENTS = {
     "PAYMENT_CREATED",
     "PAYMENT_CONFIRMED",
@@ -69,7 +74,7 @@ def _resolve_barbearia_id(external_reference: str | None) -> str | None:
     slug = str(external_reference or "").strip().lower()
 
     if not slug:
-        slug = str(MasterRuntimeConfigService.get_runtime_value("ASAAS_WEBHOOK_BARBEARIA_SLUG", "") or "").strip().lower()
+        slug = _runtime_value("ASAAS_WEBHOOK_BARBEARIA_SLUG", "").lower()
 
     if not slug:
         slug = str(current_app.config.get("DEFAULT_BARBEARIA_SLUG") or "").strip().lower()
@@ -164,12 +169,12 @@ def _event_id(payload: dict, event: str) -> str:
 
 @asaas_bp.post("/webhook")
 def asaas_webhook():
-    configured_token = str(
-        MasterRuntimeConfigService.get_runtime_value("ASAAS_WEBHOOK_TOKEN", "")
-        or os.getenv("ASAAS_WEBHOOK_TOKEN")
-        or ""
-    ).strip()
+    configured_token = _runtime_value("ASAAS_WEBHOOK_TOKEN", str(os.getenv("ASAAS_WEBHOOK_TOKEN") or ""))
     received_token = str(request.headers.get("asaas-access-token") or "").strip()
+
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.warning("WEBHOOK_TOKEN_CHECK configured=%r received=%r match=%s", configured_token, received_token, configured_token == received_token)
 
     if configured_token and configured_token != received_token:
         return error("Token de webhook inválido", 401)

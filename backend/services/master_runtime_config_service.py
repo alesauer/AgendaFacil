@@ -293,6 +293,107 @@ class MasterRuntimeConfigService:
             requires_restart=False,
             description="Slug fallback para resolução de tenant no webhook do MP",
         ),
+        SettingSpec(
+            key="payments.asaas.api_key",
+            category="payments",
+            env_key="ASAAS_API_KEY",
+            data_type="string",
+            is_secret=True,
+            requires_restart=False,
+            description="Chave de API principal do Asaas",
+        ),
+        SettingSpec(
+            key="payments.asaas.base_url",
+            category="payments",
+            env_key="ASAAS_BASE_URL",
+            data_type="string",
+            is_secret=False,
+            requires_restart=False,
+            description="Base URL da API do Asaas",
+            validator="url",
+        ),
+        SettingSpec(
+            key="payments.asaas.webhook_token",
+            category="payments",
+            env_key="ASAAS_WEBHOOK_TOKEN",
+            data_type="string",
+            is_secret=True,
+            requires_restart=False,
+            description="Token de autenticação do webhook do Asaas",
+        ),
+        SettingSpec(
+            key="payments.asaas.billing_type",
+            category="payments",
+            env_key="ASAAS_BILLING_TYPE",
+            data_type="string",
+            is_secret=False,
+            requires_restart=False,
+            description="Tipo de cobrança padrão do Asaas para assinaturas SaaS",
+        ),
+        SettingSpec(
+            key="payments.asaas.yearly_split_enabled",
+            category="payments",
+            env_key="ASAAS_YEARLY_SPLIT_ENABLED",
+            data_type="boolean",
+            is_secret=False,
+            requires_restart=False,
+            description="Permite parcelar o plano anual no fluxo SaaS com Asaas",
+        ),
+        SettingSpec(
+            key="payments.asaas.yearly_installment_count",
+            category="payments",
+            env_key="ASAAS_YEARLY_INSTALLMENT_COUNT",
+            data_type="number",
+            is_secret=False,
+            requires_restart=False,
+            description="Quantidade padrão de parcelas do plano anual no Asaas",
+        ),
+        SettingSpec(
+            key="payments.asaas.webhook_barbearia_slug",
+            category="payments",
+            env_key="ASAAS_WEBHOOK_BARBEARIA_SLUG",
+            data_type="string",
+            is_secret=False,
+            requires_restart=False,
+            description="Slug fallback para resolução de tenant no webhook do Asaas",
+        ),
+        SettingSpec(
+            key="payments.asaas.sandbox_customer_email",
+            category="payments",
+            env_key="ASAAS_SANDBOX_CUSTOMER_EMAIL",
+            data_type="string",
+            is_secret=False,
+            requires_restart=False,
+            description="E-mail padrão de customer sandbox no Asaas",
+            validator="email",
+        ),
+        SettingSpec(
+            key="payments.asaas.sandbox_customer_name",
+            category="payments",
+            env_key="ASAAS_SANDBOX_CUSTOMER_NAME",
+            data_type="string",
+            is_secret=False,
+            requires_restart=False,
+            description="Nome padrão de customer sandbox no Asaas",
+        ),
+        SettingSpec(
+            key="payments.asaas.sandbox_customer_phone",
+            category="payments",
+            env_key="ASAAS_SANDBOX_CUSTOMER_PHONE",
+            data_type="string",
+            is_secret=False,
+            requires_restart=False,
+            description="Telefone padrão de customer sandbox no Asaas",
+        ),
+        SettingSpec(
+            key="payments.asaas.sandbox_customer_cpf_cnpj",
+            category="payments",
+            env_key="ASAAS_SANDBOX_CUSTOMER_CPF_CNPJ",
+            data_type="string",
+            is_secret=False,
+            requires_restart=False,
+            description="Documento padrão de customer sandbox no Asaas",
+        ),
     )
 
     @classmethod
@@ -416,16 +517,6 @@ class MasterRuntimeConfigService:
         if validator == "supabase_mode":
             if value not in {"auto", "proxy", "direct"}:
                 raise ValueError(f"{spec.key}: use auto, proxy ou direct")
-            return
-
-        if validator == "stripe_key":
-            if value and not value.startswith("sk_"):
-                raise ValueError(f"{spec.key}: chave Stripe deve iniciar com sk_")
-            return
-
-        if validator == "stripe_webhook":
-            if value and not value.startswith("whsec_"):
-                raise ValueError(f"{spec.key}: webhook Stripe deve iniciar com whsec_")
             return
 
     @classmethod
@@ -1126,21 +1217,48 @@ class MasterRuntimeConfigService:
 
     @classmethod
     def _test_payments(cls, values: dict[str, Any]) -> dict[str, Any]:
-        secret_key = str(values.get("STRIPE_SECRET_KEY") or cls.get_runtime_value("STRIPE_SECRET_KEY", "")).strip()
-        webhook_secret = str(values.get("STRIPE_WEBHOOK_SECRET") or cls.get_runtime_value("STRIPE_WEBHOOK_SECRET", "")).strip()
+        provider = str(values.get("PAYMENT_PROVIDER") or cls.get_runtime_value("PAYMENT_PROVIDER", "asaas")).strip().lower() or "asaas"
 
-        if not secret_key:
-            return {"ok": False, "message": "STRIPE_SECRET_KEY não configurada"}
-        if webhook_secret and not webhook_secret.startswith("whsec_"):
-            return {"ok": False, "message": "STRIPE_WEBHOOK_SECRET inválida"}
+        if provider == "asaas":
+            api_key = str(values.get("ASAAS_API_KEY") or cls.get_runtime_value("ASAAS_API_KEY", "")).strip()
+            base_url = str(values.get("ASAAS_BASE_URL") or cls.get_runtime_value("ASAAS_BASE_URL", "https://sandbox.asaas.com/api/v3")).strip().rstrip("/")
+            webhook_token = str(values.get("ASAAS_WEBHOOK_TOKEN") or cls.get_runtime_value("ASAAS_WEBHOOK_TOKEN", "")).strip()
+
+            if not api_key:
+                return {"ok": False, "message": "ASAAS_API_KEY não configurada"}
+            if webhook_token and len(webhook_token) < 8:
+                return {"ok": False, "message": "ASAAS_WEBHOOK_TOKEN inválido"}
+
+            try:
+                response = requests.get(
+                    f"{base_url}/finance/getFinancialTransactionLimits",
+                    headers={"access_token": api_key, "Accept": "application/json"},
+                    timeout=8,
+                )
+                ok = response.status_code < 500
+                return {
+                    "ok": ok,
+                    "message": f"Asaas acessível (HTTP {response.status_code})",
+                    "details": {"status_code": response.status_code, "provider": provider},
+                }
+            except requests.RequestException as exc:
+                return {"ok": False, "message": f"Falha de conectividade com Asaas: {exc}"}
+
+        access_token = str(values.get("MP_ACCESS_TOKEN") or cls.get_runtime_value("MP_ACCESS_TOKEN", "")).strip()
+        if not access_token:
+            return {"ok": False, "message": "MP_ACCESS_TOKEN não configurado"}
 
         try:
-            response = requests.get("https://api.stripe.com/v1/balance", auth=(secret_key, ""), timeout=8)
+            response = requests.get(
+                "https://api.mercadopago.com/v1/payment_methods",
+                headers={"Authorization": f"Bearer {access_token}"},
+                timeout=8,
+            )
             ok = response.status_code < 500
             return {
                 "ok": ok,
-                "message": f"Stripe acessível (HTTP {response.status_code})",
-                "details": {"status_code": response.status_code},
+                "message": f"Mercado Pago acessível (HTTP {response.status_code})",
+                "details": {"status_code": response.status_code, "provider": provider},
             }
         except requests.RequestException as exc:
-            return {"ok": False, "message": f"Falha de conectividade com Stripe: {exc}"}
+            return {"ok": False, "message": f"Falha de conectividade com Mercado Pago: {exc}"}

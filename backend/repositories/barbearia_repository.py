@@ -80,14 +80,6 @@ class BarbeariaRepository(BaseRepository):
         )
 
     @staticmethod
-    def _is_missing_stripe_column_error(exc: Exception) -> bool:
-        message = str(exc).lower()
-        return (
-            "stripe_" in message
-            and ("column" in message or "does not exist" in message or "schema cache" in message)
-        )
-
-    @staticmethod
     def _normalize_cycle(value: str | None) -> str:
         raw = str(value or "").strip().upper()
         if raw == "YEARLY":
@@ -657,7 +649,6 @@ class BarbeariaRepository(BaseRepository):
                 if not (
                     BarbeariaRepository._is_missing_subscription_column_error(exc)
                     or BarbeariaRepository._is_missing_payment_column_error(exc)
-                    or BarbeariaRepository._is_missing_stripe_column_error(exc)
                 ):
                     raise
 
@@ -704,7 +695,6 @@ class BarbeariaRepository(BaseRepository):
                 if not (
                     BarbeariaRepository._is_missing_subscription_column_error(exc)
                     or BarbeariaRepository._is_missing_payment_column_error(exc)
-                    or BarbeariaRepository._is_missing_stripe_column_error(exc)
                 ):
                     raise
 
@@ -734,7 +724,7 @@ class BarbeariaRepository(BaseRepository):
         payment_customer_id: str | None = None,
         payment_subscription_id: str | None = None,
         payment_plan_id: str | None = None,
-        payment_provider: str = "mercadopago",
+        payment_provider: str = "asaas",
     ):
         BarbeariaRepository.require_tenant(barbearia_id)
 
@@ -860,16 +850,9 @@ class BarbeariaRepository(BaseRepository):
         )
 
     @staticmethod
-    def update_subscription(barbearia_id: str, ciclo_cobranca: str, iniciar_trial: bool):
-        BarbeariaRepository.require_tenant(barbearia_id)
-
-        cycle = BarbeariaRepository._normalize_cycle(ciclo_cobranca)
-        price = BarbeariaRepository._SUBSCRIPTION_PRICES[cycle]
-        plan_code = BarbeariaRepository._SUBSCRIPTION_PLAN_CODE[cycle]
-
-        current = BarbeariaRepository.get_subscription(barbearia_id)
-        if not current:
-            return None
+    def _build_subscription_payload(current: dict, *, cycle: str, iniciar_trial: bool):
+        price = int(current.get("valor_plano_centavos") or BarbeariaRepository._SUBSCRIPTION_PRICES[cycle])
+        plan_code = BarbeariaRepository._infer_subscription_plan_code(cycle, price, current.get("plano"))
 
         now = datetime.now(timezone.utc)
         current_trial_used = bool(current.get("trial_usado", False))
@@ -900,7 +883,7 @@ class BarbeariaRepository(BaseRepository):
                 assinatura_inicio_value = now
             proxima_cobranca_value = now + (timedelta(days=365) if cycle == "YEARLY" else timedelta(days=30))
 
-        payload = {
+        return {
             "plano": plan_code,
             "assinatura_status": next_status,
             "ciclo_cobranca": cycle,
@@ -912,6 +895,116 @@ class BarbeariaRepository(BaseRepository):
             "proxima_cobranca_em": BarbeariaRepository._to_iso(proxima_cobranca_value),
             "atualizado_assinatura_em": BarbeariaRepository._to_iso(now),
         }
+
+    @staticmethod
+    def start_trial_on_first_admin_login(barbearia_id: str):
+        BarbeariaRepository.require_tenant(barbearia_id)
+
+        current = BarbeariaRepository.get_subscription(barbearia_id)
+        if not current:
+            return None
+
+        current_status = str(current.get("assinatura_status") or "ACTIVE").upper()
+        if bool(current.get("trial_usado", False)):
+            return current
+        if BarbeariaRepository._as_datetime(current.get("trial_inicio_em")):
+            return current
+        if current_status not in {"ACTIVE", "TRIAL"}:
+            return current
+        if BarbeariaRepository._as_datetime(current.get("assinatura_inicio_em")):
+            return current
+        if str(current.get("payment_subscription_id") or "").strip():
+            return current
+
+        payload = BarbeariaRepository._build_subscription_payload(
+            current,
+            cycle=BarbeariaRepository._normalize_cycle(current.get("ciclo_cobranca")),
+            iniciar_trial=True,
+        )
+
+        if is_db_ready():
+            try:
+                item = query_one(
+                    """
+                    UPDATE barbearias
+                    SET plano = %s,
+                        assinatura_status = %s,
+                        ciclo_cobranca = %s,
+                        valor_plano_centavos = %s,
+                        trial_usado = %s,
+                        trial_inicio_em = %s,
+                        trial_fim_em = %s,
+                        assinatura_inicio_em = %s,
+                        proxima_cobranca_em = %s,
+                        atualizado_assinatura_em = %s
+                    WHERE id = %s
+                      AND COALESCE(trial_usado, FALSE) = FALSE
+                      AND trial_inicio_em IS NULL
+                      AND assinatura_inicio_em IS NULL
+                      AND payment_subscription_id IS NULL
+                    RETURNING id, nome, plano, assinatura_status,
+                              ciclo_cobranca, valor_plano_centavos,
+                              trial_usado, trial_inicio_em, trial_fim_em,
+                              assinatura_inicio_em, proxima_cobranca_em,
+                              atualizado_assinatura_em,
+                              payment_customer_id, payment_subscription_id, payment_plan_id,
+                              payment_last_event_id, payment_last_event_type, payment_last_event_at, payment_webhook_updated_at, payment_provider
+                    """,
+                    (
+                        payload["plano"],
+                        payload["assinatura_status"],
+                        payload["ciclo_cobranca"],
+                        payload["valor_plano_centavos"],
+                        payload["trial_usado"],
+                        payload["trial_inicio_em"],
+                        payload["trial_fim_em"],
+                        payload["assinatura_inicio_em"],
+                        payload["proxima_cobranca_em"],
+                        payload["atualizado_assinatura_em"],
+                        barbearia_id,
+                    ),
+                )
+                return BarbeariaRepository._coalesce_subscription_fields(item) if item else BarbeariaRepository.get_subscription(barbearia_id)
+            except Exception as exc:
+                if not BarbeariaRepository._is_missing_subscription_column_error(exc):
+                    raise
+
+        if is_supabase_ready():
+            supabase = get_supabase_client()
+            try:
+                response = (
+                    supabase.table("barbearias")
+                    .update(payload)
+                    .eq("id", barbearia_id)
+                    .eq("trial_usado", False)
+                    .is_("trial_inicio_em", None)
+                    .is_("assinatura_inicio_em", None)
+                    .is_("payment_subscription_id", None)
+                    .execute()
+                )
+                data = response.data or []
+                if data:
+                    return BarbeariaRepository._coalesce_subscription_fields(data[0])
+                return BarbeariaRepository.get_subscription(barbearia_id)
+            except Exception as exc:
+                if not BarbeariaRepository._is_missing_subscription_column_error(exc):
+                    raise
+
+        return current
+
+    @staticmethod
+    def update_subscription(barbearia_id: str, ciclo_cobranca: str, iniciar_trial: bool):
+        BarbeariaRepository.require_tenant(barbearia_id)
+
+        cycle = BarbeariaRepository._normalize_cycle(ciclo_cobranca)
+        price = BarbeariaRepository._SUBSCRIPTION_PRICES[cycle]
+        plan_code = BarbeariaRepository._SUBSCRIPTION_PLAN_CODE[cycle]
+
+        current = BarbeariaRepository.get_subscription(barbearia_id)
+        if not current:
+            return None
+
+        payload = BarbeariaRepository._build_subscription_payload(current, cycle=cycle, iniciar_trial=iniciar_trial)
 
         if is_db_ready():
             try:

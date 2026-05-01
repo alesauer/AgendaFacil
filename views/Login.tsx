@@ -86,7 +86,7 @@ export const Login: React.FC = () => {
 
       await login(phone, isClient ? 'CLIENT' : 'ADMIN', password);
     } catch (err: any) {
-      if (String(err?.code || '').toUpperCase() === 'TENANT_SUSPENDED') {
+      if (['TENANT_SUSPENDED', 'TENANT_PAST_DUE'].includes(String(err?.code || '').toUpperCase())) {
         setSuspensionDetails((err?.details || null) as SuspensionDetails | null);
         setIsSuspendedModalOpen(true);
         setError('');

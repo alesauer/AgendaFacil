@@ -1655,7 +1655,6 @@ const App: React.FC = () => {
     return { success: true };
   };
 
-  const isStripeSubscriptionActive = () => localStorage.getItem('stripe_subscription_active') === 'true';
   const getCurrentTenantSlug = () => {
     const pathSegment = window.location.pathname.split('/').filter(Boolean)[0];
     if (pathSegment && /^[a-z0-9-]+$/i.test(pathSegment)) {

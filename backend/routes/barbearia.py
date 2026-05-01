@@ -365,7 +365,7 @@ def get_assinatura():
         item.get("payment_provider")
         or current_app.config.get("PAYMENT_PROVIDER")
         or os.getenv("PAYMENT_PROVIDER")
-        or "mercadopago"
+        or "asaas"
     ).strip().lower()
 
     pagamentos_recentes = []
@@ -538,42 +538,34 @@ def create_assinatura_checkout():
 
     barbearia_slug = str(barbearia.get("slug") or "").strip()
     payer_email = str(payload.get("email") or "").strip() or None
+    payer_document = str(payload.get("cpf_cnpj") or payload.get("documento") or "").strip() or None
     frontend_url = str(current_app.config.get("FRONTEND_APP_URL") or "").strip().rstrip("/")
     back_url = f"{frontend_url}/assinatura?status=success" if frontend_url else "https://app.barbeiros.app/assinatura?status=success"
     payment_provider = str(
         current_app.config.get("PAYMENT_PROVIDER")
         or os.getenv("PAYMENT_PROVIDER")
-        or "mercadopago"
+        or "asaas"
     ).strip().lower()
 
+    if payment_provider == "asaas" and not payer_document:
+        return error("cpf_cnpj é obrigatório para gerar checkout no Asaas", 400)
+
     try:
-        if payment_provider == "asaas":
-            from backend.services import asaas_service
+        from backend.services import asaas_service
 
-            result = asaas_service.create_subscription_checkout_link(
-                ciclo=ciclo_cobranca,
-                payer_email=payer_email,
-                barbearia_slug=barbearia_slug,
-                plano_tier=plano_tier,
-                payer_name=str(barbearia.get("nome") or "").strip() or None,
-                payer_phone=str(barbearia.get("telefone") or "").strip() or None,
-                payer_document=str(payload.get("cpf_cnpj") or payload.get("documento") or "").strip() or None,
-                installment_count=installment_count,
-            )
-        else:
-            from backend.services import mercadopago_service as mp
-
-            result = mp.create_preapproval_link(
-                ciclo=ciclo_cobranca,
-                payer_email=payer_email,
-                barbearia_slug=barbearia_slug,
-                back_url=back_url,
-                plano_tier=plano_tier,
-            )
+        result = asaas_service.create_subscription_checkout_link(
+            ciclo=ciclo_cobranca,
+            payer_email=payer_email,
+            barbearia_slug=barbearia_slug,
+            plano_tier=plano_tier,
+            payer_name=str(barbearia.get("nome") or "").strip() or None,
+            payer_phone=str(barbearia.get("telefone") or "").strip() or None,
+            payer_document=payer_document,
+            installment_count=installment_count,
+        )
     except ValueError as exc:
         return error(str(exc), 503)
     except Exception as exc:
-        provider_label = "Asaas" if payment_provider == "asaas" else "Mercado Pago"
-        return error(f"Erro ao criar checkout no {provider_label}: {exc}", 502)
+        return error(f"Erro ao criar checkout no Asaas: {exc}", 502)
 
     return success(result)

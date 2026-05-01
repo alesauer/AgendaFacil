@@ -7,6 +7,11 @@ services:
       - backend/.env
     ports:
       - "5000:5000"
+    extra_hosts:
+      - "sandbox.asaas.com:13.227.110.43"
+      - "sandbox.asaas.com:13.227.110.4"
+      - "sandbox.asaas.com:13.227.110.110"
+      - "sandbox.asaas.com:13.227.110.126"
     restart: unless-stopped
 
   frontend:
@@ -28,6 +33,11 @@ services:
       dockerfile: backend/Dockerfile
     env_file:
       - backend/.env
+    extra_hosts:
+      - "sandbox.asaas.com:13.227.110.43"
+      - "sandbox.asaas.com:13.227.110.4"
+      - "sandbox.asaas.com:13.227.110.110"
+      - "sandbox.asaas.com:13.227.110.126"
     command: ["python", "backend/scripts/notifications_worker.py", "--limit", "50", "--poll-seconds", "10"]
     depends_on:
       - backend

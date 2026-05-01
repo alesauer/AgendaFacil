@@ -1,4 +1,4 @@
--- Módulo 24: Migração de campos Stripe → Mercado Pago
+-- Módulo 24: Migração de campos Stripe → payment genérico (provider-agnostic)
 -- Renomeia colunas stripe_* para payment_* e adiciona payment_provider
 
 ALTER TABLE public.barbearias

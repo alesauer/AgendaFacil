@@ -12,6 +12,8 @@ from datetime import date, timedelta
 
 import requests
 
+from backend.services.master_runtime_config_service import MasterRuntimeConfigService
+
 logger = logging.getLogger(__name__)
 
 ASAAS_TIMEOUT = 20
@@ -28,20 +30,24 @@ PLAN_PRICES_CENTS: dict[tuple[str, str], int] = {
 }
 
 
+def _runtime_value(env_key: str, fallback: str = "") -> str:
+    return str(MasterRuntimeConfigService.get_runtime_value(env_key, fallback) or fallback).strip()
+
+
 def _get_api_key() -> str:
-    key = str(os.getenv("ASAAS_API_KEY", "") or "").strip()
+    key = _runtime_value("ASAAS_API_KEY") or str(os.getenv("ASAAS_API_KEY", "") or "").strip()
     if not key:
         raise ValueError("ASAAS_API_KEY não configurado")
     return key
 
 
 def _get_base_url() -> str:
-    return str(os.getenv("ASAAS_BASE_URL", "https://sandbox.asaas.com/api/v3") or "").strip().rstrip("/")
+    return (_runtime_value("ASAAS_BASE_URL", "https://sandbox.asaas.com/api/v3") or str(os.getenv("ASAAS_BASE_URL", "https://sandbox.asaas.com/api/v3") or "").strip()).rstrip("/")
 
 
 def _use_proxy() -> bool:
-    raw = str(os.getenv("ASAAS_USE_PROXY", "false") or "false").strip().lower()
-    return raw in {"1", "true", "yes", "sim"}
+    raw = _runtime_value("ASAAS_USE_PROXY", str(os.getenv("ASAAS_USE_PROXY", "false") or "false"))
+    return raw.lower() in {"1", "true", "yes", "sim"}
 
 
 def _normalize_tier(value: str | None) -> str:
@@ -165,13 +171,13 @@ def create_subscription_checkout_link(
     tier = _normalize_tier(plano_tier)
     cycle = _normalize_cycle(ciclo)
 
-    email = str(payer_email or os.getenv("ASAAS_SANDBOX_CUSTOMER_EMAIL", "") or "").strip()
+    email = str(payer_email or _runtime_value("ASAAS_SANDBOX_CUSTOMER_EMAIL", str(os.getenv("ASAAS_SANDBOX_CUSTOMER_EMAIL", "") or "")) or "").strip()
     if not email:
         raise ValueError("Informe email do pagador ou configure ASAAS_SANDBOX_CUSTOMER_EMAIL")
 
-    name = str(payer_name or os.getenv("ASAAS_SANDBOX_CUSTOMER_NAME", "Cliente AgendaFacil") or "Cliente AgendaFacil").strip()
-    phone = str(payer_phone or os.getenv("ASAAS_SANDBOX_CUSTOMER_PHONE", "") or "").strip() or None
-    document = str(payer_document or os.getenv("ASAAS_SANDBOX_CUSTOMER_CPF_CNPJ", "") or "").strip() or None
+    name = str(payer_name or _runtime_value("ASAAS_SANDBOX_CUSTOMER_NAME", str(os.getenv("ASAAS_SANDBOX_CUSTOMER_NAME", "Cliente AgendaFacil") or "Cliente AgendaFacil")) or "Cliente AgendaFacil").strip()
+    phone = str(payer_phone or _runtime_value("ASAAS_SANDBOX_CUSTOMER_PHONE", str(os.getenv("ASAAS_SANDBOX_CUSTOMER_PHONE", "") or "")) or "").strip() or None
+    document = str(payer_document or _runtime_value("ASAAS_SANDBOX_CUSTOMER_CPF_CNPJ", str(os.getenv("ASAAS_SANDBOX_CUSTOMER_CPF_CNPJ", "") or "")) or "").strip() or None
     if not document:
         raise ValueError("Configure ASAAS_SANDBOX_CUSTOMER_CPF_CNPJ para criar assinatura no Asaas")
 
@@ -187,9 +193,9 @@ def create_subscription_checkout_link(
     cycle_asaas = "YEARLY" if cycle == "YEARLY" else "MONTHLY"
     value = _get_plan_value(tier, cycle)
     next_due_date = (date.today() + timedelta(days=1)).isoformat()
-    billing_type = str(os.getenv("ASAAS_BILLING_TYPE", "UNDEFINED") or "UNDEFINED").strip().upper()
+    billing_type = str(_runtime_value("ASAAS_BILLING_TYPE", str(os.getenv("ASAAS_BILLING_TYPE", "UNDEFINED") or "UNDEFINED")) or "UNDEFINED").strip().upper()
 
-    yearly_split_enabled = str(os.getenv("ASAAS_YEARLY_SPLIT_ENABLED", "true") or "true").strip().lower() in {
+    yearly_split_enabled = str(_runtime_value("ASAAS_YEARLY_SPLIT_ENABLED", str(os.getenv("ASAAS_YEARLY_SPLIT_ENABLED", "true") or "true")) or "true").strip().lower() in {
         "1",
         "true",
         "yes",
@@ -198,7 +204,7 @@ def create_subscription_checkout_link(
     if installment_count is not None:
         yearly_installments = int(installment_count)
     else:
-        yearly_installments = int(str(os.getenv("ASAAS_YEARLY_INSTALLMENT_COUNT", "12") or "12").strip() or "12")
+        yearly_installments = int(float(str(_runtime_value("ASAAS_YEARLY_INSTALLMENT_COUNT", str(os.getenv("ASAAS_YEARLY_INSTALLMENT_COUNT", "12") or "12")) or "12").strip() or "12"))
     if yearly_installments < 1:
         yearly_installments = 1
     if yearly_installments > 12:

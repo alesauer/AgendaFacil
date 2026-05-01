@@ -14,6 +14,7 @@ from backend.middleware.auth import auth_required, create_access_token, create_m
 from backend.notifications.dispatcher import NotificationDispatcher
 from backend.notifications.models import Channel, NotificationCommand
 from backend.repositories.auth_repository import AuthRepository
+from backend.repositories.barbearia_repository import BarbeariaRepository
 from backend.utils.http import error, success
 
 auth_bp = Blueprint("auth", __name__, url_prefix="/auth")
@@ -188,9 +189,9 @@ def login():
         return error("telefone ou email e senha são obrigatórios", 400)
 
     tenant = AuthRepository.find_tenant_by_id(g.barbearia_id)
+    tenant_name = (tenant or {}).get("nome") or "sua barbearia"
     tenant_status = str((tenant or {}).get("assinatura_status") or "ACTIVE").upper()
     if tenant_status == "SUSPENDED":
-        tenant_name = (tenant or {}).get("nome") or "sua barbearia"
         whatsapp_url = str(current_app.config.get("SUSPENSION_WHATSAPP_URL") or "").strip()
         portal_url = str(current_app.config.get("SUSPENSION_PORTAL_URL") or "").strip()
         billing_email = str(current_app.config.get("SUSPENSION_BILLING_EMAIL") or "").strip()
@@ -211,6 +212,25 @@ def login():
         return error("Credenciais inválidas", 401)
     if not user.get("ativo", True):
         return error("Usuário inativo", 403)
+
+    if str(user.get("role") or "").upper() == "ADMIN":
+        BarbeariaRepository.start_trial_on_first_admin_login(g.barbearia_id)
+
+    subscription = BarbeariaRepository.get_subscription(g.barbearia_id) or {}
+    effective_status = str(subscription.get("assinatura_status_efetivo") or subscription.get("assinatura_status") or tenant_status).upper()
+    if effective_status == "PAST_DUE":
+        portal_url = str(current_app.config.get("SUSPENSION_PORTAL_URL") or "").strip()
+        billing_email = str(current_app.config.get("SUSPENSION_BILLING_EMAIL") or "").strip()
+        return error(
+            f"O período de teste da barbearia {tenant_name} expirou. Regularize a assinatura para continuar.",
+            423,
+            code="TENANT_PAST_DUE",
+            details={
+                "tenant_name": tenant_name,
+                "portal_url": portal_url or None,
+                "billing_email": billing_email or None,
+            },
+        )
 
     token = create_access_token(str(user["id"]), str(user["barbearia_id"]), user["role"])
     safe_user = {
