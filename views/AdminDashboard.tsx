@@ -5025,7 +5025,6 @@ const SettingsManagement = ({
   const [activeSubTab, setActiveSubTab] = useState<SettingsSubTab>(lockedSubTab || initialSubTab);
   const [activeServiceTab, setActiveServiceTab] = useState<'SERVICES' | 'CATEGORIES'>('SERVICES');
   const [isWhatsappAlertsEnabled, setIsWhatsappAlertsEnabled] = useState<boolean>(true);
-  const [isEmailAlertsEnabled, setIsEmailAlertsEnabled] = useState<boolean>(true);
   const [isLoadingAlertSettings, setIsLoadingAlertSettings] = useState<boolean>(true);
   const [isSavingAlertSettings, setIsSavingAlertSettings] = useState<boolean>(false);
   const [alertSettingsError, setAlertSettingsError] = useState<string | null>(null);
@@ -5129,7 +5128,6 @@ const SettingsManagement = ({
       }
 
       setIsWhatsappAlertsEnabled(Boolean(response.data.whatsapp_enabled));
-      setIsEmailAlertsEnabled(Boolean(response.data.email_enabled));
       setAlertSettingsError(null);
       setIsLoadingAlertSettings(false);
     };
@@ -5141,13 +5139,12 @@ const SettingsManagement = ({
     };
   }, []);
 
-  const updateAlertChannelSettings = async (nextWhatsappEnabled: boolean, nextEmailEnabled: boolean) => {
+  const updateAlertChannelSettings = async (nextWhatsappEnabled: boolean) => {
     setIsSavingAlertSettings(true);
     setAlertSettingsError(null);
 
     const response = await saveNotificationChannelSettingsApi({
       whatsapp_enabled: nextWhatsappEnabled,
-      email_enabled: nextEmailEnabled,
     });
 
     if (!response.success) {
@@ -5157,7 +5154,6 @@ const SettingsManagement = ({
     }
 
     setIsWhatsappAlertsEnabled(Boolean(response.data.whatsapp_enabled));
-    setIsEmailAlertsEnabled(Boolean(response.data.email_enabled));
     setIsSavingAlertSettings(false);
     return true;
   };
@@ -5165,28 +5161,12 @@ const SettingsManagement = ({
   const handleToggleWhatsappAlerts = async () => {
     if (isSavingAlertSettings) return;
     const previousWhatsapp = isWhatsappAlertsEnabled;
-    const previousEmail = isEmailAlertsEnabled;
     const nextWhatsapp = !previousWhatsapp;
 
     setIsWhatsappAlertsEnabled(nextWhatsapp);
-    const saved = await updateAlertChannelSettings(nextWhatsapp, previousEmail);
+    const saved = await updateAlertChannelSettings(nextWhatsapp);
     if (!saved) {
       setIsWhatsappAlertsEnabled(previousWhatsapp);
-      setIsEmailAlertsEnabled(previousEmail);
-    }
-  };
-
-  const handleToggleEmailAlerts = async () => {
-    if (isSavingAlertSettings) return;
-    const previousWhatsapp = isWhatsappAlertsEnabled;
-    const previousEmail = isEmailAlertsEnabled;
-    const nextEmail = !previousEmail;
-
-    setIsEmailAlertsEnabled(nextEmail);
-    const saved = await updateAlertChannelSettings(previousWhatsapp, nextEmail);
-    if (!saved) {
-      setIsWhatsappAlertsEnabled(previousWhatsapp);
-      setIsEmailAlertsEnabled(previousEmail);
     }
   };
 
@@ -9371,24 +9351,6 @@ const SettingsManagement = ({
                     </button>
                   </div>
 
-                  <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-                    <div className="flex items-center gap-3">
-                      <div className="p-2 bg-blue-100 text-blue-600 rounded-lg"><Mail size={20} /></div>
-                      <div>
-                        <p className="font-medium text-gray-900">Alertas por E-mail</p>
-                        <p className="text-xs text-gray-500">Ativa ou desativa o envio de alertas pelo canal E-mail</p>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={handleToggleEmailAlerts}
-                      disabled={isLoadingAlertSettings || isSavingAlertSettings}
-                      className={`w-12 h-6 rounded-full relative transition-colors ${isEmailAlertsEnabled ? 'bg-blue-600' : 'bg-gray-300'}`}
-                      aria-label="Alternar alertas por E-mail"
-                    >
-                      <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${isEmailAlertsEnabled ? 'right-1' : 'left-1'}`}></div>
-                    </button>
-                  </div>
                 </div>
 
                 {alertSettingsError && (
@@ -9403,20 +9365,12 @@ const SettingsManagement = ({
 
               </div>
 
-              {!isWhatsappAlertsEnabled && !isEmailAlertsEnabled ? (
+              {!isWhatsappAlertsEnabled ? (
                 <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-600">
-                  Todos os alertas estão desabilitados. Ative ao menos um canal para exibir a aba de configuração.
+                  Alertas por WhatsApp estão desabilitados. Ative o canal para exibir a configuração da integração.
                 </div>
               ) : (
-                <>
-                  {isWhatsappAlertsEnabled ? (
-                    <WhatsAppIntegration />
-                  ) : (
-                    <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-600">
-                      A integração do WhatsApp está desativada. O canal de E-mail (Resend) continua sendo controlado apenas pelo botão de ativar/desativar acima.
-                    </div>
-                  )}
-                </>
+                <WhatsAppIntegration />
               )}
             </div>
           )}
