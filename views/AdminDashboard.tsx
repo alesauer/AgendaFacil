@@ -6659,7 +6659,7 @@ const SettingsManagement = ({
     { id: 'HOURS', label: 'Horários', icon: <Clock size={18} />, desc: 'Funcionamento' },
     { id: 'INTEGRATIONS', label: 'Integrações', icon: <Zap size={18} />, desc: 'APIs externas' },
     { id: 'BILLING', label: 'Faturamento', icon: <CreditCard size={18} />, desc: 'Assinatura e faturas' },
-    { id: 'SUBSCRIPTIONS', label: 'Assinaturas', icon: <Users size={18} />, desc: 'Planos e assinaturas de clientes' },
+    { id: 'SUBSCRIPTIONS', label: 'Assinaturas', icon: <RotateCcw size={18} />, desc: 'Planos e assinaturas de clientes' },
     { id: 'OTHER', label: 'Identidade', icon: <Settings size={18} />, desc: 'Marca e cores' },
     { id: 'ONBOARDING', label: 'Onboarding', icon: <List size={18} />, desc: 'Configuração inicial' },
     { id: 'CONTACT', label: 'Fale Conosco', icon: <Headphones size={18} />, desc: 'Suporte e ajuda' },
@@ -12689,7 +12689,7 @@ export const AdminDashboard: React.FC = () => {
               onClick={() => handleTabChange('SUBSCRIPTIONS')}
               className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'SUBSCRIPTIONS' ? 'bg-blue-50 text-blue-600 font-medium' : 'text-gray-600 hover:bg-gray-50'}`}
             >
-              <Users size={20} /> Assinaturas
+              <RotateCcw size={20} /> Assinaturas
             </button>
           )}
           {isAdminUser && (
