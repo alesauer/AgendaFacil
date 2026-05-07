@@ -117,6 +117,32 @@ def _find_or_create_customer(
     external_reference: str,
     document: str | None,
 ) -> str:
+    def _extract_customer_id_from_list(response: dict) -> str | None:
+        items = response.get("data") if isinstance(response, dict) else None
+        if not isinstance(items, list):
+            return None
+        first = items[0] if items else None
+        if not isinstance(first, dict):
+            return None
+        customer_id = str(first.get("id") or "").strip()
+        return customer_id or None
+
+    query_candidates: list[dict] = []
+    if document:
+        query_candidates.append({"cpfCnpj": document, "limit": 1})
+    if email:
+        query_candidates.append({"email": email, "limit": 1})
+    if external_reference:
+        query_candidates.append({"externalReference": external_reference, "limit": 1})
+
+    for params in query_candidates:
+        try:
+            listed = _http("GET", "/customers", params=params)
+            existing_customer_id = _extract_customer_id_from_list(listed)
+            if existing_customer_id:
+                return existing_customer_id
+        except Exception:
+            continue
 
     payload = {
         "name": name,
@@ -128,11 +154,23 @@ def _find_or_create_customer(
     if document:
         payload["cpfCnpj"] = document
 
-    created = _http("POST", "/customers", payload=payload)
-    customer_id = str(created.get("id") or "").strip()
-    if not customer_id:
-        raise ValueError("Asaas não retornou customer id")
-    return customer_id
+    try:
+        created = _http("POST", "/customers", payload=payload)
+        customer_id = str(created.get("id") or "").strip()
+        if customer_id:
+            return customer_id
+    except ValueError as exc:
+        error_text = str(exc).lower()
+        if "already exists" not in error_text and "já existe" not in error_text:
+            raise
+
+    for params in query_candidates:
+        listed = _http("GET", "/customers", params=params)
+        existing_customer_id = _extract_customer_id_from_list(listed)
+        if existing_customer_id:
+            return existing_customer_id
+
+    raise ValueError("Asaas não retornou customer id")
 
 
 def _extract_invoice_url(subscription_id: str) -> str:
