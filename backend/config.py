@@ -15,10 +15,10 @@ class Config:
     SUPABASE_HTTP_TIMEOUT_SECONDS = 8
     SUPABASE_TENANT_RETRIES = 3
 
-    EVOLUTION_API_BASE_URL = "https://http://gac.almg.uucp:8082/"
+    EVOLUTION_API_BASE_URL = ""
     EVOLUTION_API_KEY = ""
     EVOLUTION_API_KEY_HEADER = "apikey"
-    EVOLUTION_INSTANCE = "chipGac"
+    EVOLUTION_INSTANCE = ""
     EVOLUTION_SEND_TEXT_PATH = "/message/sendText/{instance}"
     EVOLUTION_HTTP_TIMEOUT_SECONDS = 10
 
