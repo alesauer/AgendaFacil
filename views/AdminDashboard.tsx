@@ -5011,10 +5011,18 @@ const WhatsAppIntegration = () => {
   );
 };
 
-const SettingsManagement = () => {
+type SettingsSubTab = 'PROFESSIONALS' | 'SERVICES' | 'PROFILES' | 'HOURS' | 'INTEGRATIONS' | 'OTHER' | 'ONBOARDING' | 'BILLING' | 'SUBSCRIPTIONS' | 'CONTACT';
+
+const SettingsManagement = ({
+  initialSubTab = 'PROFESSIONALS',
+  lockedSubTab,
+}: {
+  initialSubTab?: SettingsSubTab;
+  lockedSubTab?: SettingsSubTab;
+} = {}) => {
   const navigate = useNavigate();
   const { users, professionals, clients, services, addUser, updateUser, deleteUser, deactivateProfessional, categories, addCategory, updateCategory, deleteCategory, businessHours, saveBusinessHours, brandIdentity, saveBrandIdentity } = useAppContext();
-  const [activeSubTab, setActiveSubTab] = useState<'PROFESSIONALS' | 'SERVICES' | 'PROFILES' | 'HOURS' | 'INTEGRATIONS' | 'OTHER' | 'ONBOARDING' | 'BILLING' | 'SUBSCRIPTIONS' | 'CONTACT'>('PROFESSIONALS');
+  const [activeSubTab, setActiveSubTab] = useState<SettingsSubTab>(lockedSubTab || initialSubTab);
   const [activeServiceTab, setActiveServiceTab] = useState<'SERVICES' | 'CATEGORIES'>('SERVICES');
   const [isWhatsappAlertsEnabled, setIsWhatsappAlertsEnabled] = useState<boolean>(true);
   const [isEmailAlertsEnabled, setIsEmailAlertsEnabled] = useState<boolean>(true);
@@ -5088,6 +5096,9 @@ const SettingsManagement = () => {
     if (typeof window === 'undefined') return '';
     return String(window.localStorage.getItem('billing_checkout_document') || '').replace(/\D/g, '');
   });
+  const [isCheckoutDocumentModalOpen, setIsCheckoutDocumentModalOpen] = useState(false);
+  const [checkoutDocumentDraft, setCheckoutDocumentDraft] = useState('');
+  const [pendingCheckoutTier, setPendingCheckoutTier] = useState<PlanTier | null>(null);
   const [b2cPlans, setB2cPlans] = useState<AssinaturaClientePlanoApi[]>([]);
   const [isLoadingB2cPlans, setIsLoadingB2cPlans] = useState(false);
   const [b2cMessage, setB2cMessage] = useState<string | null>(null);
@@ -5614,12 +5625,8 @@ const SettingsManagement = () => {
     setIsSavingSubscription(false);
   };
 
-  const handlePromptCheckoutDocument = () => {
-    const currentValue = String(subscriptionCpfCnpj || '').replace(/\D/g, '');
-    const raw = window.prompt('Informe o CPF ou CNPJ do responsável financeiro (somente números).', currentValue);
-    if (raw === null) return null;
-
-    const normalized = String(raw || '').replace(/\D/g, '');
+  const persistCheckoutDocument = (rawValue: string) => {
+    const normalized = String(rawValue || '').replace(/\D/g, '');
     if (!normalized) {
       setSubscriptionError('CPF/CNPJ não informado.');
       setSubscriptionSuccess(null);
@@ -5639,7 +5646,33 @@ const SettingsManagement = () => {
     return normalized;
   };
 
-  const handleOpenPaymentLink = async (tier: PlanTier) => {
+  const openCheckoutDocumentModal = (tier: PlanTier | null = null) => {
+    const currentValue = String(subscriptionCpfCnpj || '').replace(/\D/g, '');
+    setCheckoutDocumentDraft(currentValue);
+    setPendingCheckoutTier(tier);
+    setIsCheckoutDocumentModalOpen(true);
+    setSubscriptionError(null);
+  };
+
+  const closeCheckoutDocumentModal = () => {
+    setIsCheckoutDocumentModalOpen(false);
+    setCheckoutDocumentDraft('');
+    setPendingCheckoutTier(null);
+  };
+
+  const handleSaveCheckoutDocument = async () => {
+    const normalized = persistCheckoutDocument(checkoutDocumentDraft);
+    if (!normalized) return;
+
+    const tierToContinue = pendingCheckoutTier;
+    closeCheckoutDocumentModal();
+
+    if (tierToContinue) {
+      await handleOpenPaymentLink(tierToContinue, normalized);
+    }
+  };
+
+  const handleOpenPaymentLink = async (tier: PlanTier, providedDocument?: string) => {
     if (isSavingSubscription || isLoadingSubscription) return;
 
     const currentStatus = String(subscriptionData?.assinatura_status_efetivo || subscriptionData?.assinatura_status || '').toUpperCase();
@@ -5653,8 +5686,11 @@ const SettingsManagement = () => {
     }
 
     const storedDocument = String(subscriptionCpfCnpj || '').replace(/\D/g, '');
-    const normalizedDocument = storedDocument || handlePromptCheckoutDocument();
-    if (!normalizedDocument) return;
+    const normalizedDocument = String(providedDocument || storedDocument || '').replace(/\D/g, '');
+    if (!normalizedDocument) {
+      openCheckoutDocumentModal(tier);
+      return;
+    }
 
     setIsSavingSubscription(true);
     setSubscriptionError(null);
@@ -6629,6 +6665,18 @@ const SettingsManagement = () => {
     { id: 'CONTACT', label: 'Fale Conosco', icon: <Headphones size={18} />, desc: 'Suporte e ajuda' },
   ];
 
+  const visibleTabs = lockedSubTab ? tabs.filter((tab) => tab.id === lockedSubTab) : tabs;
+  const settingsPanelTitle = lockedSubTab === 'SUBSCRIPTIONS' ? 'Assinaturas' : 'Configurações';
+
+  useEffect(() => {
+    if (lockedSubTab) {
+      setActiveSubTab(lockedSubTab);
+      return;
+    }
+
+    setActiveSubTab(initialSubTab);
+  }, [lockedSubTab, initialSubTab]);
+
   const helpCenterSections = useMemo(() => ([
     {
       id: 'START',
@@ -6968,14 +7016,14 @@ const SettingsManagement = () => {
       <aside className="lg:w-64 flex-shrink-0">
         <div className="lg:sticky lg:top-6 space-y-6">
           <div className="flex items-center justify-between lg:block">
-            <h2 className="text-xl font-bold text-gray-800 lg:mb-6">Configurações</h2>
+            <h2 className="text-xl font-bold text-gray-800 lg:mb-6">{settingsPanelTitle}</h2>
             <div className="lg:hidden">
               <select 
                 value={activeSubTab}
                 onChange={(e) => setActiveSubTab(e.target.value as any)}
                 className="bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm font-medium focus:ring-2 focus:ring-blue-500 outline-none shadow-sm"
               >
-                {tabs.map(tab => (
+                {visibleTabs.map(tab => (
                   <option key={tab.id} value={tab.id}>{tab.label}</option>
                 ))}
               </select>
@@ -6984,7 +7032,7 @@ const SettingsManagement = () => {
           
           {/* Desktop Sidebar */}
           <nav className="hidden lg:block space-y-1">
-            {tabs.map((tab) => (
+            {visibleTabs.map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setActiveSubTab(tab.id as any)}
@@ -7007,7 +7055,7 @@ const SettingsManagement = () => {
 
           {/* Mobile Horizontal Scroll */}
           <nav className="lg:hidden flex overflow-x-auto pb-2 gap-2 no-scrollbar -mx-4 px-4 sticky top-0 bg-gray-100 z-10">
-            {tabs.map((tab) => (
+            {visibleTabs.map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setActiveSubTab(tab.id as any)}
@@ -7716,7 +7764,7 @@ const SettingsManagement = () => {
                         Ver pagamentos
                       </button>
                       <button
-                        onClick={() => handlePromptCheckoutDocument()}
+                        onClick={() => openCheckoutDocumentModal()}
                         className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg text-sm font-semibold hover:bg-gray-50"
                       >
                         Atualizar CPF/CNPJ
@@ -7890,6 +7938,54 @@ const SettingsManagement = () => {
                             className="px-4 py-2 rounded-lg border border-gray-200 text-gray-700 font-semibold hover:bg-white"
                           >
                             Fechar
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {isCheckoutDocumentModalOpen && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+                      <div className="w-full max-w-md rounded-2xl bg-white shadow-xl border border-gray-100 overflow-hidden">
+                        <div className="p-6 border-b border-gray-100 flex items-center justify-between gap-3">
+                          <div>
+                            <h4 className="text-lg font-bold text-gray-900">Atualizar CPF/CNPJ</h4>
+                            <p className="text-sm text-gray-600 mt-1">Informe o documento do responsável financeiro para cobrança no Asaas.</p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={closeCheckoutDocumentModal}
+                            className="p-1.5 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100"
+                          >
+                            <X size={18} />
+                          </button>
+                        </div>
+                        <div className="p-6 space-y-3">
+                          <label className="block text-xs font-semibold uppercase tracking-wide text-gray-700">CPF ou CNPJ</label>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            placeholder="Somente números"
+                            value={checkoutDocumentDraft}
+                            onChange={(e) => setCheckoutDocumentDraft(e.target.value.replace(/\D/g, ''))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-white text-gray-900 focus:ring-2 focus:ring-blue-500 outline-none"
+                          />
+                          <p className="text-xs text-gray-500">Aceita CPF (11 dígitos) ou CNPJ (14 dígitos).</p>
+                        </div>
+                        <div className="p-4 bg-gray-50 border-t border-gray-100 flex gap-3">
+                          <button
+                            type="button"
+                            onClick={closeCheckoutDocumentModal}
+                            className="flex-1 py-2.5 rounded-xl border border-gray-200 text-gray-700 font-semibold hover:bg-white"
+                          >
+                            Cancelar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleSaveCheckoutDocument}
+                            className="flex-1 py-2.5 rounded-xl bg-blue-600 text-white font-semibold hover:bg-blue-700"
+                          >
+                            Salvar
                           </button>
                         </div>
                       </div>
@@ -12437,7 +12533,7 @@ export const AdminDashboard: React.FC = () => {
   const canAccessFinanceTab = isAdminUser || canEmployeeViewFinance;
   const canAccessReportsTab = isAdminUser || canEmployeeViewReports;
   const canAccessUsersTab = isAdminUser || canEmployeeViewUsers;
-  const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'USERS' | 'AGENDA' | 'APPOINTMENT_CENTER' | 'FINANCE' | 'REPORTS' | 'SETTINGS'>(isAdminUser ? 'DASHBOARD' : 'AGENDA');
+  const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'USERS' | 'SUBSCRIPTIONS' | 'AGENDA' | 'APPOINTMENT_CENTER' | 'FINANCE' | 'REPORTS' | 'SETTINGS'>(isAdminUser ? 'DASHBOARD' : 'AGENDA');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [agendaNavigationRequest, setAgendaNavigationRequest] = useState<(AgendaNavigationPayload & { nonce: number }) | null>(null);
 
@@ -12490,7 +12586,7 @@ export const AdminDashboard: React.FC = () => {
     }
   }, [isAdminUser, canAccessFinanceTab, canAccessReportsTab, canAccessUsersTab, activeTab]);
 
-  const handleTabChange = (tab: 'DASHBOARD' | 'USERS' | 'AGENDA' | 'APPOINTMENT_CENTER' | 'FINANCE' | 'REPORTS' | 'SETTINGS') => {
+  const handleTabChange = (tab: 'DASHBOARD' | 'USERS' | 'SUBSCRIPTIONS' | 'AGENDA' | 'APPOINTMENT_CENTER' | 'FINANCE' | 'REPORTS' | 'SETTINGS') => {
     if (!isAdminUser && tab !== 'AGENDA' && tab !== 'APPOINTMENT_CENTER' && !(tab === 'FINANCE' && canEmployeeViewFinance) && !(tab === 'REPORTS' && canEmployeeViewReports) && !(tab === 'USERS' && canEmployeeViewUsers)) {
       return;
     }
@@ -12589,6 +12685,14 @@ export const AdminDashboard: React.FC = () => {
             </button>
           )}
           {isAdminUser && (
+            <button
+              onClick={() => handleTabChange('SUBSCRIPTIONS')}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'SUBSCRIPTIONS' ? 'bg-blue-50 text-blue-600 font-medium' : 'text-gray-600 hover:bg-gray-50'}`}
+            >
+              <Users size={20} /> Assinaturas
+            </button>
+          )}
+          {isAdminUser && (
             <>
               <button 
                 onClick={() => handleTabChange('SETTINGS')}
@@ -12649,6 +12753,7 @@ export const AdminDashboard: React.FC = () => {
           {activeTab === 'FINANCE' && canAccessFinanceTab && <FinanceManagement />}
           {activeTab === 'REPORTS' && canAccessReportsTab && <ReportsManagement />}
           {activeTab === 'USERS' && canAccessUsersTab && <ClientsManagement />}
+          {activeTab === 'SUBSCRIPTIONS' && isAdminUser && <SettingsManagement initialSubTab="SUBSCRIPTIONS" lockedSubTab="SUBSCRIPTIONS" />}
             {activeTab === 'AGENDA' && <CalendarManagement navigationRequest={agendaNavigationRequest} />}
           {activeTab === 'APPOINTMENT_CENTER' && <AppointmentCenterManagement onOpenAgenda={handleOpenAppointmentInAgenda} />}
           {activeTab === 'SETTINGS' && isAdminUser && <SettingsManagement />}
