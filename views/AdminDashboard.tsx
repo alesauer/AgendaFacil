@@ -7011,8 +7011,9 @@ const SettingsManagement = ({
   }, [activeSubTab]);
 
   return (
-    <div className="flex flex-col lg:flex-row gap-8">
+    <div className={lockedSubTab ? 'space-y-8' : 'flex flex-col lg:flex-row gap-8'}>
       {/* Sidebar Navigation */}
+      {!lockedSubTab && (
       <aside className="lg:w-64 flex-shrink-0">
         <div className="lg:sticky lg:top-6 space-y-6">
           <div className="flex items-center justify-between lg:block">
@@ -7072,9 +7073,10 @@ const SettingsManagement = ({
           </nav>
         </div>
       </aside>
+      )}
 
       {/* Main Content Area */}
-      <div className="flex-1">
+      <div className={lockedSubTab ? '' : 'flex-1'}>
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 sm:p-8 min-h-[500px]">
           {activeSubTab === 'PROFESSIONALS' && (
             <div className="space-y-6">
