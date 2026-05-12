@@ -182,6 +182,9 @@ const OnboardingAccessGuard: React.FC<OnboardingAccessGuardProps> = ({
 // --- Main App Component ---
 
 const App: React.FC = () => {
+  const APP_HOSTNAME = 'app.barbeiros.app';
+  const MARKETING_URL = 'https://www.barbeiros.app';
+  const RESERVED_HASH_ROUTES = new Set(['login', 'admin', 'client', 'master', 'onboarding']);
   const MAX_AVATAR_URL_LENGTH = 300000;
   const DEFAULT_PRIMARY_COLOR = '#2563eb';
   const DEFAULT_SECONDARY_COLOR = '#eff6ff';
@@ -267,6 +270,26 @@ const App: React.FC = () => {
       secondaryColor: DEFAULT_SECONDARY_COLOR,
     };
   });
+
+  useEffect(() => {
+    const hostname = String(window.location.hostname || '').toLowerCase();
+    if (hostname !== APP_HOSTNAME) {
+      return;
+    }
+
+    const pathSegment = window.location.pathname.split('/').filter(Boolean)[0] || '';
+    const normalizedPathSegment = pathSegment.trim().toLowerCase();
+    const hasPathSlug = /^[a-z0-9-]+$/.test(normalizedPathSegment);
+
+    const hashPath = (window.location.hash || '').replace(/^#\/?/, '');
+    const hashSegment = hashPath.split('/').filter(Boolean)[0] || '';
+    const normalizedHashSegment = hashSegment.trim().toLowerCase();
+    const hasHashSlug = /^[a-z0-9-]+$/.test(normalizedHashSegment) && !RESERVED_HASH_ROUTES.has(normalizedHashSegment);
+
+    if (!hasPathSlug && !hasHashSlug) {
+      window.location.replace(MARKETING_URL);
+    }
+  }, []);
 
   const normalizeHexColor = (value?: string): string | null => {
     if (!value) return null;

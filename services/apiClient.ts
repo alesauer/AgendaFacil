@@ -14,6 +14,8 @@ type ApiError = {
 export type ApiResponse<T> = ApiSuccess<T> | ApiError;
 
 const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://127.0.0.1:5000';
+const APP_HOSTNAME = 'app.barbeiros.app';
+const MARKETING_URL = 'https://www.barbeiros.app';
 
 const RESERVED_HASH_ROUTES = new Set(['login', 'admin', 'client', 'master', 'onboarding']);
 
@@ -183,6 +185,13 @@ export async function apiRequest<T>(
 
     if (!response.ok) {
       const apiMessage = parsedBody?.error as string | undefined;
+      const normalizedMessage = String(apiMessage || '').toLowerCase();
+      const isTenantNotFound = response.status === 404 && normalizedMessage.includes('barbearia não encontrada');
+      const currentHost = String(window.location.hostname || '').toLowerCase();
+      if (isTenantNotFound && currentHost === APP_HOSTNAME) {
+        window.location.replace(MARKETING_URL);
+      }
+
       return {
         success: false,
         error: getFriendlyHttpError(response.status, path, requestMethod, apiMessage),
