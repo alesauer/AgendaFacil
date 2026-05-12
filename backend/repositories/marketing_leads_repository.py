@@ -17,6 +17,17 @@ class MarketingLeadsRepository(BaseRepository):
         )
 
     @staticmethod
+    def _is_missing_dispatch_column_error(exc: Exception) -> bool:
+        message = str(exc).lower()
+        dispatch_columns = (
+            "whatsapp_dispatch_status",
+            "whatsapp_dispatch_attempts",
+            "whatsapp_next_retry_at",
+            "whatsapp_last_error",
+        )
+        return any(column in message for column in dispatch_columns)
+
+    @staticmethod
     def create(name: str, whatsapp: str, source: str = "landing_vercel", 
                ip_address: str = None, user_agent: str = None) -> dict:
         """Criar novo lead"""
@@ -33,8 +44,18 @@ class MarketingLeadsRepository(BaseRepository):
                 row = query_one(
                     """
                     INSERT INTO public.marketing_leads 
-                    (name, whatsapp, source, ip_address, user_agent, first_interaction_at)
-                    VALUES (%s, %s, %s, %s, %s, NOW())
+                    (
+                        name,
+                        whatsapp,
+                        source,
+                        ip_address,
+                        user_agent,
+                        first_interaction_at,
+                        whatsapp_dispatch_status,
+                        whatsapp_dispatch_attempts,
+                        whatsapp_next_retry_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s, NOW(), 'PENDING', 0, NOW())
                     RETURNING id
                     """,
                     (name, whatsapp_clean, source, ip_address, user_agent),
@@ -59,7 +80,10 @@ class MarketingLeadsRepository(BaseRepository):
                     "source": source,
                     "ip_address": ip_address,
                     "user_agent": user_agent,
-                    "first_interaction_at": datetime.utcnow().isoformat()
+                    "first_interaction_at": datetime.utcnow().isoformat(),
+                    "whatsapp_dispatch_status": "PENDING",
+                    "whatsapp_dispatch_attempts": 0,
+                    "whatsapp_next_retry_at": datetime.utcnow().isoformat(),
                 }).execute()
                 
                 if response.data:
@@ -133,7 +157,9 @@ class MarketingLeadsRepository(BaseRepository):
         # Montar colunas seguras para update
         allowed_fields = {
             "status", "validation_status", "last_interaction_at",
-            "whatsapp_sent_at", "whatsapp_opened_at", "link_clicked_at"
+            "whatsapp_sent_at", "whatsapp_opened_at", "link_clicked_at",
+            "whatsapp_dispatch_status", "whatsapp_dispatch_attempts",
+            "whatsapp_next_retry_at", "whatsapp_last_error",
         }
         safe_data = {k: v for k, v in data.items() if k in allowed_fields}
         
@@ -184,6 +210,47 @@ class MarketingLeadsRepository(BaseRepository):
                 .limit(limit)\
                 .execute()
             return response.data or []
+
+    @staticmethod
+    def list_pending_whatsapp_dispatch(limit: int = 50) -> list:
+        """Listar leads pendentes para envio assíncrono de WhatsApp."""
+        pending_statuses = ("PENDING", "RETRY")
+
+        if is_db_ready():
+            try:
+                return query_all(
+                    """
+                    SELECT *
+                    FROM public.marketing_leads
+                    WHERE whatsapp_dispatch_status IN (%s, %s)
+                      AND COALESCE(whatsapp_next_retry_at, created_at) <= NOW()
+                    ORDER BY COALESCE(whatsapp_next_retry_at, created_at) ASC
+                    LIMIT %s
+                    """,
+                    (*pending_statuses, limit),
+                )
+            except Exception as exc:
+                if not MarketingLeadsRepository._is_missing_table_error(exc) and not MarketingLeadsRepository._is_missing_dispatch_column_error(exc):
+                    raise
+
+        if is_supabase_ready():
+            supabase = get_supabase_client()
+            try:
+                response = (
+                    supabase.table("marketing_leads")
+                    .select("*")
+                    .in_("whatsapp_dispatch_status", list(pending_statuses))
+                    .lte("whatsapp_next_retry_at", datetime.utcnow().isoformat())
+                    .order("whatsapp_next_retry_at", desc=False)
+                    .limit(limit)
+                    .execute()
+                )
+                return response.data or []
+            except Exception as exc:
+                if not MarketingLeadsRepository._is_missing_dispatch_column_error(exc):
+                    raise
+
+        return []
 
     @staticmethod
     def list_pending_validation(limit: int = 50) -> list:

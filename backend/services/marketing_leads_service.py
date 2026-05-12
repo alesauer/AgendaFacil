@@ -9,6 +9,8 @@ from backend.services.master_runtime_config_service import MasterRuntimeConfigSe
 class MarketingLeadsService:
     """Serviço para disparar mensagens e gerenciar leads da landing page"""
 
+    RETRY_DELAYS_SECONDS = (60, 300, 900)
+
     @staticmethod
     def _get_evolution_config() -> dict:
         """Obter configuração do Evolution para master/global"""
@@ -196,6 +198,90 @@ Quer saber como começar? Estamos aqui pra ajudar! 💬"""
                 "lead_id": lead_id,
                 "error": str(exc)
             }
+
+    @staticmethod
+    def enqueue_warmup_dispatch(lead_id: str) -> None:
+        try:
+            MarketingLeadsRepository.update(lead_id, {
+                "whatsapp_dispatch_status": "PENDING",
+                "whatsapp_next_retry_at": datetime.utcnow().isoformat(),
+                "whatsapp_last_error": None,
+            })
+        except Exception:
+            return None
+
+    @staticmethod
+    def _next_retry_at(attempts: int) -> datetime | None:
+        if attempts <= 0:
+            return datetime.utcnow()
+        index = min(attempts - 1, len(MarketingLeadsService.RETRY_DELAYS_SECONDS) - 1)
+        delay_seconds = MarketingLeadsService.RETRY_DELAYS_SECONDS[index]
+        if attempts > len(MarketingLeadsService.RETRY_DELAYS_SECONDS):
+            return None
+        from datetime import timedelta
+
+        return datetime.utcnow() + timedelta(seconds=delay_seconds)
+
+    @staticmethod
+    def process_pending_warmup_dispatches(limit: int = 50) -> dict:
+        leads = MarketingLeadsRepository.list_pending_whatsapp_dispatch(limit=limit)
+        if not leads:
+            return {"picked": 0, "sent": 0, "failed": 0, "scheduled_retry": 0}
+
+        sent = 0
+        failed = 0
+        scheduled_retry = 0
+
+        for lead in leads:
+            lead_id = str(lead.get("id") or "")
+            if not lead_id:
+                continue
+
+            name = str(lead.get("name") or "").strip()
+            whatsapp = str(lead.get("whatsapp") or "").strip()
+            attempts = int(lead.get("whatsapp_dispatch_attempts") or 0)
+
+            result = MarketingLeadsService.send_warmup_welcome(
+                lead_id=lead_id,
+                name=name,
+                whatsapp=whatsapp,
+            )
+
+            if result.get("success"):
+                MarketingLeadsRepository.update(lead_id, {
+                    "whatsapp_dispatch_status": "SENT",
+                    "whatsapp_dispatch_attempts": attempts + 1,
+                    "whatsapp_last_error": None,
+                    "whatsapp_next_retry_at": None,
+                })
+                sent += 1
+                continue
+
+            error_msg = str(result.get("error") or "Falha no envio")
+            next_retry = MarketingLeadsService._next_retry_at(attempts + 1)
+            if next_retry is None:
+                MarketingLeadsRepository.update(lead_id, {
+                    "whatsapp_dispatch_status": "FAILED",
+                    "whatsapp_dispatch_attempts": attempts + 1,
+                    "whatsapp_last_error": error_msg,
+                    "whatsapp_next_retry_at": None,
+                })
+                failed += 1
+            else:
+                MarketingLeadsRepository.update(lead_id, {
+                    "whatsapp_dispatch_status": "RETRY",
+                    "whatsapp_dispatch_attempts": attempts + 1,
+                    "whatsapp_last_error": error_msg,
+                    "whatsapp_next_retry_at": next_retry.isoformat(),
+                })
+                scheduled_retry += 1
+
+        return {
+            "picked": len(leads),
+            "sent": sent,
+            "failed": failed,
+            "scheduled_retry": scheduled_retry,
+        }
 
     @staticmethod
     def send_reengagement_d1(lead_id: str, name: str, whatsapp: str) -> dict:

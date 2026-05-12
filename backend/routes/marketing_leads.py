@@ -84,28 +84,15 @@ def create_lead():
         )
         
         lead_id = lead.get("id")
-        
-        # Disparar WhatsApp assincronamente
-        # (Em produção, isso seria uma job no Celery/Redis)
-        # Por enquanto, fazer sincronamente
-        send_result = MarketingLeadsService.send_warmup_welcome(
-            lead_id=lead_id,
-            name=name,
-            whatsapp=whatsapp_clean
-        )
-        
-        if not send_result.get("success"):
-            return success({
-                "lead_id": lead_id,
-                "message": "Lead capturado com sucesso.",
-                "whatsapp_dispatched": False,
-                "warning": f"Falha ao enviar WhatsApp: {send_result.get('error')}"
-            }, 201)
+
+        # Enfileira envio assíncrono para o worker
+        MarketingLeadsService.enqueue_warmup_dispatch(lead_id)
         
         return success({
             "lead_id": lead_id,
-            "message": "Lead capturado com sucesso. Verifique seu WhatsApp!",
-            "whatsapp_dispatched": True
+            "message": "Lead capturado com sucesso. Você receberá instruções no WhatsApp em instantes.",
+            "whatsapp_dispatched": False,
+            "dispatch_mode": "async"
         }, 201)
         
     except ValueError as ve:
