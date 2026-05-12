@@ -62,6 +62,12 @@ const getAuthToken = (): string | null => {
   return localStorage.getItem('auth_token');
 };
 
+const isMasterHashRoute = (): boolean => {
+  const hashPath = (window.location.hash || '').replace(/^#\/?/, '');
+  const first = hashPath.split('/').filter(Boolean)[0];
+  return String(first || '').toLowerCase() === 'master';
+};
+
 const stripHtml = (value: string): string => {
   return value
     .replace(/<style[\s\S]*?>[\s\S]*?<\/style>/gi, ' ')
@@ -188,7 +194,8 @@ export async function apiRequest<T>(
       const normalizedMessage = String(apiMessage || '').toLowerCase();
       const isTenantNotFound = response.status === 404 && normalizedMessage.includes('barbearia não encontrada');
       const currentHost = String(window.location.hostname || '').toLowerCase();
-      if (isTenantNotFound && currentHost === APP_HOSTNAME) {
+      const isMasterApi = path.toLowerCase().startsWith('/master');
+      if (isTenantNotFound && currentHost === APP_HOSTNAME && !isMasterHashRoute() && !isMasterApi) {
         window.location.replace(MARKETING_URL);
       }
 
