@@ -277,11 +277,17 @@ const App: React.FC = () => {
       return;
     }
 
+    const hashPath = (window.location.hash || '').replace(/^#\/?/, '');
+    const hashRoute = hashPath.split('/').filter(Boolean)[0] || '';
+    const normalizedHashRoute = hashRoute.trim().toLowerCase();
+    if (normalizedHashRoute === 'master') {
+      return;
+    }
+
     const pathSegment = window.location.pathname.split('/').filter(Boolean)[0] || '';
     const normalizedPathSegment = pathSegment.trim().toLowerCase();
     const hasPathSlug = /^[a-z0-9-]+$/.test(normalizedPathSegment);
 
-    const hashPath = (window.location.hash || '').replace(/^#\/?/, '');
     const hashSegment = hashPath.split('/').filter(Boolean)[0] || '';
     const normalizedHashSegment = hashSegment.trim().toLowerCase();
     const hasHashSlug = /^[a-z0-9-]+$/.test(normalizedHashSegment) && !RESERVED_HASH_ROUTES.has(normalizedHashSegment);
