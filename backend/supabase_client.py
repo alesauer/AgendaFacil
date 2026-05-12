@@ -10,12 +10,13 @@ def reset_supabase_client():
     _client = None
 
 def is_supabase_ready() -> bool:
-    return bool(current_app.config.get("SUPABASE_URL") and current_app.config.get("SUPABASE_KEY"))
+    key = current_app.config.get("SUPABASE_SERVICE_ROLE_KEY") or current_app.config.get("SUPABASE_KEY")
+    return bool(current_app.config.get("SUPABASE_URL") and key)
 
 def get_supabase_client() -> Client:
     global _client
     url = current_app.config.get("SUPABASE_URL", "")
-    key = current_app.config.get("SUPABASE_KEY", "")
+    key = current_app.config.get("SUPABASE_SERVICE_ROLE_KEY", "") or current_app.config.get("SUPABASE_KEY", "")
     if not url or not key:
         raise RuntimeError("SUPABASE_URL/SUPABASE_KEY não configurados")
     if _client is None:

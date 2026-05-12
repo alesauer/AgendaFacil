@@ -8,6 +8,7 @@ class Config:
     DATABASE_URL = ""
     SUPABASE_URL = ""
     SUPABASE_KEY = ""
+    SUPABASE_SERVICE_ROLE_KEY = ""
     SUPABASE_ONLY = True
     SUPABASE_NETWORK_MODE = "proxy"
     BYPASS_PROXY_FOR_SUPABASE = False
@@ -63,6 +64,7 @@ def _hydrate_from_env(config_cls):
     config_cls.DATABASE_URL = ""
     config_cls.SUPABASE_URL = os.getenv("SUPABASE_URL", "")
     config_cls.SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
+    config_cls.SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
     config_cls.SUPABASE_ONLY = True
     config_cls.SUPABASE_NETWORK_MODE = os.getenv("SUPABASE_NETWORK_MODE", "auto").strip().lower()
     if config_cls.SUPABASE_NETWORK_MODE not in {"auto", "proxy", "direct"}:

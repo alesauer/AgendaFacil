@@ -7,7 +7,7 @@ from backend.services.marketing_leads_service import MarketingLeadsService
 from backend.utils.http import error, success
 
 
-marketing_leads_bp = Blueprint("marketing_leads", __name__, url_prefix="/api/leads")
+marketing_leads_bp = Blueprint("marketing_leads", __name__)
 
 # Regex para validar WhatsApp BR
 WHATSAPP_REGEX = re.compile(r'^\+?55?\s*\(?([0-9]{2})\)?\s*[0-9]{4,5}-?[0-9]{4}$|^[0-9]{10,11}$')
@@ -35,7 +35,8 @@ def _validate_name(name: str) -> bool:
     return len(clean) >= 2
 
 
-@marketing_leads_bp.route("", methods=["POST"])
+@marketing_leads_bp.route("/api/leads", methods=["POST"])
+@marketing_leads_bp.route("/leads", methods=["POST"])
 def create_lead():
     """
     Criar novo lead a partir do modal da landing page
@@ -110,7 +111,8 @@ def create_lead():
         return error(f"Erro ao criar lead: {str(exc)}", 500)
 
 
-@marketing_leads_bp.route("/<lead_id>", methods=["GET"])
+@marketing_leads_bp.route("/api/leads/<lead_id>", methods=["GET"])
+@marketing_leads_bp.route("/leads/<lead_id>", methods=["GET"])
 def get_lead(lead_id: str):
     """
     Buscar dados do lead por ID (usado no onboarding auto-provisionado)
@@ -136,7 +138,8 @@ def get_lead(lead_id: str):
         return error(f"Erro ao buscar lead: {str(exc)}", 500)
 
 
-@marketing_leads_bp.route("/<lead_id>/track-click", methods=["POST"])
+@marketing_leads_bp.route("/api/leads/<lead_id>/track-click", methods=["POST"])
+@marketing_leads_bp.route("/leads/<lead_id>/track-click", methods=["POST"])
 def track_click(lead_id: str):
     """
     Rastrear quando lead clica no link do WhatsApp
@@ -164,7 +167,8 @@ def track_click(lead_id: str):
         return error(f"Erro ao rastrear: {str(exc)}", 500)
 
 
-@marketing_leads_bp.route("/<lead_id>/convert-to-barbearia", methods=["POST"])
+@marketing_leads_bp.route("/api/leads/<lead_id>/convert-to-barbearia", methods=["POST"])
+@marketing_leads_bp.route("/leads/<lead_id>/convert-to-barbearia", methods=["POST"])
 def convert_to_barbearia(lead_id: str):
     """
     Converter lead para barbearia ativa (quando completa onboarding)
