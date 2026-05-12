@@ -1,6 +1,5 @@
 """Serviço para gerenciar leads da landing page com integração WhatsApp"""
 
-import os
 import requests
 from datetime import datetime
 from backend.repositories.marketing_leads_repository import MarketingLeadsRepository
@@ -46,6 +45,36 @@ class MarketingLeadsService:
         return f"{base_url}{path}"
 
     @staticmethod
+    def _candidate_evolution_urls(config: dict) -> list[str]:
+        base_url = config.get("base_url", "").rstrip("/")
+        instance = config.get("instance", "")
+        configured_path = config.get("send_path", "/message/sendText/{instance}")
+
+        if not base_url or not instance:
+            return []
+
+        candidates = [
+            configured_path,
+            "/message/sendText/{instance}",
+            "/message/sendText/{instance}/",
+            "/message/sendText",
+            "/message/sendText/",
+        ]
+
+        urls: list[str] = []
+        seen: set[str] = set()
+        for candidate in candidates:
+            path = str(candidate or "").replace("{instance}", instance)
+            if not path.startswith("/"):
+                path = f"/{path}"
+            final_url = f"{base_url}{path}"
+            if final_url in seen:
+                continue
+            seen.add(final_url)
+            urls.append(final_url)
+        return urls
+
+    @staticmethod
     def send_warmup_welcome(lead_id: str, name: str, whatsapp: str) -> dict:
         """
         Disparar mensagem de boas-vindas no WhatsApp do lead (D0)
@@ -82,7 +111,6 @@ https://app.barbeiros.app/#/onboarding?lead_id={lead_id}
 Quer saber como começar? Estamos aqui pra ajudar! 💬"""
             
             # Construir payload
-            url = MarketingLeadsService._build_evolution_url(config)
             headers = {"Content-Type": "application/json"}
             
             if config.get("api_key"):
@@ -93,15 +121,42 @@ Quer saber como começar? Estamos aqui pra ajudar! 💬"""
                 "text": message
             }
             
-            # Enviar via Evolution
-            response = requests.post(
-                url,
-                json=payload,
-                headers=headers,
-                timeout=config.get("timeout", 30)
-            )
-            
-            result = response.json() if response.text else {}
+            # Enviar via Evolution com fallback de endpoint
+            response = None
+            result = {}
+            last_error = ""
+
+            for candidate_url in MarketingLeadsService._candidate_evolution_urls(config):
+                try:
+                    candidate_response = requests.post(
+                        candidate_url,
+                        json=payload,
+                        headers=headers,
+                        timeout=config.get("timeout", 30)
+                    )
+
+                    candidate_result = candidate_response.json() if candidate_response.text else {}
+
+                    if candidate_response.status_code != 404:
+                        response = candidate_response
+                        result = candidate_result
+                        break
+
+                    last_error = str(
+                        candidate_result.get("message")
+                        or candidate_result.get("error")
+                        or "Not Found"
+                    )
+                except Exception as request_exc:
+                    last_error = str(request_exc)
+
+            if response is None:
+                return {
+                    "success": False,
+                    "lead_id": lead_id,
+                    "error": last_error or "Falha ao enviar mensagem no Evolution",
+                    "status_code": 404,
+                }
             
             # Se bem-sucedido, atualizar lead
             if response.status_code < 400:
@@ -122,7 +177,7 @@ Quer saber como começar? Estamos aqui pra ajudar! 💬"""
                 error_msg = str(result.get("message") or result.get("error") or "Erro no Evolution")
                 
                 # Se problema no número, marcar como inválido
-                if any(x in error_msg.lower() for x in ["number", "invalid", "not found", "não encontrado"]):
+                if any(x in error_msg.lower() for x in ["number", "invalid", "não encontrado"]):
                     MarketingLeadsRepository.update(lead_id, {
                         "validation_status": "INVALID",
                         "status": "PROSPECT"

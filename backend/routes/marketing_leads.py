@@ -95,14 +95,17 @@ def create_lead():
         )
         
         if not send_result.get("success"):
-            return error(
-                f"Lead criado mas falha ao enviar WhatsApp: {send_result.get('error')}",
-                201  # Ainda retornar 201 porque lead foi criado
-            )
+            return success({
+                "lead_id": lead_id,
+                "message": "Lead capturado com sucesso.",
+                "whatsapp_dispatched": False,
+                "warning": f"Falha ao enviar WhatsApp: {send_result.get('error')}"
+            }, 201)
         
         return success({
             "lead_id": lead_id,
-            "message": "Lead capturado com sucesso. Verifique seu WhatsApp!"
+            "message": "Lead capturado com sucesso. Verifique seu WhatsApp!",
+            "whatsapp_dispatched": True
         }, 201)
         
     except ValueError as ve:
