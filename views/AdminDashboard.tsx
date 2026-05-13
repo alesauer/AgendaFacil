@@ -9530,7 +9530,7 @@ const SettingsManagement = ({
                     </div>
                     <div className="flex items-center gap-2">
                       <a
-                        href="https://wa.me/5531995041815"
+                        href="https://wa.me/553183410473"
                         target="_blank"
                         rel="noopener noreferrer"
                         className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
@@ -9559,7 +9559,7 @@ const SettingsManagement = ({
 
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                     <a
-                      href="https://wa.me/5531995041815"
+                      href="https://wa.me/553183410473"
                       target="_blank"
                       rel="noopener noreferrer"
                       className="p-6 bg-white border border-gray-100 rounded-2xl shadow-sm hover:shadow-md hover:border-blue-200 transition-all group text-center"
