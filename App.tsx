@@ -17,6 +17,7 @@ import { AdminDashboard } from './views/AdminDashboard';
 import { MasterDashboard } from './views/MasterDashboard';
 import { MasterLogin } from './views/MasterLogin';
 import { Onboarding } from './views/Onboarding';
+import { LeadOnboarding } from './views/LeadOnboarding';
 
 // --- Contexts ---
 
@@ -1737,6 +1738,8 @@ const App: React.FC = () => {
         <div className="min-h-screen bg-gray-50 text-gray-900 font-sans">
           <Routes>
             <Route path="/login" element={!user ? <Login /> : <Navigate to={shouldOpenOnboarding ? '/onboarding' : (user.role === 'MASTER' ? '/master' : ((user.role === 'ADMIN' || user.role === 'EMPLOYEE') ? '/admin' : '/client'))} />} />
+            
+            <Route path="/lead-onboarding" element={<LeadOnboarding />} />
             
             <Route path="/client/*" element={
               user && user.role === 'CLIENT' ? <ClientPortal /> : <Navigate to="/login" />
