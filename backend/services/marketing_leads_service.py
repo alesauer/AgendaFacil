@@ -165,7 +165,11 @@ Quer saber como começar? Estamos aqui pra ajudar! 💬"""
                 MarketingLeadsRepository.update(lead_id, {
                     "whatsapp_sent_at": datetime.utcnow().isoformat(),
                     "validation_status": "VALID",
-                    "status": "ONBOARDING"
+                    "status": "ONBOARDING",
+                    "whatsapp_dispatch_status": "SENT",
+                    "whatsapp_dispatch_attempts": int(lead.get("whatsapp_dispatch_attempts") or 0) + 1,
+                    "whatsapp_next_retry_at": None,
+                    "whatsapp_last_error": None,
                 })
                 
                 return {
@@ -235,6 +239,11 @@ Quer saber como começar? Estamos aqui pra ajudar! 💬"""
         for lead in leads:
             lead_id = str(lead.get("id") or "")
             if not lead_id:
+                continue
+
+            # Skip leads já enviados com sucesso
+            status = str(lead.get("whatsapp_dispatch_status") or "PENDING").strip()
+            if status == "SENT":
                 continue
 
             name = str(lead.get("name") or "").strip()
