@@ -88,7 +88,7 @@ export const Onboarding: React.FC<OnboardingProps> = ({ isLeadMode = false, lead
 
     const hashPath = (window.location.hash || '').replace(/^#\/?/, '');
     const hashSegment = hashPath.split('/').filter(Boolean)[0];
-    if (hashSegment && /^[a-z0-9-]+$/i.test(hashSegment) && !['login', 'admin', 'client', 'master', 'onboarding'].includes(hashSegment.toLowerCase())) {
+    if (hashSegment && /^[a-z0-9-]+$/i.test(hashSegment) && !['login', 'admin', 'client', 'master', 'onboarding', 'lead-onboarding'].includes(hashSegment.toLowerCase())) {
       return hashSegment.toLowerCase();
     }
 

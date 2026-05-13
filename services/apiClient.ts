@@ -17,7 +17,7 @@ const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://127.
 const APP_HOSTNAME = 'app.barbeiros.app';
 const MARKETING_URL = 'https://www.barbeiros.app';
 
-const RESERVED_HASH_ROUTES = new Set(['login', 'admin', 'client', 'master', 'onboarding']);
+const RESERVED_HASH_ROUTES = new Set(['login', 'admin', 'client', 'master', 'onboarding', 'lead-onboarding']);
 
 const normalizeSlug = (value?: string | null): string | null => {
   const clean = String(value || '').trim().toLowerCase();
