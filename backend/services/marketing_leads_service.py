@@ -108,7 +108,7 @@ class MarketingLeadsService:
 Recebemos seu interesse em AgendaFácil!
 
 Clique aqui pra criar sua barbearia em 3 passos:
-https://app.barbeiros.app/#/onboarding?lead_id={lead_id}
+https://app.barbeiros.app/#/lead-onboarding?lead_id={lead_id}
 
 Quer saber como começar? Estamos aqui pra ajudar! 💬"""
             
@@ -160,16 +160,13 @@ Quer saber como começar? Estamos aqui pra ajudar! 💬"""
                     "status_code": 404,
                 }
             
-            # Se bem-sucedido, atualizar lead
+            # Se bem-sucedido, atualizar apenas dados de negócio.
+            # O controle de status/tentativas de dispatch é feito no worker.
             if response.status_code < 400:
                 MarketingLeadsRepository.update(lead_id, {
                     "whatsapp_sent_at": datetime.utcnow().isoformat(),
                     "validation_status": "VALID",
                     "status": "ONBOARDING",
-                    "whatsapp_dispatch_status": "SENT",
-                    "whatsapp_dispatch_attempts": int(lead.get("whatsapp_dispatch_attempts") or 0) + 1,
-                    "whatsapp_next_retry_at": None,
-                    "whatsapp_last_error": None,
                 })
                 
                 return {
