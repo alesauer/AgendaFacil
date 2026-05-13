@@ -1,0 +1,51 @@
+# ARQUIVO DE REFERÊNCIA - Correção do método list_pending_whatsapp_dispatch
+
+# PROBLEMA: Query Supabase retorna leads com status SENT porque não trata NULL em whatsapp_next_retry_at
+
+# SOLUÇÃO: Adicionar filtro explícito para excluir SENT
+
+@staticmethod
+def list_pending_whatsapp_dispatch(limit: int = 50) -> list:
+    """Listar leads pendentes para envio assíncrono de WhatsApp."""
+    pending_statuses = ("PENDING", "RETRY")
+
+    if is_db_ready():
+        try:
+            return query_all(
+                """
+                SELECT *
+                FROM public.marketing_leads
+                WHERE whatsapp_dispatch_status IN (%s, %s)
+                  AND COALESCE(whatsapp_next_retry_at, created_at) <= NOW()
+                ORDER BY COALESCE(whatsapp_next_retry_at, created_at) ASC
+                LIMIT %s
+                """,
+                (*pending_statuses, limit),
+            )
+        except Exception as exc:
+            if not MarketingLeadsRepository._is_missing_table_error(exc) and not MarketingLeadsRepository._is_missing_dispatch_column_error(exc):
+                raise
+
+    if is_supabase_ready():
+        supabase = get_supabase_client()
+        try:
+            # FIXO: Considerar whatsapp_next_retry_at NULL como "pronto para tentar agora"
+            from datetime import datetime as dt
+            
+            response = (
+                supabase.table("marketing_leads")
+                .select("*")
+                .in_("whatsapp_dispatch_status", list(pending_statuses))
+                .or_(f"whatsapp_next_retry_at.is.null,whatsapp_next_retry_at.lte.{dt.utcnow().isoformat()}")
+                .order("whatsapp_next_retry_at", desc=False)
+                .limit(limit)
+                .execute()
+            )
+            return response.data or []
+        except Exception as exc:
+            # FALLBACK: Se a query falhar, retornar vazio para evitar problema
+            if not MarketingLeadsRepository._is_missing_dispatch_column_error(exc):
+                raise
+            return []
+
+    return []

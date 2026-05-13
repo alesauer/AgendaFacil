@@ -1,0 +1,18 @@
+--- Adicionar check para pular status SENT antes de processar
+
+No method process_pending_warmup_dispatches, adicionar na linha da iteração:
+
+        for lead in leads:
+            lead_id = str(lead.get("id") or "")
+            if not lead_id:
+                continue
+            
+            # ← ADICIONAR ISTO:
+            status = str(lead.get("whatsapp_dispatch_status") or "PENDING").strip()
+            if status == "SENT":
+                continue  # Pular leads que já foram enviados com sucesso
+            
+            name = str(lead.get("name") or "").strip()
+            whatsapp = str(lead.get("whatsapp") or "").strip()
+            attempts = int(lead.get("whatsapp_dispatch_attempts") or 0)
+
