@@ -202,7 +202,15 @@ Quer saber como começar? Estamos aqui pra ajudar! 💬"""
 
     @staticmethod
     def enqueue_warmup_dispatch(lead_id: str) -> None:
+        """Enfileirar dispatch SOMENTE se ainda não foi enviado com sucesso."""
         try:
+            lead = MarketingLeadsRepository.get_by_id(lead_id)
+            if not lead:
+                return None
+            current_status = str(lead.get("whatsapp_dispatch_status") or "").strip().upper()
+            # Se já foi enviado com sucesso, NÃO re-enfileirar
+            if current_status == "SENT":
+                return None
             MarketingLeadsRepository.update(lead_id, {
                 "whatsapp_dispatch_status": "PENDING",
                 "whatsapp_next_retry_at": datetime.utcnow().isoformat(),
@@ -246,6 +254,12 @@ Quer saber como começar? Estamos aqui pra ajudar! 💬"""
             name = str(lead.get("name") or "").strip()
             whatsapp = str(lead.get("whatsapp") or "").strip()
             attempts = int(lead.get("whatsapp_dispatch_attempts") or 0)
+
+            # Re-buscar status atual do BD para garantir idempotência.
+            # Outro processo pode ter enviado enquanto aguardávamos.
+            fresh = MarketingLeadsRepository.get_by_id(lead_id)
+            if fresh and str(fresh.get("whatsapp_dispatch_status") or "").strip().upper() == "SENT":
+                continue
 
             result = MarketingLeadsService.send_warmup_welcome(
                 lead_id=lead_id,

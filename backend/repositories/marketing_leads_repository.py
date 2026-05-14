@@ -236,12 +236,15 @@ class MarketingLeadsRepository(BaseRepository):
         if is_supabase_ready():
             supabase = get_supabase_client()
             try:
+                now_iso = datetime.utcnow().isoformat()
+                # Usar .or_() para incluir linhas onde retry_at IS NULL
+                # (leads novos recém-enfileirados) OU já passou do prazo.
                 response = (
                     supabase.table("marketing_leads")
                     .select("*")
                     .in_("whatsapp_dispatch_status", list(pending_statuses))
-                    .lte("whatsapp_next_retry_at", datetime.utcnow().isoformat())
-                    .order("whatsapp_next_retry_at", desc=False)
+                    .or_(f"whatsapp_next_retry_at.is.null,whatsapp_next_retry_at.lte.{now_iso}")
+                    .order("whatsapp_next_retry_at", desc=False, nullsfirst=True)
                     .limit(limit)
                     .execute()
                 )
