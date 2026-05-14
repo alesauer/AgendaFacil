@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useSearchParams, Navigate } from 'react-router-dom';
 import { Onboarding } from './Onboarding';
+import { apiRequest } from '../services/apiClient';
 
 /**
  * LeadOnboarding - Componente que encadeia lead → autenticação → onboarding
@@ -26,22 +27,25 @@ export const LeadOnboarding: React.FC = () => {
           return;
         }
 
-        // Buscar dados do lead
-        const response = await fetch(`/api/leads/${leadId}`);
-        const json = await response.json();
+        // Buscar dados do lead via apiClient (com headers corretos)
+        const leadResponse = await apiRequest<{
+          id: string;
+          name: string;
+          whatsapp: string;
+          created_at: string;
+        }>(`/leads/${leadId}`);
 
-        if (!response.ok || !json.success) {
-          setError(json.error || 'Lead não encontrado');
+        if (!leadResponse.success) {
+          setError((leadResponse as any).error || 'Lead não encontrado');
           setLoading(false);
           return;
         }
 
-        const lead = json.data;
+        const lead = leadResponse.data;
 
-        // Registrar clique no link
-        await fetch(`/api/leads/${leadId}/track-click`, {
+        // Registrar clique no link (async, não importa se falhar)
+        apiRequest(`/leads/${leadId}/track-click`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' }
         }).catch(err => console.warn('Erro ao rastrear clique:', err));
 
         // Criar sessão de lead temporária para onboarding
