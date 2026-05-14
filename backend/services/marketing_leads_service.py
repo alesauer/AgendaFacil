@@ -77,6 +77,96 @@ class MarketingLeadsService:
         return urls
 
     @staticmethod
+    def _candidate_evolution_headers(config: dict) -> list[dict]:
+        headers_base = {"Content-Type": "application/json"}
+        api_key = str(config.get("api_key") or "").strip()
+        configured_header = str(config.get("api_key_header") or "apikey").strip()
+
+        if not api_key:
+            return [headers_base]
+
+        candidates = [
+            (configured_header, api_key),
+            ("apikey", api_key),
+            ("Authorization", f"Bearer {api_key}"),
+        ]
+
+        final_headers: list[dict] = []
+        seen: set[tuple[tuple[str, str], ...]] = set()
+        for header_name, header_value in candidates:
+            merged = dict(headers_base)
+            merged[header_name] = header_value
+            fingerprint = tuple(sorted((str(k), str(v)) for k, v in merged.items()))
+            if fingerprint in seen:
+                continue
+            seen.add(fingerprint)
+            final_headers.append(merged)
+        return final_headers
+
+    @staticmethod
+    def _send_text_via_evolution(config: dict, phone_e164: str, message: str) -> dict:
+        payload = {
+            "number": phone_e164,
+            "text": message,
+        }
+
+        response = None
+        result = {}
+        last_error = ""
+        last_status_code = None
+
+        for candidate_headers in MarketingLeadsService._candidate_evolution_headers(config):
+            for candidate_url in MarketingLeadsService._candidate_evolution_urls(config):
+                try:
+                    candidate_response = requests.post(
+                        candidate_url,
+                        json=payload,
+                        headers=candidate_headers,
+                        timeout=config.get("timeout", 30),
+                    )
+                    candidate_result = candidate_response.json() if candidate_response.text else {}
+                    candidate_status = int(candidate_response.status_code)
+
+                    if candidate_status < 400:
+                        return {
+                            "success": True,
+                            "status_code": candidate_status,
+                            "provider_response": candidate_result,
+                        }
+
+                    last_status_code = candidate_status
+                    last_error = str(
+                        candidate_result.get("message")
+                        or candidate_result.get("error")
+                        or f"Erro HTTP {candidate_status}"
+                    )
+
+                    if candidate_status in (401, 404):
+                        continue
+
+                    response = candidate_response
+                    result = candidate_result
+                    break
+                except Exception as request_exc:
+                    last_error = str(request_exc)
+
+            if response is not None:
+                break
+
+        if response is not None:
+            return {
+                "success": False,
+                "status_code": int(response.status_code),
+                "error": str(result.get("message") or result.get("error") or last_error or "Erro no Evolution"),
+            }
+
+        return {
+            "success": False,
+            "status_code": int(last_status_code or 500),
+            "error": last_error or "Falha ao enviar mensagem no Evolution",
+        }
+
+    @staticmethod
     def send_warmup_welcome(lead_id: str, name: str, whatsapp: str) -> dict:
         """
         Disparar mensagem de boas-vindas no WhatsApp do lead (D0)
@@ -112,57 +202,15 @@ https://app.barbeiros.app/#/lead-onboarding?lead_id={lead_id}
 
 Quer saber como começar? Estamos aqui pra ajudar! 💬"""
             
-            # Construir payload
-            headers = {"Content-Type": "application/json"}
-            
-            if config.get("api_key"):
-                headers[config.get("api_key_header", "apikey")] = config.get("api_key")
-            
-            payload = {
-                "number": phone_e164,
-                "text": message
-            }
-            
-            # Enviar via Evolution com fallback de endpoint
-            response = None
-            result = {}
-            last_error = ""
-
-            for candidate_url in MarketingLeadsService._candidate_evolution_urls(config):
-                try:
-                    candidate_response = requests.post(
-                        candidate_url,
-                        json=payload,
-                        headers=headers,
-                        timeout=config.get("timeout", 30)
-                    )
-
-                    candidate_result = candidate_response.json() if candidate_response.text else {}
-
-                    if candidate_response.status_code != 404:
-                        response = candidate_response
-                        result = candidate_result
-                        break
-
-                    last_error = str(
-                        candidate_result.get("message")
-                        or candidate_result.get("error")
-                        or "Not Found"
-                    )
-                except Exception as request_exc:
-                    last_error = str(request_exc)
-
-            if response is None:
-                return {
-                    "success": False,
-                    "lead_id": lead_id,
-                    "error": last_error or "Falha ao enviar mensagem no Evolution",
-                    "status_code": 404,
-                }
+            send_result = MarketingLeadsService._send_text_via_evolution(
+                config=config,
+                phone_e164=phone_e164,
+                message=message,
+            )
             
             # Se bem-sucedido, atualizar apenas dados de negócio.
             # O controle de status/tentativas de dispatch é feito no worker.
-            if response.status_code < 400:
+            if send_result.get("success"):
                 MarketingLeadsRepository.update(lead_id, {
                     "whatsapp_sent_at": datetime.utcnow().isoformat(),
                     "validation_status": "VALID",
@@ -172,12 +220,13 @@ Quer saber como começar? Estamos aqui pra ajudar! 💬"""
                 return {
                     "success": True,
                     "lead_id": lead_id,
-                    "provider_response": result
+                    "provider_response": send_result.get("provider_response") or {}
                 }
             
             # Se erro, marcar como inválido se 404 ou erro do número
-            if response.status_code >= 400:
-                error_msg = str(result.get("message") or result.get("error") or "Erro no Evolution")
+            if not send_result.get("success"):
+                error_msg = str(send_result.get("error") or "Erro no Evolution")
+                status_code = int(send_result.get("status_code") or 500)
                 
                 # Se problema no número, marcar como inválido
                 if any(x in error_msg.lower() for x in ["number", "invalid", "não encontrado"]):
@@ -190,7 +239,7 @@ Quer saber como começar? Estamos aqui pra ajudar! 💬"""
                     "success": False,
                     "lead_id": lead_id,
                     "error": error_msg,
-                    "status_code": response.status_code
+                    "status_code": status_code
                 }
             
         except Exception as exc:
@@ -311,7 +360,6 @@ Quer saber como começar? Estamos aqui pra ajudar! 💬"""
         # Usar o mesmo sistema do warmup, mas com mensagem diferente
         try:
             config = MarketingLeadsService._get_evolution_config()
-            url = MarketingLeadsService._build_evolution_url(config)
             
             phone_e164 = MarketingLeadsService._to_e164(whatsapp)
             message = f"""Oi {first_name}! 👋
@@ -321,24 +369,13 @@ Ficou com dúvida? Estamos aqui pra ajudar!
 Retome sua agenda: https://app.barbeiros.app/#/onboarding?lead_id={lead_id}
 
 Qualquer dúvida, é só chamar! 💬"""
-            
-            headers = {"Content-Type": "application/json"}
-            if config.get("api_key"):
-                headers[config.get("api_key_header", "apikey")] = config.get("api_key")
-            
-            payload = {
-                "number": phone_e164,
-                "text": message
-            }
-            
-            response = requests.post(
-                url,
-                json=payload,
-                headers=headers,
-                timeout=config.get("timeout", 30)
+
+            send_result = MarketingLeadsService._send_text_via_evolution(
+                config=config,
+                phone_e164=phone_e164,
+                message=message,
             )
-            
-            return {"success": response.status_code < 400}
+            return {"success": bool(send_result.get("success")), "error": send_result.get("error")}
         except Exception as exc:
             return {"success": False, "error": str(exc)}
 
@@ -349,7 +386,6 @@ Qualquer dúvida, é só chamar! 💬"""
         
         try:
             config = MarketingLeadsService._get_evolution_config()
-            url = MarketingLeadsService._build_evolution_url(config)
             
             phone_e164 = MarketingLeadsService._to_e164(whatsapp)
             message = f"""Oi {first_name}! 📱
@@ -361,24 +397,13 @@ Veja como {barbeiro_exemplo} tá ganhando mais com AgendaFácil:
 
 Quer fazer o mesmo? 👇
 https://app.barbeiros.app/#/onboarding?lead_id={lead_id}"""
-            
-            headers = {"Content-Type": "application/json"}
-            if config.get("api_key"):
-                headers[config.get("api_key_header", "apikey")] = config.get("api_key")
-            
-            payload = {
-                "number": phone_e164,
-                "text": message
-            }
-            
-            response = requests.post(
-                url,
-                json=payload,
-                headers=headers,
-                timeout=config.get("timeout", 30)
+
+            send_result = MarketingLeadsService._send_text_via_evolution(
+                config=config,
+                phone_e164=phone_e164,
+                message=message,
             )
-            
-            return {"success": response.status_code < 400}
+            return {"success": bool(send_result.get("success")), "error": send_result.get("error")}
         except Exception as exc:
             return {"success": False, "error": str(exc)}
 
@@ -389,7 +414,6 @@ https://app.barbeiros.app/#/onboarding?lead_id={lead_id}"""
         
         try:
             config = MarketingLeadsService._get_evolution_config()
-            url = MarketingLeadsService._build_evolution_url(config)
             
             phone_e164 = MarketingLeadsService._to_e164(whatsapp)
             message = f"""Oi {first_name}! ⏰
@@ -405,29 +429,19 @@ Por apenas R$29/mês (primeiros 3 meses -30%)
 
 Ativa agora? 👇
 https://app.barbeiros.app/#/onboarding?lead_id={lead_id}"""
-            
-            headers = {"Content-Type": "application/json"}
-            if config.get("api_key"):
-                headers[config.get("api_key_header", "apikey")] = config.get("api_key")
-            
-            payload = {
-                "number": phone_e164,
-                "text": message
-            }
-            
-            response = requests.post(
-                url,
-                json=payload,
-                headers=headers,
-                timeout=config.get("timeout", 30)
+
+            send_result = MarketingLeadsService._send_text_via_evolution(
+                config=config,
+                phone_e164=phone_e164,
+                message=message,
             )
-            
-            if response.status_code < 400:
+
+            if send_result.get("success"):
                 # Se passou de D7 sem converter, marcar como COLD_LEAD
                 MarketingLeadsRepository.update(lead_id, {
                     "status": "COLD"
                 })
             
-            return {"success": response.status_code < 400}
+            return {"success": bool(send_result.get("success")), "error": send_result.get("error")}
         except Exception as exc:
             return {"success": False, "error": str(exc)}
