@@ -34,7 +34,9 @@ const getTenantFromPath = (): string | null => {
 const getTenantFromHash = (): string | null => {
   const hashPath = (window.location.hash || '').replace(/^#\/?/, '');
   const first = hashPath.split('/').filter(Boolean)[0];
-  const normalized = normalizeSlug(first);
+  // Remover query params antes de normalizar (ex: "lead-onboarding?lead_id=xxx" -> "lead-onboarding")
+  const firstWithoutQuery = String(first || '').split('?')[0];
+  const normalized = normalizeSlug(firstWithoutQuery);
   if (!normalized) return null;
   if (RESERVED_HASH_ROUTES.has(normalized)) return null;
   return normalized;

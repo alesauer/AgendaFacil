@@ -290,7 +290,9 @@ const App: React.FC = () => {
     const hasPathSlug = /^[a-z0-9-]+$/.test(normalizedPathSegment);
 
     const hashSegment = hashPath.split('/').filter(Boolean)[0] || '';
-    const normalizedHashSegment = hashSegment.trim().toLowerCase();
+    // Remove query params antes de validar (ex: "lead-onboarding?lead_id=xxx" -> "lead-onboarding")
+    const hashSegmentClean = String(hashSegment || '').split('?')[0];
+    const normalizedHashSegment = hashSegmentClean.trim().toLowerCase();
     const hasHashSlug = /^[a-z0-9-]+$/.test(normalizedHashSegment) && !RESERVED_HASH_ROUTES.has(normalizedHashSegment);
 
     if (!hasPathSlug && !hasHashSlug) {
@@ -1693,8 +1695,10 @@ const App: React.FC = () => {
 
     const hashPath = (window.location.hash || '').replace(/^#\/?/, '');
     const hashSegment = hashPath.split('/').filter(Boolean)[0];
-    if (hashSegment && /^[a-z0-9-]+$/i.test(hashSegment) && !['login', 'admin', 'client', 'master', 'onboarding', 'lead-onboarding'].includes(hashSegment.toLowerCase())) {
-      return hashSegment.toLowerCase();
+    // Remove query params antes de validar (ex: "lead-onboarding?lead_id=xxx" -> "lead-onboarding")
+    const hashSegmentClean = String(hashSegment || '').split('?')[0];
+    if (hashSegmentClean && /^[a-z0-9-]+$/i.test(hashSegmentClean) && !['login', 'admin', 'client', 'master', 'onboarding', 'lead-onboarding'].includes(hashSegmentClean.toLowerCase())) {
+      return hashSegmentClean.toLowerCase();
     }
 
     const localTenant = localStorage.getItem('tenant_slug');

@@ -88,8 +88,10 @@ export const Onboarding: React.FC<OnboardingProps> = ({ isLeadMode = false, lead
 
     const hashPath = (window.location.hash || '').replace(/^#\/?/, '');
     const hashSegment = hashPath.split('/').filter(Boolean)[0];
-    if (hashSegment && /^[a-z0-9-]+$/i.test(hashSegment) && !['login', 'admin', 'client', 'master', 'onboarding', 'lead-onboarding'].includes(hashSegment.toLowerCase())) {
-      return hashSegment.toLowerCase();
+    // Remove query params antes de validar (ex: "lead-onboarding?lead_id=xxx" -> "lead-onboarding")
+    const hashSegmentClean = String(hashSegment || '').split('?')[0];
+    if (hashSegmentClean && /^[a-z0-9-]+$/i.test(hashSegmentClean) && !['login', 'admin', 'client', 'master', 'onboarding', 'lead-onboarding'].includes(hashSegmentClean.toLowerCase())) {
+      return hashSegmentClean.toLowerCase();
     }
 
     const localTenant = localStorage.getItem('tenant_slug');
