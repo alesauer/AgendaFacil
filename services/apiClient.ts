@@ -156,21 +156,31 @@ export async function apiRequest<T>(
   options: RequestInit = {}
 ): Promise<ApiResponse<T>> {
   const token = getAuthToken();
-  const headers: HeadersInit = {
+  const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    'X-Barbearia-Slug': getTenantSlug(),
-    ...(options.headers || {}),
   };
 
-  if (token) {
-    (headers as Record<string, string>).Authorization = `Bearer ${token}`;
+  // Não enviar slug para rotas globais (leads, master, etc)
+  const isGlobalRoute = /^\/(api\/)?leads\/|^\/(api\/)?master\//.test(path);
+  if (!isGlobalRoute) {
+    headers['X-Barbearia-Slug'] = getTenantSlug();
   }
+
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  // Mesclar com headers customizados (option sobrescreve defaults)
+  const mergedHeaders = {
+    ...headers,
+    ...(options.headers as Record<string, string> || {}),
+  };
 
   try {
     const requestMethod = (options.method || 'GET').toUpperCase();
     const response = await fetch(`${API_BASE_URL}${path}`, {
       ...options,
-      headers,
+      headers: mergedHeaders,
     });
 
     const contentType = response.headers.get('content-type') || '';
