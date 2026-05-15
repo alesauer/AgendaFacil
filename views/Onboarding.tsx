@@ -125,8 +125,7 @@ export const Onboarding: React.FC<OnboardingProps> = ({ isLeadMode = false, lead
       localStorage.removeItem('lead_created_at');
     }
 
-    const adminUrl = `${window.location.pathname}${window.location.search}#/admin`;
-    window.location.replace(adminUrl);
+    navigate('/admin', { replace: true });
   };
 
   const tenantSlug = getCurrentTenantSlug();

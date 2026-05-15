@@ -1724,7 +1724,14 @@ const App: React.FC = () => {
   );
 
   if (!authInitialized) {
-    return <div className="min-h-screen bg-gray-50" />;
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="inline-block h-10 w-10 animate-spin rounded-full border-4 border-gray-200 border-t-blue-600" />
+          <p className="mt-3 text-sm text-gray-600">Carregando painel...</p>
+        </div>
+      </div>
+    );
   }
 
   return (
