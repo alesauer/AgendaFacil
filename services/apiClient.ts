@@ -53,6 +53,9 @@ const getTenantSlug = (): string => {
   }
 
   const host = window.location.hostname;
+  if (host === APP_HOSTNAME) {
+    return (import.meta as any).env?.VITE_DEFAULT_TENANT_SLUG || 'demo';
+  }
   if (host === 'localhost' || host === '127.0.0.1') {
     return (import.meta as any).env?.VITE_DEFAULT_TENANT_SLUG || 'demo';
   }
