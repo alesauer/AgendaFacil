@@ -12582,7 +12582,7 @@ export const AdminDashboard: React.FC = () => {
         fixed inset-y-0 left-0 z-40 w-64 bg-white shadow-xl transform transition-transform duration-300 ease-in-out md:sticky md:top-0 md:inset-y-auto md:h-screen md:translate-x-0 md:shadow-md flex flex-col min-h-0
         ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}
       `}>
-        <div className="p-6 border-b flex justify-between items-center">
+        <div className="p-6 flex justify-between items-center">
           <div>
             <h1 className="text-2xl font-bold flex items-center gap-2" style={{ color: brandIdentity.primaryColor || '#2563eb' }}>
               <BrandIcon name={brandIdentity.iconName} className="w-6 h-6" />
@@ -12660,7 +12660,7 @@ export const AdminDashboard: React.FC = () => {
           )}
         </nav>
 
-        <div className="p-4 border-t bg-white shrink-0">
+        <div className="p-4 bg-white shrink-0">
           <div className="flex items-center gap-3 mb-4">
              <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600">
                 <Users size={20} />
