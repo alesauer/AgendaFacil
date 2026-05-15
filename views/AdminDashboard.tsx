@@ -5011,21 +5011,26 @@ const WhatsAppIntegration = () => {
   );
 };
 
-const SettingsManagement = () => {
+type SettingsSubTab = 'PROFESSIONALS' | 'SERVICES' | 'PROFILES' | 'HOURS' | 'INTEGRATIONS' | 'OTHER' | 'ONBOARDING' | 'BILLING' | 'SUBSCRIPTIONS' | 'CONTACT';
+
+const SettingsManagement = ({
+  initialSubTab = 'PROFESSIONALS',
+  lockedSubTab,
+}: {
+  initialSubTab?: SettingsSubTab;
+  lockedSubTab?: SettingsSubTab;
+} = {}) => {
   const navigate = useNavigate();
   const { users, professionals, clients, services, addUser, updateUser, deleteUser, deactivateProfessional, categories, addCategory, updateCategory, deleteCategory, businessHours, saveBusinessHours, brandIdentity, saveBrandIdentity } = useAppContext();
-  const [activeSubTab, setActiveSubTab] = useState<'PROFESSIONALS' | 'SERVICES' | 'PROFILES' | 'HOURS' | 'INTEGRATIONS' | 'OTHER' | 'ONBOARDING' | 'BILLING' | 'SUBSCRIPTIONS' | 'CONTACT'>('PROFESSIONALS');
+  const [activeSubTab, setActiveSubTab] = useState<SettingsSubTab>(lockedSubTab || initialSubTab);
   const [activeServiceTab, setActiveServiceTab] = useState<'SERVICES' | 'CATEGORIES'>('SERVICES');
   const [isWhatsappAlertsEnabled, setIsWhatsappAlertsEnabled] = useState<boolean>(true);
-  const [isEmailAlertsEnabled, setIsEmailAlertsEnabled] = useState<boolean>(true);
   const [isLoadingAlertSettings, setIsLoadingAlertSettings] = useState<boolean>(true);
   const [isSavingAlertSettings, setIsSavingAlertSettings] = useState<boolean>(false);
   const [alertSettingsError, setAlertSettingsError] = useState<string | null>(null);
   const [activeBillingTab, setActiveBillingTab] = useState<'PLAN' | 'UTILIZATION' | 'PAYMENT' | 'INVOICING' | 'B2C'>('PLAN');
   const [billingCycle, setBillingCycle] = useState<BillingCycle>('MONTHLY');
-  const [billingPlanSearchTerm, setBillingPlanSearchTerm] = useState('');
-  const [billingPlanSortField, setBillingPlanSortField] = useState<'NOME' | 'VALOR' | 'CLIENTES'>('NOME');
-  const [billingPlanSortDirection, setBillingPlanSortDirection] = useState<'ASC' | 'DESC'>('ASC');
+  const [isPlanSelectionOpen, setIsPlanSelectionOpen] = useState(false);
   const [selectedPlanDetails, setSelectedPlanDetails] = useState<PlanCard | null>(null);
   const [activeSubscriptionsTab, setActiveSubscriptionsTab] = useState<'CREATE_PLANS' | 'LINK_PLANS' | 'CLIENTS_LIST'>('CREATE_PLANS');
   const [activeIdentityTab, setActiveIdentityTab] = useState<'LOGO' | 'COLORS' | 'OTHER_PREFERENCES' | 'DISCLOSURE'>('LOGO');
@@ -5086,7 +5091,13 @@ const SettingsManagement = () => {
   const [isSavingSubscription, setIsSavingSubscription] = useState(false);
   const [subscriptionError, setSubscriptionError] = useState<string | null>(null);
   const [subscriptionSuccess, setSubscriptionSuccess] = useState<string | null>(null);
-  const [subscriptionCpfCnpj, setSubscriptionCpfCnpj] = useState('');
+  const [subscriptionCpfCnpj, setSubscriptionCpfCnpj] = useState(() => {
+    if (typeof window === 'undefined') return '';
+    return String(window.localStorage.getItem('billing_checkout_document') || '').replace(/\D/g, '');
+  });
+  const [isCheckoutDocumentModalOpen, setIsCheckoutDocumentModalOpen] = useState(false);
+  const [checkoutDocumentDraft, setCheckoutDocumentDraft] = useState('');
+  const [pendingCheckoutTier, setPendingCheckoutTier] = useState<PlanTier | null>(null);
   const [b2cPlans, setB2cPlans] = useState<AssinaturaClientePlanoApi[]>([]);
   const [isLoadingB2cPlans, setIsLoadingB2cPlans] = useState(false);
   const [b2cMessage, setB2cMessage] = useState<string | null>(null);
@@ -5117,7 +5128,6 @@ const SettingsManagement = () => {
       }
 
       setIsWhatsappAlertsEnabled(Boolean(response.data.whatsapp_enabled));
-      setIsEmailAlertsEnabled(Boolean(response.data.email_enabled));
       setAlertSettingsError(null);
       setIsLoadingAlertSettings(false);
     };
@@ -5129,13 +5139,12 @@ const SettingsManagement = () => {
     };
   }, []);
 
-  const updateAlertChannelSettings = async (nextWhatsappEnabled: boolean, nextEmailEnabled: boolean) => {
+  const updateAlertChannelSettings = async (nextWhatsappEnabled: boolean) => {
     setIsSavingAlertSettings(true);
     setAlertSettingsError(null);
 
     const response = await saveNotificationChannelSettingsApi({
       whatsapp_enabled: nextWhatsappEnabled,
-      email_enabled: nextEmailEnabled,
     });
 
     if (!response.success) {
@@ -5145,7 +5154,6 @@ const SettingsManagement = () => {
     }
 
     setIsWhatsappAlertsEnabled(Boolean(response.data.whatsapp_enabled));
-    setIsEmailAlertsEnabled(Boolean(response.data.email_enabled));
     setIsSavingAlertSettings(false);
     return true;
   };
@@ -5153,28 +5161,12 @@ const SettingsManagement = () => {
   const handleToggleWhatsappAlerts = async () => {
     if (isSavingAlertSettings) return;
     const previousWhatsapp = isWhatsappAlertsEnabled;
-    const previousEmail = isEmailAlertsEnabled;
     const nextWhatsapp = !previousWhatsapp;
 
     setIsWhatsappAlertsEnabled(nextWhatsapp);
-    const saved = await updateAlertChannelSettings(nextWhatsapp, previousEmail);
+    const saved = await updateAlertChannelSettings(nextWhatsapp);
     if (!saved) {
       setIsWhatsappAlertsEnabled(previousWhatsapp);
-      setIsEmailAlertsEnabled(previousEmail);
-    }
-  };
-
-  const handleToggleEmailAlerts = async () => {
-    if (isSavingAlertSettings) return;
-    const previousWhatsapp = isWhatsappAlertsEnabled;
-    const previousEmail = isEmailAlertsEnabled;
-    const nextEmail = !previousEmail;
-
-    setIsEmailAlertsEnabled(nextEmail);
-    const saved = await updateAlertChannelSettings(previousWhatsapp, nextEmail);
-    if (!saved) {
-      setIsWhatsappAlertsEnabled(previousWhatsapp);
-      setIsEmailAlertsEnabled(previousEmail);
     }
   };
 
@@ -5588,7 +5580,6 @@ const SettingsManagement = () => {
     }
 
     setSubscriptionData(result.data);
-    setSubscriptionCpfCnpj('');
     setIsLoadingSubscription(false);
   };
 
@@ -5614,7 +5605,54 @@ const SettingsManagement = () => {
     setIsSavingSubscription(false);
   };
 
-  const handleOpenPaymentLink = async (tier: PlanTier) => {
+  const persistCheckoutDocument = (rawValue: string) => {
+    const normalized = String(rawValue || '').replace(/\D/g, '');
+    if (!normalized) {
+      setSubscriptionError('CPF/CNPJ não informado.');
+      setSubscriptionSuccess(null);
+      return null;
+    }
+
+    if (normalized.length < 11 || normalized.length > 14) {
+      setSubscriptionError('Informe um CPF ou CNPJ válido (11 a 14 dígitos).');
+      setSubscriptionSuccess(null);
+      return null;
+    }
+
+    setSubscriptionCpfCnpj(normalized);
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem('billing_checkout_document', normalized);
+    }
+    return normalized;
+  };
+
+  const openCheckoutDocumentModal = (tier: PlanTier | null = null) => {
+    const currentValue = String(subscriptionCpfCnpj || '').replace(/\D/g, '');
+    setCheckoutDocumentDraft(currentValue);
+    setPendingCheckoutTier(tier);
+    setIsCheckoutDocumentModalOpen(true);
+    setSubscriptionError(null);
+  };
+
+  const closeCheckoutDocumentModal = () => {
+    setIsCheckoutDocumentModalOpen(false);
+    setCheckoutDocumentDraft('');
+    setPendingCheckoutTier(null);
+  };
+
+  const handleSaveCheckoutDocument = async () => {
+    const normalized = persistCheckoutDocument(checkoutDocumentDraft);
+    if (!normalized) return;
+
+    const tierToContinue = pendingCheckoutTier;
+    closeCheckoutDocumentModal();
+
+    if (tierToContinue) {
+      await handleOpenPaymentLink(tierToContinue, normalized);
+    }
+  };
+
+  const handleOpenPaymentLink = async (tier: PlanTier, providedDocument?: string) => {
     if (isSavingSubscription || isLoadingSubscription) return;
 
     const currentStatus = String(subscriptionData?.assinatura_status_efetivo || subscriptionData?.assinatura_status || '').toUpperCase();
@@ -5627,10 +5665,10 @@ const SettingsManagement = () => {
       return;
     }
 
-    const normalizedDocument = subscriptionCpfCnpj.replace(/\D/g, '');
+    const storedDocument = String(subscriptionCpfCnpj || '').replace(/\D/g, '');
+    const normalizedDocument = String(providedDocument || storedDocument || '').replace(/\D/g, '');
     if (!normalizedDocument) {
-      setSubscriptionError('Informe o CPF ou CNPJ do responsável para gerar o checkout no Asaas.');
-      setSubscriptionSuccess(null);
+      openCheckoutDocumentModal(tier);
       return;
     }
 
@@ -6095,41 +6133,27 @@ const SettingsManagement = () => {
   const effectiveStatus = subscriptionData?.assinatura_status_efetivo || subscriptionData?.assinatura_status;
   const isTrialRunning = String(effectiveStatus || '').toUpperCase() === 'TRIAL';
   const hasVigenteSubscription = ['ACTIVE', 'TRIAL'].includes(String(effectiveStatus || '').toUpperCase());
+  const canStartTrial = !hasVigenteSubscription && !Boolean(subscriptionData?.trial_usado);
+  const shouldShowPlansCatalog = isPlanSelectionOpen || !hasVigenteSubscription;
   const isCurrentPlanForCycle = (tier: PlanTier, cycle: BillingCycle) => {
     const currentPlanCode = String(subscriptionData?.plano || '').toUpperCase();
     return currentPlanCode === `${tier}_${cycle}`;
   };
   const isCheckoutBlockedForPlan = (tier: PlanTier) => hasVigenteSubscription && isCurrentPlanForCycle(tier, billingCycle);
   const billingPlansList = useMemo(() => {
-    const term = String(billingPlanSearchTerm || '').trim().toLowerCase();
     const list = PLAN_CARDS
-      .filter((plan) => {
-        if (!term) return true;
-        return [plan.title, plan.subtitle, plan.limitLabel].join(' ').toLowerCase().includes(term);
-      })
       .map((plan) => {
         const price = billingCycle === 'YEARLY' ? plan.yearlyCents : plan.monthlyCents;
         return {
           ...plan,
           price,
-          customersSort: plan.tier === 'ESSENCIAL' ? 400 : (plan.tier === 'PROFISSIONAL' ? 1000 : Number.MAX_SAFE_INTEGER),
         };
       });
 
-    list.sort((a, b) => {
-      let result = 0;
-      if (billingPlanSortField === 'VALOR') {
-        result = a.price - b.price;
-      } else if (billingPlanSortField === 'CLIENTES') {
-        result = a.customersSort - b.customersSort;
-      } else {
-        result = a.title.localeCompare(b.title);
-      }
-      return billingPlanSortDirection === 'ASC' ? result : -result;
-    });
+    list.sort((a, b) => a.price - b.price);
 
     return list;
-  }, [billingPlanSearchTerm, billingPlanSortField, billingPlanSortDirection, billingCycle]);
+  }, [billingCycle]);
 
   const toggleDay = (id: number) => {
     setLocalBusinessHours(prev => prev.map(h => h.dayOfWeek === id ? { ...h, open: !h.open } : h));
@@ -6615,11 +6639,23 @@ const SettingsManagement = () => {
     { id: 'HOURS', label: 'Horários', icon: <Clock size={18} />, desc: 'Funcionamento' },
     { id: 'INTEGRATIONS', label: 'Integrações', icon: <Zap size={18} />, desc: 'APIs externas' },
     { id: 'BILLING', label: 'Faturamento', icon: <CreditCard size={18} />, desc: 'Assinatura e faturas' },
-    { id: 'SUBSCRIPTIONS', label: 'Assinaturas', icon: <Users size={18} />, desc: 'Planos e assinaturas de clientes' },
+    { id: 'SUBSCRIPTIONS', label: 'Assinaturas', icon: <RotateCcw size={18} />, desc: 'Planos e assinaturas de clientes' },
     { id: 'OTHER', label: 'Identidade', icon: <Settings size={18} />, desc: 'Marca e cores' },
     { id: 'ONBOARDING', label: 'Onboarding', icon: <List size={18} />, desc: 'Configuração inicial' },
     { id: 'CONTACT', label: 'Fale Conosco', icon: <Headphones size={18} />, desc: 'Suporte e ajuda' },
   ];
+
+  const visibleTabs = lockedSubTab ? tabs.filter((tab) => tab.id === lockedSubTab) : tabs;
+  const settingsPanelTitle = lockedSubTab === 'SUBSCRIPTIONS' ? 'Assinaturas' : 'Configurações';
+
+  useEffect(() => {
+    if (lockedSubTab) {
+      setActiveSubTab(lockedSubTab);
+      return;
+    }
+
+    setActiveSubTab(initialSubTab);
+  }, [lockedSubTab, initialSubTab]);
 
   const helpCenterSections = useMemo(() => ([
     {
@@ -6955,19 +6991,20 @@ const SettingsManagement = () => {
   }, [activeSubTab]);
 
   return (
-    <div className="flex flex-col lg:flex-row gap-8">
+    <div className={lockedSubTab ? 'space-y-8' : 'flex flex-col lg:flex-row gap-8'}>
       {/* Sidebar Navigation */}
+      {!lockedSubTab && (
       <aside className="lg:w-64 flex-shrink-0">
         <div className="lg:sticky lg:top-6 space-y-6">
           <div className="flex items-center justify-between lg:block">
-            <h2 className="text-xl font-bold text-gray-800 lg:mb-6">Configurações</h2>
+            <h2 className="text-xl font-bold text-gray-800 lg:mb-6">{settingsPanelTitle}</h2>
             <div className="lg:hidden">
               <select 
                 value={activeSubTab}
                 onChange={(e) => setActiveSubTab(e.target.value as any)}
                 className="bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm font-medium focus:ring-2 focus:ring-blue-500 outline-none shadow-sm"
               >
-                {tabs.map(tab => (
+                {visibleTabs.map(tab => (
                   <option key={tab.id} value={tab.id}>{tab.label}</option>
                 ))}
               </select>
@@ -6976,7 +7013,7 @@ const SettingsManagement = () => {
           
           {/* Desktop Sidebar */}
           <nav className="hidden lg:block space-y-1">
-            {tabs.map((tab) => (
+            {visibleTabs.map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setActiveSubTab(tab.id as any)}
@@ -6999,7 +7036,7 @@ const SettingsManagement = () => {
 
           {/* Mobile Horizontal Scroll */}
           <nav className="lg:hidden flex overflow-x-auto pb-2 gap-2 no-scrollbar -mx-4 px-4 sticky top-0 bg-gray-100 z-10">
-            {tabs.map((tab) => (
+            {visibleTabs.map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setActiveSubTab(tab.id as any)}
@@ -7016,9 +7053,10 @@ const SettingsManagement = () => {
           </nav>
         </div>
       </aside>
+      )}
 
       {/* Main Content Area */}
-      <div className="flex-1">
+      <div className={lockedSubTab ? '' : 'flex-1'}>
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 sm:p-8 min-h-[500px]">
           {activeSubTab === 'PROFESSIONALS' && (
             <div className="space-y-6">
@@ -7694,51 +7732,35 @@ const SettingsManagement = () => {
                         Trial ativo: {subscriptionData?.dias_restantes_trial || 0} dia(s) restante(s).
                       </p>
                     )}
+                    <div className="mt-4 flex flex-col sm:flex-row sm:items-center gap-2">
+                      <button
+                        onClick={() => setIsPlanSelectionOpen((prev) => !prev)}
+                        className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700"
+                      >
+                        {shouldShowPlansCatalog ? 'Ocultar opções de plano' : 'Trocar plano'}
+                      </button>
+                      <button
+                        onClick={() => setActiveBillingTab('PAYMENT')}
+                        className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg text-sm font-semibold hover:bg-gray-50"
+                      >
+                        Ver pagamentos
+                      </button>
+                      <button
+                        onClick={() => openCheckoutDocumentModal()}
+                        className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg text-sm font-semibold hover:bg-gray-50"
+                      >
+                        Atualizar CPF/CNPJ
+                      </button>
+                    </div>
+                    <p className="mt-2 text-xs text-gray-500">
+                      CPF/CNPJ de cobrança: {subscriptionCpfCnpj ? subscriptionCpfCnpj : 'não informado'}
+                    </p>
                   </div>
 
                   <div className="space-y-4">
-                    <div className="rounded-xl border border-blue-100 bg-blue-50 p-4 space-y-3">
-                      <div>
-                        <h4 className="font-semibold text-blue-900">Checkout SaaS via Asaas</h4>
-                        <p className="text-sm text-blue-800">Informe o CPF ou CNPJ do responsável financeiro antes de abrir o checkout. As assinaturas B2C de clientes continuam separadas deste fluxo.</p>
-                      </div>
-                      <div className="grid grid-cols-1 md:grid-cols-[minmax(0,280px)_1fr] gap-3 items-end">
-                        <div>
-                          <label className="block text-xs font-semibold uppercase tracking-wide text-blue-900 mb-1">CPF ou CNPJ do responsável</label>
-                          <input
-                            type="text"
-                            inputMode="numeric"
-                            placeholder="Somente números"
-                            value={subscriptionCpfCnpj}
-                            onChange={(e) => setSubscriptionCpfCnpj(e.target.value.replace(/\D/g, ''))}
-                            className="w-full px-3 py-2 border border-blue-200 rounded-lg bg-white text-gray-900 focus:ring-2 focus:ring-blue-500 outline-none"
-                          />
-                        </div>
-                        <p className="text-xs text-blue-800">No plano anual, o checkout pode abrir cobrança parcelada conforme a configuração do Asaas.</p>
-                      </div>
-                    </div>
                     <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
-                      <h4 className="font-bold text-gray-800">Planos cadastrados</h4>
+                      <h4 className="font-bold text-gray-800">Planos disponíveis</h4>
                       <div className="flex flex-col sm:flex-row gap-3 w-full lg:w-auto">
-                        <div className="relative flex-1 sm:flex-none">
-                          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-                          <input
-                            type="text"
-                            placeholder="Buscar plano..."
-                            value={billingPlanSearchTerm}
-                            onChange={(e) => setBillingPlanSearchTerm(e.target.value)}
-                            className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none w-full sm:w-64"
-                          />
-                        </div>
-                        <select
-                          value={billingPlanSortField}
-                          onChange={(e) => setBillingPlanSortField(e.target.value as 'NOME' | 'VALOR' | 'CLIENTES')}
-                          className="px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-700 bg-white"
-                        >
-                          <option value="NOME">Ordenar por nome</option>
-                          <option value="VALOR">Ordenar por valor</option>
-                          <option value="CLIENTES">Ordenar por clientes</option>
-                        </select>
                         <select
                           value={billingCycle}
                           onChange={(e) => setBillingCycle(e.target.value as BillingCycle)}
@@ -7747,116 +7769,118 @@ const SettingsManagement = () => {
                           <option value="MONTHLY">Mensal</option>
                           <option value="YEARLY">Anual</option>
                         </select>
-                        <button
-                          onClick={() => setBillingPlanSortDirection((prev) => (prev === 'ASC' ? 'DESC' : 'ASC'))}
-                          className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-semibold text-gray-700 hover:bg-gray-50"
-                        >
-                          {billingPlanSortDirection === 'ASC' ? 'Crescente' : 'Decrescente'}
-                        </button>
                       </div>
                     </div>
 
-                    <div className="md:hidden space-y-3">
-                      {billingPlansList.map((plan) => (
-                        <div key={plan.tier} className="bg-white rounded-xl border border-gray-100 p-4">
-                          <div className="flex items-center justify-between gap-3">
-                            <button
-                              type="button"
-                              onClick={() => setSelectedPlanDetails(plan)}
-                              className="font-semibold text-gray-900 hover:text-blue-700"
-                            >
-                              {plan.title}
-                            </button>
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700">Disponível</span>
-                          </div>
-                          <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
-                            <div>
-                              <p className="text-xs text-gray-500">Valor {billingCycle === 'YEARLY' ? 'anual' : 'mensal'}</p>
-                              <p className="text-gray-900 font-semibold">{formatMoneyFromCents(plan.price)}</p>
+                    {shouldShowPlansCatalog ? (
+                      <>
+                        <div className="md:hidden space-y-3">
+                          {billingPlansList.map((plan) => (
+                            <div key={plan.tier} className="bg-white rounded-xl border border-gray-100 p-4">
+                              <div className="flex items-center justify-between gap-3">
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedPlanDetails(plan)}
+                                  className="font-semibold text-gray-900 hover:text-blue-700"
+                                >
+                                  {plan.title}
+                                </button>
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700">Disponível</span>
+                              </div>
+                              <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                                <div>
+                                  <p className="text-xs text-gray-500">Valor {billingCycle === 'YEARLY' ? 'anual' : 'mensal'}</p>
+                                  <p className="text-gray-900 font-semibold">{formatMoneyFromCents(plan.price)}</p>
+                                </div>
+                                <div>
+                                  <p className="text-xs text-gray-500">Clientes</p>
+                                  <p className="text-gray-700">{plan.limitLabel}</p>
+                                </div>
+                              </div>
+                              <div className="mt-3 flex items-center gap-3">
+                                <button onClick={() => setSelectedPlanDetails(plan)} className="text-blue-600 hover:text-blue-800 text-sm font-semibold">
+                                  Detalhes
+                                </button>
+                                <button
+                                  onClick={() => handleOpenPaymentLink(plan.tier)}
+                                  disabled={isLoadingSubscription || isSavingSubscription || isCheckoutBlockedForPlan(plan.tier)}
+                                  className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed"
+                                >
+                                  {isCheckoutBlockedForPlan(plan.tier)
+                                    ? 'Plano atual'
+                                    : (isSavingSubscription ? 'Abrindo...' : 'Assinar Agora')}
+                                </button>
+                              </div>
                             </div>
-                            <div>
-                              <p className="text-xs text-gray-500">Clientes</p>
-                              <p className="text-gray-700">{plan.limitLabel}</p>
-                            </div>
-                          </div>
-                          <div className="mt-3 flex items-center gap-3">
-                            <button onClick={() => setSelectedPlanDetails(plan)} className="text-blue-600 hover:text-blue-800 text-sm font-semibold">
-                              Detalhes
-                            </button>
-                            <button
-                              onClick={() => handleOpenPaymentLink(plan.tier)}
-                              disabled={isLoadingSubscription || isSavingSubscription || isCheckoutBlockedForPlan(plan.tier)}
-                              className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed"
-                            >
-                              {isCheckoutBlockedForPlan(plan.tier)
-                                ? 'Plano atual'
-                                : (isSavingSubscription ? 'Abrindo...' : 'Assinar Agora')}
-                            </button>
+                          ))}
+                        </div>
+
+                        <div className="hidden md:block bg-white rounded-xl shadow-sm overflow-hidden border border-gray-100">
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-sm text-left min-w-[760px]">
+                              <thead className="bg-gray-50 text-gray-600 font-medium">
+                                <tr>
+                                  <th className="px-6 py-3">Plano</th>
+                                  <th className="px-6 py-3">Valor {billingCycle === 'YEARLY' ? 'anual' : 'mensal'}</th>
+                                  <th className="px-6 py-3">Clientes</th>
+                                  <th className="px-6 py-3">Status</th>
+                                  <th className="px-6 py-3 text-right">Ações</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-gray-100">
+                                {billingPlansList.map((plan) => (
+                                  <tr key={plan.tier} className="hover:bg-gray-50">
+                                    <td className="px-6 py-4">
+                                      <button
+                                        type="button"
+                                        onClick={() => setSelectedPlanDetails(plan)}
+                                        className="font-semibold text-gray-900 hover:text-blue-700"
+                                      >
+                                        {plan.title}
+                                      </button>
+                                    </td>
+                                    <td className="px-6 py-4 text-gray-800 font-semibold">{formatMoneyFromCents(plan.price)}</td>
+                                    <td className="px-6 py-4 text-gray-700">{plan.limitLabel}</td>
+                                    <td className="px-6 py-4">
+                                      {isCheckoutBlockedForPlan(plan.tier) ? (
+                                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-700">Plano atual</span>
+                                      ) : (
+                                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700">Disponível</span>
+                                      )}
+                                    </td>
+                                    <td className="px-6 py-4">
+                                      <div className="flex items-center justify-end gap-3">
+                                        <button onClick={() => setSelectedPlanDetails(plan)} className="text-blue-600 hover:text-blue-800 text-sm font-semibold">
+                                          Detalhes
+                                        </button>
+                                        <button
+                                          onClick={() => handleOpenPaymentLink(plan.tier)}
+                                          disabled={isLoadingSubscription || isSavingSubscription || isCheckoutBlockedForPlan(plan.tier)}
+                                          className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed"
+                                        >
+                                          {isCheckoutBlockedForPlan(plan.tier)
+                                            ? 'Plano atual'
+                                            : (isSavingSubscription ? 'Abrindo...' : 'Assinar Agora')}
+                                        </button>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                ))}
+                                {billingPlansList.length === 0 && (
+                                  <tr>
+                                    <td colSpan={5} className="px-6 py-8 text-center text-gray-500">Nenhum plano encontrado.</td>
+                                  </tr>
+                                )}
+                              </tbody>
+                            </table>
                           </div>
                         </div>
-                      ))}
-                    </div>
-
-                    <div className="hidden md:block bg-white rounded-xl shadow-sm overflow-hidden border border-gray-100">
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-sm text-left min-w-[760px]">
-                          <thead className="bg-gray-50 text-gray-600 font-medium">
-                            <tr>
-                              <th className="px-6 py-3">Plano</th>
-                              <th className="px-6 py-3">Valor {billingCycle === 'YEARLY' ? 'anual' : 'mensal'}</th>
-                              <th className="px-6 py-3">Clientes</th>
-                              <th className="px-6 py-3">Status</th>
-                              <th className="px-6 py-3 text-right">Ações</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-gray-100">
-                            {billingPlansList.map((plan) => (
-                              <tr key={plan.tier} className="hover:bg-gray-50">
-                                <td className="px-6 py-4">
-                                  <button
-                                    type="button"
-                                    onClick={() => setSelectedPlanDetails(plan)}
-                                    className="font-semibold text-gray-900 hover:text-blue-700"
-                                  >
-                                    {plan.title}
-                                  </button>
-                                </td>
-                                <td className="px-6 py-4 text-gray-800 font-semibold">{formatMoneyFromCents(plan.price)}</td>
-                                <td className="px-6 py-4 text-gray-700">{plan.limitLabel}</td>
-                                <td className="px-6 py-4">
-                                  {isCheckoutBlockedForPlan(plan.tier) ? (
-                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-700">Plano atual</span>
-                                  ) : (
-                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700">Disponível</span>
-                                  )}
-                                </td>
-                                <td className="px-6 py-4">
-                                  <div className="flex items-center justify-end gap-3">
-                                    <button onClick={() => setSelectedPlanDetails(plan)} className="text-blue-600 hover:text-blue-800 text-sm font-semibold">
-                                      Detalhes
-                                    </button>
-                                    <button
-                                      onClick={() => handleOpenPaymentLink(plan.tier)}
-                                      disabled={isLoadingSubscription || isSavingSubscription || isCheckoutBlockedForPlan(plan.tier)}
-                                      className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed"
-                                    >
-                                      {isCheckoutBlockedForPlan(plan.tier)
-                                        ? 'Plano atual'
-                                        : (isSavingSubscription ? 'Abrindo...' : 'Assinar Agora')}
-                                    </button>
-                                  </div>
-                                </td>
-                              </tr>
-                            ))}
-                            {billingPlansList.length === 0 && (
-                              <tr>
-                                <td colSpan={5} className="px-6 py-8 text-center text-gray-500">Nenhum plano encontrado.</td>
-                              </tr>
-                            )}
-                          </tbody>
-                        </table>
+                      </>
+                    ) : (
+                      <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600">
+                        Opções de plano ocultas para reduzir ruído visual. Clique em "Trocar plano" para visualizar.
                       </div>
-                    </div>
+                    )}
                   </div>
 
                   {selectedPlanDetails && (
@@ -7902,17 +7926,67 @@ const SettingsManagement = () => {
                     </div>
                   )}
 
-                  <div className="p-4 rounded-xl border border-blue-100 bg-blue-50">
-                    <p className="text-sm font-bold text-blue-900">🎁 Teste grátis por 7 dias</p>
-                    <p className="text-sm text-blue-800 mt-1">O trial começa automaticamente no primeiro login de administrador da barbearia. Após o vencimento, será necessário pagar manualmente para continuar usando o sistema.</p>
-                    <button
-                      onClick={() => handleChoosePlan('MONTHLY')}
-                      disabled={isSavingSubscription || isLoadingSubscription}
-                      className="mt-3 px-4 py-2 bg-white border border-blue-200 text-blue-700 rounded-lg text-sm font-bold hover:bg-blue-100 disabled:opacity-60 disabled:cursor-not-allowed"
-                    >
-                      {isSavingSubscription ? 'Salvando plano...' : 'Selecionar plano mensal'}
-                    </button>
-                  </div>
+                  {isCheckoutDocumentModalOpen && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+                      <div className="w-full max-w-md rounded-2xl bg-white shadow-xl border border-gray-100 overflow-hidden">
+                        <div className="p-6 border-b border-gray-100 flex items-center justify-between gap-3">
+                          <div>
+                            <h4 className="text-lg font-bold text-gray-900">Atualizar CPF/CNPJ</h4>
+                            <p className="text-sm text-gray-600 mt-1">Informe o documento do responsável financeiro para cobrança no Asaas.</p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={closeCheckoutDocumentModal}
+                            className="p-1.5 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100"
+                          >
+                            <X size={18} />
+                          </button>
+                        </div>
+                        <div className="p-6 space-y-3">
+                          <label className="block text-xs font-semibold uppercase tracking-wide text-gray-700">CPF ou CNPJ</label>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            placeholder="Somente números"
+                            value={checkoutDocumentDraft}
+                            onChange={(e) => setCheckoutDocumentDraft(e.target.value.replace(/\D/g, ''))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-white text-gray-900 focus:ring-2 focus:ring-blue-500 outline-none"
+                          />
+                          <p className="text-xs text-gray-500">Aceita CPF (11 dígitos) ou CNPJ (14 dígitos).</p>
+                        </div>
+                        <div className="p-4 bg-gray-50 border-t border-gray-100 flex gap-3">
+                          <button
+                            type="button"
+                            onClick={closeCheckoutDocumentModal}
+                            className="flex-1 py-2.5 rounded-xl border border-gray-200 text-gray-700 font-semibold hover:bg-white"
+                          >
+                            Cancelar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleSaveCheckoutDocument}
+                            className="flex-1 py-2.5 rounded-xl bg-blue-600 text-white font-semibold hover:bg-blue-700"
+                          >
+                            Salvar
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {canStartTrial && (
+                    <div className="p-4 rounded-xl border border-blue-100 bg-blue-50">
+                      <p className="text-sm font-bold text-blue-900">🎁 Teste grátis por 7 dias</p>
+                      <p className="text-sm text-blue-800 mt-1">O trial começa automaticamente no primeiro login de administrador da barbearia. Após o vencimento, será necessário pagar manualmente para continuar usando o sistema.</p>
+                      <button
+                        onClick={() => handleChoosePlan('MONTHLY')}
+                        disabled={isSavingSubscription || isLoadingSubscription}
+                        className="mt-3 px-4 py-2 bg-white border border-blue-200 text-blue-700 rounded-lg text-sm font-bold hover:bg-blue-100 disabled:opacity-60 disabled:cursor-not-allowed"
+                      >
+                        {isSavingSubscription ? 'Salvando plano...' : 'Selecionar plano mensal'}
+                      </button>
+                    </div>
+                  )}
 
                   {isLoadingSubscription && (
                     <p className="text-sm text-gray-500">Carregando dados da assinatura...</p>
@@ -9277,24 +9351,6 @@ const SettingsManagement = () => {
                     </button>
                   </div>
 
-                  <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-                    <div className="flex items-center gap-3">
-                      <div className="p-2 bg-blue-100 text-blue-600 rounded-lg"><Mail size={20} /></div>
-                      <div>
-                        <p className="font-medium text-gray-900">Alertas por E-mail</p>
-                        <p className="text-xs text-gray-500">Ativa ou desativa o envio de alertas pelo canal E-mail</p>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={handleToggleEmailAlerts}
-                      disabled={isLoadingAlertSettings || isSavingAlertSettings}
-                      className={`w-12 h-6 rounded-full relative transition-colors ${isEmailAlertsEnabled ? 'bg-blue-600' : 'bg-gray-300'}`}
-                      aria-label="Alternar alertas por E-mail"
-                    >
-                      <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${isEmailAlertsEnabled ? 'right-1' : 'left-1'}`}></div>
-                    </button>
-                  </div>
                 </div>
 
                 {alertSettingsError && (
@@ -9309,20 +9365,12 @@ const SettingsManagement = () => {
 
               </div>
 
-              {!isWhatsappAlertsEnabled && !isEmailAlertsEnabled ? (
+              {!isWhatsappAlertsEnabled ? (
                 <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-600">
-                  Todos os alertas estão desabilitados. Ative ao menos um canal para exibir a aba de configuração.
+                  Alertas por WhatsApp estão desabilitados. Ative o canal para exibir a configuração da integração.
                 </div>
               ) : (
-                <>
-                  {isWhatsappAlertsEnabled ? (
-                    <WhatsAppIntegration />
-                  ) : (
-                    <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-600">
-                      A integração do WhatsApp está desativada. O canal de E-mail (Resend) continua sendo controlado apenas pelo botão de ativar/desativar acima.
-                    </div>
-                  )}
-                </>
+                <WhatsAppIntegration />
               )}
             </div>
           )}
@@ -9482,7 +9530,7 @@ const SettingsManagement = () => {
                     </div>
                     <div className="flex items-center gap-2">
                       <a
-                        href="https://wa.me/5531995041815"
+                        href="https://wa.me/553183410473"
                         target="_blank"
                         rel="noopener noreferrer"
                         className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
@@ -9511,7 +9559,7 @@ const SettingsManagement = () => {
 
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                     <a
-                      href="https://wa.me/5531995041815"
+                      href="https://wa.me/553183410473"
                       target="_blank"
                       rel="noopener noreferrer"
                       className="p-6 bg-white border border-gray-100 rounded-2xl shadow-sm hover:shadow-md hover:border-blue-200 transition-all group text-center"
@@ -12441,7 +12489,7 @@ export const AdminDashboard: React.FC = () => {
   const canAccessFinanceTab = isAdminUser || canEmployeeViewFinance;
   const canAccessReportsTab = isAdminUser || canEmployeeViewReports;
   const canAccessUsersTab = isAdminUser || canEmployeeViewUsers;
-  const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'USERS' | 'AGENDA' | 'APPOINTMENT_CENTER' | 'FINANCE' | 'REPORTS' | 'SETTINGS'>(isAdminUser ? 'DASHBOARD' : 'AGENDA');
+  const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'USERS' | 'SUBSCRIPTIONS' | 'AGENDA' | 'APPOINTMENT_CENTER' | 'FINANCE' | 'REPORTS' | 'SETTINGS'>(isAdminUser ? 'DASHBOARD' : 'AGENDA');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [agendaNavigationRequest, setAgendaNavigationRequest] = useState<(AgendaNavigationPayload & { nonce: number }) | null>(null);
 
@@ -12494,7 +12542,7 @@ export const AdminDashboard: React.FC = () => {
     }
   }, [isAdminUser, canAccessFinanceTab, canAccessReportsTab, canAccessUsersTab, activeTab]);
 
-  const handleTabChange = (tab: 'DASHBOARD' | 'USERS' | 'AGENDA' | 'APPOINTMENT_CENTER' | 'FINANCE' | 'REPORTS' | 'SETTINGS') => {
+  const handleTabChange = (tab: 'DASHBOARD' | 'USERS' | 'SUBSCRIPTIONS' | 'AGENDA' | 'APPOINTMENT_CENTER' | 'FINANCE' | 'REPORTS' | 'SETTINGS') => {
     if (!isAdminUser && tab !== 'AGENDA' && tab !== 'APPOINTMENT_CENTER' && !(tab === 'FINANCE' && canEmployeeViewFinance) && !(tab === 'REPORTS' && canEmployeeViewReports) && !(tab === 'USERS' && canEmployeeViewUsers)) {
       return;
     }
@@ -12534,7 +12582,7 @@ export const AdminDashboard: React.FC = () => {
         fixed inset-y-0 left-0 z-40 w-64 bg-white shadow-xl transform transition-transform duration-300 ease-in-out md:sticky md:top-0 md:inset-y-auto md:h-screen md:translate-x-0 md:shadow-md flex flex-col min-h-0
         ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}
       `}>
-        <div className="p-6 border-b flex justify-between items-center">
+        <div className="p-6 flex justify-between items-center">
           <div>
             <h1 className="text-2xl font-bold flex items-center gap-2" style={{ color: brandIdentity.primaryColor || '#2563eb' }}>
               <BrandIcon name={brandIdentity.iconName} className="w-6 h-6" />
@@ -12593,6 +12641,14 @@ export const AdminDashboard: React.FC = () => {
             </button>
           )}
           {isAdminUser && (
+            <button
+              onClick={() => handleTabChange('SUBSCRIPTIONS')}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'SUBSCRIPTIONS' ? 'bg-blue-50 text-blue-600 font-medium' : 'text-gray-600 hover:bg-gray-50'}`}
+            >
+              <RotateCcw size={20} /> Assinaturas
+            </button>
+          )}
+          {isAdminUser && (
             <>
               <button 
                 onClick={() => handleTabChange('SETTINGS')}
@@ -12604,7 +12660,7 @@ export const AdminDashboard: React.FC = () => {
           )}
         </nav>
 
-        <div className="p-4 border-t bg-white shrink-0">
+        <div className="p-4 bg-white shrink-0">
           <div className="flex items-center gap-3 mb-4">
              <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600">
                 <Users size={20} />
@@ -12653,6 +12709,7 @@ export const AdminDashboard: React.FC = () => {
           {activeTab === 'FINANCE' && canAccessFinanceTab && <FinanceManagement />}
           {activeTab === 'REPORTS' && canAccessReportsTab && <ReportsManagement />}
           {activeTab === 'USERS' && canAccessUsersTab && <ClientsManagement />}
+          {activeTab === 'SUBSCRIPTIONS' && isAdminUser && <SettingsManagement initialSubTab="SUBSCRIPTIONS" lockedSubTab="SUBSCRIPTIONS" />}
             {activeTab === 'AGENDA' && <CalendarManagement navigationRequest={agendaNavigationRequest} />}
           {activeTab === 'APPOINTMENT_CENTER' && <AppointmentCenterManagement onOpenAgenda={handleOpenAppointmentInAgenda} />}
           {activeTab === 'SETTINGS' && isAdminUser && <SettingsManagement />}

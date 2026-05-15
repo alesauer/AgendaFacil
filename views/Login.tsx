@@ -181,7 +181,7 @@ export const Login: React.FC = () => {
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden">
         
         {/* Header Toggle */}
-        <div className="flex text-sm font-medium border-b">
+        <div className="flex text-sm font-medium">
           <button 
             onClick={() => setIsClient(true)}
             className={`flex-1 py-4 text-center transition-colors ${isClient ? 'text-white' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'}`}
@@ -288,7 +288,7 @@ export const Login: React.FC = () => {
           </form>
         </div>
         
-        <div className="px-8 py-4 bg-gray-50 border-t text-center text-xs text-gray-500">
+        <div className="px-8 py-4 bg-gray-50 text-center text-xs text-gray-500">
           Ao entrar, você concorda com nossos Termos de Uso e Política de Privacidade.
         </div>
       </div>

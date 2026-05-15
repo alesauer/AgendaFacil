@@ -44,12 +44,19 @@ def resolve_tenant():
     if request.path.startswith("/master") or request.path.startswith("/auth/master"):
         return None
 
-    slug = _extract_slug_from_host(request.host or "")
+    if request.path.startswith("/api/leads") or request.path.startswith("/leads"):
+        return None
+
+    # Header explícito tem prioridade: frontend sempre envia X-Barbearia-Slug com o slug
+    # correto independente do hostname (necessário quando o domínio NÃO é subdomínio do tenant,
+    # ex: app.barbeiros.app onde "app" não é um slug de barbearia).
+    slug = (request.headers.get("X-Barbearia-Slug") or "").strip().lower() or None
 
     if not slug:
-        slug = request.headers.get("X-Barbearia-Slug") or current_app.config.get(
-            "DEFAULT_BARBEARIA_SLUG", ""
-        )
+        slug = _extract_slug_from_host(request.host or "")
+
+    if not slug:
+        slug = current_app.config.get("DEFAULT_BARBEARIA_SLUG", "")
 
     if not slug:
         return error("Tenant não informado", 400)

@@ -27,6 +27,14 @@ def _parse_channel(raw: str) -> Channel | None:
     return None
 
 
+def _is_channel_enabled_for_dispatch(barbearia_id: str, channel: Channel) -> bool:
+    config_row = NotificationsRepository.get_active_provider_config(barbearia_id, channel.value) or {}
+    config = config_row.get("config") or {}
+    if isinstance(config, dict) and "alerts_enabled" in config:
+        return bool(config.get("alerts_enabled"))
+    return True
+
+
 def process_due_dispatches(limit: int = 50, worker_id: str | None = None) -> dict[str, int]:
     worker = worker_id or f"worker-{uuid4()}"
     rows = NotificationsRepository.fetch_due_dispatches(limit)
@@ -72,6 +80,22 @@ def process_due_dispatches(limit: int = 50, worker_id: str | None = None) -> dic
                     "locked_at": None,
                     "locked_by": None,
                     "last_attempt_at": datetime.now(tz=timezone.utc).isoformat(),
+                },
+            )
+            stats["failed"] += 1
+            continue
+
+        if not _is_channel_enabled_for_dispatch(barbearia_id, channel):
+            NotificationsRepository.update_dispatch(
+                dispatch_id,
+                {
+                    "status": DispatchStatus.FAILED.value,
+                    "attempts": next_attempt,
+                    "error_code": "CHANNEL_DISABLED",
+                    "error_message": f"Canal {channel.value} desabilitado na configuração",
+                    "last_attempt_at": datetime.now(tz=timezone.utc).isoformat(),
+                    "locked_at": None,
+                    "locked_by": None,
                 },
             )
             stats["failed"] += 1

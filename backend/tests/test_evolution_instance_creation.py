@@ -1,16 +1,22 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 import requests
+from dotenv import load_dotenv
 
-EVOLUTION_BASE_URL = "https://gac-evolution.almg.gov.br"
-EVOLUTION_API_KEY = "7f9c2a4d1e8b6f0a3c5d9e1f4a7b2c8d6e0f1a3b5c7d9e2f4a6b8c1d3e5f7a90"
-EVOLUTION_API_KEY_HEADER = "apikey"
-VERIFY_SSL = True
-TIMEOUT_SECONDS = 30
+BASE_DIR = Path(__file__).resolve().parents[1]
+load_dotenv(BASE_DIR / ".env")
+
+EVOLUTION_BASE_URL = os.getenv("EVOLUTION_API_BASE_URL", "").strip()
+EVOLUTION_API_KEY = os.getenv("EVOLUTION_API_KEY", "").strip()
+EVOLUTION_API_KEY_HEADER = os.getenv("EVOLUTION_API_KEY_HEADER", "apikey").strip() or "apikey"
+VERIFY_SSL = os.getenv("EVOLUTION_VERIFY_SSL", "true").strip().lower() != "false"
+TIMEOUT_SECONDS = int(os.getenv("EVOLUTION_HTTP_TIMEOUT_SECONDS", "30"))
 
 
 @dataclass
@@ -75,6 +81,10 @@ def create_instance(base_url: str, api_key: str, instance_name: str) -> Evolutio
 
 
 def run_test() -> int:
+    if not EVOLUTION_BASE_URL or not EVOLUTION_API_KEY:
+        print("Variáveis obrigatórias ausentes: EVOLUTION_API_BASE_URL e/ou EVOLUTION_API_KEY")
+        return 1
+
     instance_name = f"agf-test-{int(time.time())}"
     result = create_instance(
         base_url=EVOLUTION_BASE_URL,

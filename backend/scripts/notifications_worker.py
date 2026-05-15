@@ -13,6 +13,7 @@ if str(project_root) not in sys.path:
 
 from backend.app import create_app
 from backend.notifications.queue_processor import process_due_dispatches
+from backend.services.marketing_leads_service import MarketingLeadsService
 
 
 def parse_args() -> argparse.Namespace:
@@ -30,13 +31,15 @@ def main() -> int:
 
     with app.app_context():
         if args.once:
-            stats = process_due_dispatches(limit=args.limit, worker_id=worker_id)
-            print(stats)
+            notification_stats = process_due_dispatches(limit=args.limit, worker_id=worker_id)
+            lead_stats = MarketingLeadsService.process_pending_warmup_dispatches(limit=args.limit)
+            print({"notifications": notification_stats, "marketing_leads": lead_stats})
             return 0
 
         while True:
-            stats = process_due_dispatches(limit=args.limit, worker_id=worker_id)
-            print(stats)
+            notification_stats = process_due_dispatches(limit=args.limit, worker_id=worker_id)
+            lead_stats = MarketingLeadsService.process_pending_warmup_dispatches(limit=args.limit)
+            print({"notifications": notification_stats, "marketing_leads": lead_stats})
             time.sleep(max(1, args.poll_seconds))
 
 

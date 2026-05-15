@@ -8,6 +8,7 @@ class Config:
     DATABASE_URL = ""
     SUPABASE_URL = ""
     SUPABASE_KEY = ""
+    SUPABASE_SERVICE_ROLE_KEY = ""
     SUPABASE_ONLY = True
     SUPABASE_NETWORK_MODE = "proxy"
     BYPASS_PROXY_FOR_SUPABASE = False
@@ -15,10 +16,10 @@ class Config:
     SUPABASE_HTTP_TIMEOUT_SECONDS = 8
     SUPABASE_TENANT_RETRIES = 3
 
-    EVOLUTION_API_BASE_URL = "https://http://gac.almg.uucp:8082/"
+    EVOLUTION_API_BASE_URL = ""
     EVOLUTION_API_KEY = ""
     EVOLUTION_API_KEY_HEADER = "apikey"
-    EVOLUTION_INSTANCE = "chipGac"
+    EVOLUTION_INSTANCE = ""
     EVOLUTION_SEND_TEXT_PATH = "/message/sendText/{instance}"
     EVOLUTION_HTTP_TIMEOUT_SECONDS = 10
 
@@ -45,6 +46,7 @@ class Config:
     SUSPENSION_BILLING_EMAIL = ""
     MASTER_CONFIG_ENCRYPTION_KEY = ""
     MASTER_RUNTIME_CONFIG_CACHE_SECONDS = 30
+    LEAD_ACCESS_TOKEN_EXPIRES_MINUTES = 10080
 
 
 class DevelopmentConfig(Config):
@@ -63,6 +65,7 @@ def _hydrate_from_env(config_cls):
     config_cls.DATABASE_URL = ""
     config_cls.SUPABASE_URL = os.getenv("SUPABASE_URL", "")
     config_cls.SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
+    config_cls.SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
     config_cls.SUPABASE_ONLY = True
     config_cls.SUPABASE_NETWORK_MODE = os.getenv("SUPABASE_NETWORK_MODE", "auto").strip().lower()
     if config_cls.SUPABASE_NETWORK_MODE not in {"auto", "proxy", "direct"}:
@@ -99,6 +102,7 @@ def _hydrate_from_env(config_cls):
     config_cls.SUSPENSION_BILLING_EMAIL = os.getenv("SUSPENSION_BILLING_EMAIL", "").strip()
     config_cls.MASTER_CONFIG_ENCRYPTION_KEY = os.getenv("MASTER_CONFIG_ENCRYPTION_KEY", "").strip()
     config_cls.MASTER_RUNTIME_CONFIG_CACHE_SECONDS = int(os.getenv("MASTER_RUNTIME_CONFIG_CACHE_SECONDS", "30"))
+    config_cls.LEAD_ACCESS_TOKEN_EXPIRES_MINUTES = int(os.getenv("LEAD_ACCESS_TOKEN_EXPIRES_MINUTES", "10080"))
     return config_cls
 
 

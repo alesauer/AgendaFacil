@@ -5,6 +5,48 @@ from backend.supabase_client import get_supabase_client, is_supabase_ready
 
 class AuthRepository(BaseRepository):
     @staticmethod
+    def _digits(phone: str | None) -> str:
+        return "".join(ch for ch in str(phone or "") if ch.isdigit())
+
+    @staticmethod
+    def phone_candidates(phone: str | None) -> list[str]:
+        raw = str(phone or "").strip()
+        digits = AuthRepository._digits(raw)
+
+        candidates: list[str] = []
+
+        def add(value: str | None):
+            normalized = str(value or "").strip()
+            if not normalized:
+                return
+            if normalized not in candidates:
+                candidates.append(normalized)
+
+        add(raw)
+        add(digits)
+
+        local_digits = digits
+        if local_digits.startswith("55") and len(local_digits) > 11:
+            local_digits = local_digits[2:]
+            add(local_digits)
+
+        bases = [digits, local_digits]
+        for base in bases:
+            if not base:
+                continue
+
+            if len(base) == 10:
+                add(f"{base[:2]}9{base[2:]}")
+
+            if len(base) == 11 and len(base) > 2 and base[2] == "9":
+                add(f"{base[:2]}{base[3:]}")
+
+            if len(base) in {10, 11}:
+                add(f"55{base}")
+
+        return candidates
+
+    @staticmethod
     def find_tenant_by_id(barbearia_id: str):
         AuthRepository.require_tenant(barbearia_id)
         if is_db_ready():
@@ -64,28 +106,35 @@ class AuthRepository(BaseRepository):
     @staticmethod
     def find_user_by_phone(barbearia_id: str, phone: str):
         AuthRepository.require_tenant(barbearia_id)
+        candidates = AuthRepository.phone_candidates(phone)
+
         if is_db_ready():
-            return query_one(
-                """
-                SELECT id, barbearia_id, nome, telefone, email, senha_hash, role, ativo
-                FROM usuarios
-                WHERE barbearia_id = %s AND telefone = %s
-                """,
-                (barbearia_id, phone),
-            )
+            for candidate in candidates:
+                user = query_one(
+                    """
+                    SELECT id, barbearia_id, nome, telefone, email, senha_hash, role, ativo
+                    FROM usuarios
+                    WHERE barbearia_id = %s AND telefone = %s
+                    """,
+                    (barbearia_id, candidate),
+                )
+                if user:
+                    return user
 
         if is_supabase_ready():
             supabase = get_supabase_client()
-            response = (
-                supabase.table("usuarios")
-                .select("id,barbearia_id,nome,telefone,email,senha_hash,role,ativo")
-                .eq("barbearia_id", barbearia_id)
-                .eq("telefone", phone)
-                .limit(1)
-                .execute()
-            )
-            data = response.data or []
-            return data[0] if data else None
+            for candidate in candidates:
+                response = (
+                    supabase.table("usuarios")
+                    .select("id,barbearia_id,nome,telefone,email,senha_hash,role,ativo")
+                    .eq("barbearia_id", barbearia_id)
+                    .eq("telefone", candidate)
+                    .limit(1)
+                    .execute()
+                )
+                data = response.data or []
+                if data:
+                    return data[0]
 
         return None
 

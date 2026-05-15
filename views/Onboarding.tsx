@@ -48,6 +48,17 @@ interface OnboardingDraft {
   isWhatsAppConnected: boolean;
 }
 
+interface OnboardingProps {
+  isLeadMode?: boolean;
+  leadsData?: {
+    id: string;
+    name: string;
+    whatsapp: string;
+    status?: string;
+    created_at?: string;
+  };
+}
+
 // --- Components ---
 
 const StepIndicator = ({ currentStep, totalSteps }: { currentStep: number, totalSteps: number }) => {
@@ -66,7 +77,7 @@ const StepIndicator = ({ currentStep, totalSteps }: { currentStep: number, total
   );
 };
 
-export const Onboarding: React.FC = () => {
+export const Onboarding: React.FC<OnboardingProps> = ({ isLeadMode = false, leadsData = undefined }) => {
   const navigate = useNavigate();
 
   const getCurrentTenantSlug = () => {
@@ -77,8 +88,10 @@ export const Onboarding: React.FC = () => {
 
     const hashPath = (window.location.hash || '').replace(/^#\/?/, '');
     const hashSegment = hashPath.split('/').filter(Boolean)[0];
-    if (hashSegment && /^[a-z0-9-]+$/i.test(hashSegment) && !['login', 'admin', 'client', 'master', 'onboarding'].includes(hashSegment.toLowerCase())) {
-      return hashSegment.toLowerCase();
+    // Remove query params antes de validar (ex: "lead-onboarding?lead_id=xxx" -> "lead-onboarding")
+    const hashSegmentClean = String(hashSegment || '').split('?')[0];
+    if (hashSegmentClean && /^[a-z0-9-]+$/i.test(hashSegmentClean) && !['login', 'admin', 'client', 'master', 'onboarding', 'lead-onboarding'].includes(hashSegmentClean.toLowerCase())) {
+      return hashSegmentClean.toLowerCase();
     }
 
     const localTenant = localStorage.getItem('tenant_slug');
@@ -103,8 +116,16 @@ export const Onboarding: React.FC = () => {
       localStorage.removeItem('onboarding_draft');
     }
 
-    const adminUrl = `${window.location.pathname}${window.location.search}#/admin`;
-    window.location.replace(adminUrl);
+    // Limpar dados de lead se estava em modo lead
+    if (isLeadMode) {
+      localStorage.removeItem('lead_mode');
+      localStorage.removeItem('lead_id');
+      localStorage.removeItem('lead_name');
+      localStorage.removeItem('lead_whatsapp');
+      localStorage.removeItem('lead_created_at');
+    }
+
+    navigate('/admin', { replace: true });
   };
 
   const tenantSlug = getCurrentTenantSlug();
@@ -578,7 +599,19 @@ export const Onboarding: React.FC = () => {
   };
   
   // Form States
-  const [barberData, setBarberData] = useState(() => initialDraft?.barberData || defaultBarberData);
+  const [barberData, setBarberData] = useState(() => {
+    // Em modo lead, usar dados do lead como inicial
+    if (isLeadMode && leadsData) {
+      const leadName = leadsData.name || '';
+      return {
+        name: leadName,
+        phone: leadsData.whatsapp || '',
+        city: '',
+        logo: null as string | null,
+      };
+    }
+    return initialDraft?.barberData || defaultBarberData;
+  });
 
   const [professionals, setProfessionals] = useState<Professional[]>(() => initialDraft?.professionals || defaultProfessionals);
   const [newPro, setNewPro] = useState<Professional>({ name: '', role: '', phone: '' });

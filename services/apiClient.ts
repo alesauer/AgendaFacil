@@ -14,8 +14,10 @@ type ApiError = {
 export type ApiResponse<T> = ApiSuccess<T> | ApiError;
 
 const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://127.0.0.1:5000';
+const APP_HOSTNAME = 'app.barbeiros.app';
+const MARKETING_URL = 'https://www.barbeiros.app';
 
-const RESERVED_HASH_ROUTES = new Set(['login', 'admin', 'client', 'master', 'onboarding']);
+const RESERVED_HASH_ROUTES = new Set(['login', 'admin', 'client', 'master', 'onboarding', 'lead-onboarding']);
 
 const normalizeSlug = (value?: string | null): string | null => {
   const clean = String(value || '').trim().toLowerCase();
@@ -32,7 +34,9 @@ const getTenantFromPath = (): string | null => {
 const getTenantFromHash = (): string | null => {
   const hashPath = (window.location.hash || '').replace(/^#\/?/, '');
   const first = hashPath.split('/').filter(Boolean)[0];
-  const normalized = normalizeSlug(first);
+  // Remover query params antes de normalizar (ex: "lead-onboarding?lead_id=xxx" -> "lead-onboarding")
+  const firstWithoutQuery = String(first || '').split('?')[0];
+  const normalized = normalizeSlug(firstWithoutQuery);
   if (!normalized) return null;
   if (RESERVED_HASH_ROUTES.has(normalized)) return null;
   return normalized;
@@ -49,6 +53,9 @@ const getTenantSlug = (): string => {
   }
 
   const host = window.location.hostname;
+  if (host === APP_HOSTNAME) {
+    return (import.meta as any).env?.VITE_DEFAULT_TENANT_SLUG || 'demo';
+  }
   if (host === 'localhost' || host === '127.0.0.1') {
     return (import.meta as any).env?.VITE_DEFAULT_TENANT_SLUG || 'demo';
   }
@@ -58,6 +65,12 @@ const getTenantSlug = (): string => {
 
 const getAuthToken = (): string | null => {
   return localStorage.getItem('auth_token');
+};
+
+const isMasterHashRoute = (): boolean => {
+  const hashPath = (window.location.hash || '').replace(/^#\/?/, '');
+  const first = hashPath.split('/').filter(Boolean)[0];
+  return String(first || '').toLowerCase() === 'master';
 };
 
 const stripHtml = (value: string): string => {
@@ -146,21 +159,31 @@ export async function apiRequest<T>(
   options: RequestInit = {}
 ): Promise<ApiResponse<T>> {
   const token = getAuthToken();
-  const headers: HeadersInit = {
+  const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    'X-Barbearia-Slug': getTenantSlug(),
-    ...(options.headers || {}),
   };
 
-  if (token) {
-    (headers as Record<string, string>).Authorization = `Bearer ${token}`;
+  // Não enviar slug para rotas globais (leads, master, etc)
+  const isGlobalRoute = /^\/(api\/)?leads\/|^\/(api\/)?master\//.test(path);
+  if (!isGlobalRoute) {
+    headers['X-Barbearia-Slug'] = getTenantSlug();
   }
+
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  // Mesclar com headers customizados (option sobrescreve defaults)
+  const mergedHeaders = {
+    ...headers,
+    ...(options.headers as Record<string, string> || {}),
+  };
 
   try {
     const requestMethod = (options.method || 'GET').toUpperCase();
     const response = await fetch(`${API_BASE_URL}${path}`, {
       ...options,
-      headers,
+      headers: mergedHeaders,
     });
 
     const contentType = response.headers.get('content-type') || '';
@@ -183,6 +206,14 @@ export async function apiRequest<T>(
 
     if (!response.ok) {
       const apiMessage = parsedBody?.error as string | undefined;
+      const normalizedMessage = String(apiMessage || '').toLowerCase();
+      const isTenantNotFound = response.status === 404 && normalizedMessage.includes('barbearia não encontrada');
+      const currentHost = String(window.location.hostname || '').toLowerCase();
+      const isMasterApi = path.toLowerCase().startsWith('/master');
+      if (isTenantNotFound && currentHost === APP_HOSTNAME && !isMasterHashRoute() && !isMasterApi) {
+        window.location.replace(MARKETING_URL);
+      }
+
       return {
         success: false,
         error: getFriendlyHttpError(response.status, path, requestMethod, apiMessage),

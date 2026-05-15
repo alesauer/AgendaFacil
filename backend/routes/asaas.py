@@ -7,6 +7,7 @@ da assinatura da barbearia correspondente.
 
 from __future__ import annotations
 
+import logging
 import os
 
 from flask import Blueprint, current_app, request
@@ -16,6 +17,7 @@ from backend.services.master_runtime_config_service import MasterRuntimeConfigSe
 from backend.utils.http import error, success
 
 asaas_bp = Blueprint("asaas", __name__, url_prefix="/asaas")
+logger = logging.getLogger(__name__)
 
 
 def _runtime_value(env_key: str, fallback: str = "") -> str:
@@ -118,7 +120,7 @@ def _extract_customer_id(payload: dict) -> str | None:
     )
 
 
-def _extract_cycle(payload: dict) -> str:
+def _extract_cycle(payload: dict) -> str | None:
     payment = payload.get("payment") if isinstance(payload.get("payment"), dict) else {}
     subscription = payload.get("subscription") if isinstance(payload.get("subscription"), dict) else {}
     cycle_value = (
@@ -126,7 +128,14 @@ def _extract_cycle(payload: dict) -> str:
         or payment.get("cycle")
         or payload.get("cycle")
     )
-    return _normalize_cycle(str(cycle_value or ""))
+    if cycle_value is None:
+        return None
+
+    raw = str(cycle_value).strip()
+    if not raw:
+        return None
+
+    return _normalize_cycle(raw)
 
 
 def _extract_value_cents(payload: dict) -> int | None:
@@ -172,9 +181,7 @@ def asaas_webhook():
     configured_token = _runtime_value("ASAAS_WEBHOOK_TOKEN", str(os.getenv("ASAAS_WEBHOOK_TOKEN") or ""))
     received_token = str(request.headers.get("asaas-access-token") or "").strip()
 
-    import logging
-    logger = logging.getLogger(__name__)
-    logger.warning("WEBHOOK_TOKEN_CHECK configured=%r received=%r match=%s", configured_token, received_token, configured_token == received_token)
+    logger.info("ASAAS_WEBHOOK_TOKEN_CHECK match=%s", configured_token == received_token)
 
     if configured_token and configured_token != received_token:
         return error("Token de webhook inválido", 401)

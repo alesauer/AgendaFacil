@@ -13,6 +13,7 @@ from backend.routes.notifications import notifications_bp
 from backend.routes.profissionais import profissionais_bp
 from backend.routes.servicos import servicos_bp
 from backend.routes.asaas import asaas_bp
+from backend.routes.marketing_leads import marketing_leads_bp
 
 
 def register_routes(app):
@@ -31,3 +32,4 @@ def register_routes(app):
     app.register_blueprint(master_bp)
     app.register_blueprint(master_settings_bp)
     app.register_blueprint(asaas_bp)
+    app.register_blueprint(marketing_leads_bp)

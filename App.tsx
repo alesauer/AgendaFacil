@@ -17,6 +17,7 @@ import { AdminDashboard } from './views/AdminDashboard';
 import { MasterDashboard } from './views/MasterDashboard';
 import { MasterLogin } from './views/MasterLogin';
 import { Onboarding } from './views/Onboarding';
+import { LeadOnboarding } from './views/LeadOnboarding';
 
 // --- Contexts ---
 
@@ -182,6 +183,9 @@ const OnboardingAccessGuard: React.FC<OnboardingAccessGuardProps> = ({
 // --- Main App Component ---
 
 const App: React.FC = () => {
+  const APP_HOSTNAME = 'app.barbeiros.app';
+  const MARKETING_URL = 'https://www.barbeiros.app';
+  const RESERVED_HASH_ROUTES = new Set(['login', 'admin', 'client', 'master', 'onboarding']);
   const MAX_AVATAR_URL_LENGTH = 300000;
   const DEFAULT_PRIMARY_COLOR = '#2563eb';
   const DEFAULT_SECONDARY_COLOR = '#eff6ff';
@@ -267,6 +271,34 @@ const App: React.FC = () => {
       secondaryColor: DEFAULT_SECONDARY_COLOR,
     };
   });
+
+  useEffect(() => {
+    const hostname = String(window.location.hostname || '').toLowerCase();
+    if (hostname !== APP_HOSTNAME) {
+      return;
+    }
+
+    const hashPath = (window.location.hash || '').replace(/^#\/?/, '');
+    const hashRoute = hashPath.split('/').filter(Boolean)[0] || '';
+    const normalizedHashRoute = hashRoute.trim().toLowerCase();
+    if (normalizedHashRoute === 'master' || normalizedHashRoute === 'lead-onboarding') {
+      return;
+    }
+
+    const pathSegment = window.location.pathname.split('/').filter(Boolean)[0] || '';
+    const normalizedPathSegment = pathSegment.trim().toLowerCase();
+    const hasPathSlug = /^[a-z0-9-]+$/.test(normalizedPathSegment);
+
+    const hashSegment = hashPath.split('/').filter(Boolean)[0] || '';
+    // Remove query params antes de validar (ex: "lead-onboarding?lead_id=xxx" -> "lead-onboarding")
+    const hashSegmentClean = String(hashSegment || '').split('?')[0];
+    const normalizedHashSegment = hashSegmentClean.trim().toLowerCase();
+    const hasHashSlug = /^[a-z0-9-]+$/.test(normalizedHashSegment) && !RESERVED_HASH_ROUTES.has(normalizedHashSegment);
+
+    if (!hasPathSlug && !hasHashSlug) {
+      window.location.replace(MARKETING_URL);
+    }
+  }, []);
 
   const normalizeHexColor = (value?: string): string | null => {
     if (!value) return null;
@@ -1663,8 +1695,10 @@ const App: React.FC = () => {
 
     const hashPath = (window.location.hash || '').replace(/^#\/?/, '');
     const hashSegment = hashPath.split('/').filter(Boolean)[0];
-    if (hashSegment && /^[a-z0-9-]+$/i.test(hashSegment) && !['login', 'admin', 'client', 'master', 'onboarding'].includes(hashSegment.toLowerCase())) {
-      return hashSegment.toLowerCase();
+    // Remove query params antes de validar (ex: "lead-onboarding?lead_id=xxx" -> "lead-onboarding")
+    const hashSegmentClean = String(hashSegment || '').split('?')[0];
+    if (hashSegmentClean && /^[a-z0-9-]+$/i.test(hashSegmentClean) && !['login', 'admin', 'client', 'master', 'onboarding', 'lead-onboarding'].includes(hashSegmentClean.toLowerCase())) {
+      return hashSegmentClean.toLowerCase();
     }
 
     const localTenant = localStorage.getItem('tenant_slug');
@@ -1690,7 +1724,14 @@ const App: React.FC = () => {
   );
 
   if (!authInitialized) {
-    return <div className="min-h-screen bg-gray-50" />;
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="inline-block h-10 w-10 animate-spin rounded-full border-4 border-gray-200 border-t-blue-600" />
+          <p className="mt-3 text-sm text-gray-600">Carregando painel...</p>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -1708,6 +1749,8 @@ const App: React.FC = () => {
         <div className="min-h-screen bg-gray-50 text-gray-900 font-sans">
           <Routes>
             <Route path="/login" element={!user ? <Login /> : <Navigate to={shouldOpenOnboarding ? '/onboarding' : (user.role === 'MASTER' ? '/master' : ((user.role === 'ADMIN' || user.role === 'EMPLOYEE') ? '/admin' : '/client'))} />} />
+            
+            <Route path="/lead-onboarding/:accessToken" element={<LeadOnboarding />} />
             
             <Route path="/client/*" element={
               user && user.role === 'CLIENT' ? <ClientPortal /> : <Navigate to="/login" />
