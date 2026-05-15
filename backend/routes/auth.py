@@ -22,6 +22,13 @@ auth_bp = Blueprint("auth", __name__, url_prefix="/auth")
 EMAIL_REGEX = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
+def _normalize_phone(value: str | None) -> str:
+    digits = "".join(ch for ch in str(value or "") if ch.isdigit())
+    if digits.startswith("55") and len(digits) > 11:
+        digits = digits[2:]
+    return digits or str(value or "").strip()
+
+
 def _admin_guard():
     if str(getattr(g, "user_role", "")).upper() != "ADMIN":
         return error("Acesso negado", 403)
@@ -125,7 +132,7 @@ def master_me():
 def signup():
     payload = request.get_json(silent=True) or {}
     nome = (payload.get("nome") or "").strip()
-    telefone = (payload.get("telefone") or "").strip()
+    telefone = _normalize_phone((payload.get("telefone") or "").strip())
     email_raw = payload.get("email")
     email = str(email_raw).strip().lower() if email_raw else None
     senha = payload.get("senha") or ""
@@ -175,14 +182,14 @@ def signup():
 @auth_bp.post("/login")
 def login():
     payload = request.get_json(silent=True) or {}
-    telefone = (payload.get("telefone") or "").strip()
+    telefone = _normalize_phone((payload.get("telefone") or "").strip())
     email = str(payload.get("email") or "").strip().lower()
     login_value = str(payload.get("login") or "").strip()
     if login_value:
         if "@" in login_value:
             email = login_value.lower()
         else:
-            telefone = login_value
+            telefone = _normalize_phone(login_value)
     senha = payload.get("senha") or ""
 
     if (not telefone and not email) or not senha:
@@ -398,7 +405,7 @@ def create_user_admin():
 
     payload = request.get_json(silent=True) or {}
     nome = (payload.get("nome") or "").strip()
-    telefone = (payload.get("telefone") or "").strip()
+    telefone = _normalize_phone((payload.get("telefone") or "").strip())
     email = str(payload.get("email") or "").strip().lower()
     senha = payload.get("senha") or ""
     role = (payload.get("role") or "EMPLOYEE").upper()
@@ -480,7 +487,7 @@ def update_user_admin(user_id: str):
 
     payload = request.get_json(silent=True) or {}
     nome = (payload.get("nome") or "").strip()
-    telefone = (payload.get("telefone") or "").strip()
+    telefone = _normalize_phone((payload.get("telefone") or "").strip())
     email = str(payload.get("email") or "").strip().lower()
     role = (payload.get("role") or "EMPLOYEE").upper()
     ativo = bool(payload.get("ativo", True))

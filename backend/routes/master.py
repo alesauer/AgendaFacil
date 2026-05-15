@@ -10,6 +10,13 @@ from backend.utils.http import error, success
 master_bp = Blueprint("master", __name__, url_prefix="/master")
 
 
+def _normalize_phone(value: str | None) -> str:
+    digits = "".join(ch for ch in str(value or "") if ch.isdigit())
+    if digits.startswith("55") and len(digits) > 11:
+        digits = digits[2:]
+    return digits or str(value or "").strip()
+
+
 @master_bp.get("/tenants")
 @master_auth_required
 def list_tenants():
@@ -41,11 +48,11 @@ def provision_tenant():
 
     tenant_nome = str(payload.get("tenant_nome") or "").strip()
     tenant_slug = str(payload.get("tenant_slug") or "").strip().lower()
-    tenant_telefone = str(payload.get("tenant_telefone") or "").strip() or None
+    tenant_telefone = _normalize_phone(str(payload.get("tenant_telefone") or "").strip()) or None
     tenant_cidade = str(payload.get("tenant_cidade") or "").strip() or None
 
     admin_nome = str(payload.get("admin_nome") or "").strip()
-    admin_telefone = str(payload.get("admin_telefone") or "").strip()
+    admin_telefone = _normalize_phone(str(payload.get("admin_telefone") or "").strip())
     admin_email = str(payload.get("admin_email") or "").strip().lower() or None
     admin_senha = str(payload.get("admin_senha") or "")
 
