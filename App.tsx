@@ -281,7 +281,7 @@ const App: React.FC = () => {
     const hashPath = (window.location.hash || '').replace(/^#\/?/, '');
     const hashRoute = hashPath.split('/').filter(Boolean)[0] || '';
     const normalizedHashRoute = hashRoute.trim().toLowerCase();
-    if (normalizedHashRoute === 'master') {
+    if (normalizedHashRoute === 'master' || normalizedHashRoute === 'lead-onboarding') {
       return;
     }
 
@@ -1743,7 +1743,7 @@ const App: React.FC = () => {
           <Routes>
             <Route path="/login" element={!user ? <Login /> : <Navigate to={shouldOpenOnboarding ? '/onboarding' : (user.role === 'MASTER' ? '/master' : ((user.role === 'ADMIN' || user.role === 'EMPLOYEE') ? '/admin' : '/client'))} />} />
             
-            <Route path="/lead-onboarding" element={<LeadOnboarding />} />
+            <Route path="/lead-onboarding/:accessToken" element={<LeadOnboarding />} />
             
             <Route path="/client/*" element={
               user && user.role === 'CLIENT' ? <ClientPortal /> : <Navigate to="/login" />

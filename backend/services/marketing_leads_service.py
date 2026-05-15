@@ -1,7 +1,9 @@
 """Serviço para gerenciar leads da landing page com integração WhatsApp"""
 
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+import jwt
+from flask import current_app
 from backend.repositories.marketing_leads_repository import MarketingLeadsRepository
 from backend.services.master_runtime_config_service import MasterRuntimeConfigService
 
@@ -10,6 +12,61 @@ class MarketingLeadsService:
     """Serviço para disparar mensagens e gerenciar leads da landing page"""
 
     RETRY_DELAYS_SECONDS = (60, 300, 900)
+
+    @staticmethod
+    def _frontend_base_url() -> str:
+        configured = str(current_app.config.get("FRONTEND_APP_URL") or "").strip().rstrip("/")
+        if configured:
+            return configured
+        return "https://app.barbeiros.app"
+
+    @staticmethod
+    def create_lead_access_token(lead_id: str) -> str:
+        if not lead_id:
+            raise ValueError("lead_id é obrigatório")
+
+        expires_minutes = int(current_app.config.get("LEAD_ACCESS_TOKEN_EXPIRES_MINUTES", 10080) or 10080)
+        now = datetime.now(timezone.utc)
+        payload = {
+            "typ": "lead_access",
+            "sub": str(lead_id),
+            "iat": now,
+            "exp": now + timedelta(minutes=max(5, expires_minutes)),
+        }
+        return jwt.encode(payload, current_app.config["SECRET_KEY"], algorithm="HS256")
+
+    @staticmethod
+    def resolve_lead_access_token(token: str) -> dict:
+        if not token:
+            raise ValueError("token de acesso não informado")
+
+        try:
+            payload = jwt.decode(token, current_app.config["SECRET_KEY"], algorithms=["HS256"])
+        except jwt.ExpiredSignatureError as exc:
+            raise ValueError("Token expirado") from exc
+        except jwt.InvalidTokenError as exc:
+            raise ValueError("Token inválido") from exc
+
+        token_type = str(payload.get("typ") or "").strip().lower()
+        lead_id = str(payload.get("sub") or "").strip()
+
+        if token_type != "lead_access" or not lead_id:
+            raise ValueError("Token inválido")
+
+        lead = MarketingLeadsRepository.get_by_id(lead_id)
+        if not lead:
+            raise ValueError("Lead não encontrado")
+
+        return {
+            "lead_id": lead_id,
+            "lead": lead,
+        }
+
+    @staticmethod
+    def build_lead_onboarding_url(lead_id: str) -> str:
+        token = MarketingLeadsService.create_lead_access_token(lead_id)
+        base_url = MarketingLeadsService._frontend_base_url()
+        return f"{base_url}/#/lead-onboarding/{token}"
 
     @staticmethod
     def _get_evolution_config() -> dict:
@@ -192,13 +249,15 @@ class MarketingLeadsService:
             first_name = (name or "").split()[0] if name else "Barbeiro"
             phone_e164 = MarketingLeadsService._to_e164(whatsapp)
             
+            onboarding_url = MarketingLeadsService.build_lead_onboarding_url(lead_id)
+
             # Mensagem de warmup
             message = f"""Oi {first_name}! 🚀
 
 Recebemos seu interesse em AgendaFácil!
 
 Clique aqui pra criar sua barbearia em 3 passos:
-https://app.barbeiros.app/#/lead-onboarding?lead_id={lead_id}
+{onboarding_url}
 
 Quer saber como começar? Estamos aqui pra ajudar! 💬"""
             
@@ -362,11 +421,12 @@ Quer saber como começar? Estamos aqui pra ajudar! 💬"""
             config = MarketingLeadsService._get_evolution_config()
             
             phone_e164 = MarketingLeadsService._to_e164(whatsapp)
+            onboarding_url = MarketingLeadsService.build_lead_onboarding_url(lead_id)
             message = f"""Oi {first_name}! 👋
 
 Ficou com dúvida? Estamos aqui pra ajudar!
 
-Retome sua agenda: https://app.barbeiros.app/#/onboarding?lead_id={lead_id}
+Retome sua agenda: {onboarding_url}
 
 Qualquer dúvida, é só chamar! 💬"""
 
@@ -388,6 +448,7 @@ Qualquer dúvida, é só chamar! 💬"""
             config = MarketingLeadsService._get_evolution_config()
             
             phone_e164 = MarketingLeadsService._to_e164(whatsapp)
+            onboarding_url = MarketingLeadsService.build_lead_onboarding_url(lead_id)
             message = f"""Oi {first_name}! 📱
 
 Veja como {barbeiro_exemplo} tá ganhando mais com AgendaFácil:
@@ -396,7 +457,7 @@ Veja como {barbeiro_exemplo} tá ganhando mais com AgendaFácil:
 ✅ Mais faturamento
 
 Quer fazer o mesmo? 👇
-https://app.barbeiros.app/#/onboarding?lead_id={lead_id}"""
+{onboarding_url}"""
 
             send_result = MarketingLeadsService._send_text_via_evolution(
                 config=config,
@@ -416,6 +477,7 @@ https://app.barbeiros.app/#/onboarding?lead_id={lead_id}"""
             config = MarketingLeadsService._get_evolution_config()
             
             phone_e164 = MarketingLeadsService._to_e164(whatsapp)
+            onboarding_url = MarketingLeadsService.build_lead_onboarding_url(lead_id)
             message = f"""Oi {first_name}! ⏰
 
 Sua agenda FREE tá pronta e funcionando!
@@ -428,7 +490,7 @@ Quer desbloquear:
 Por apenas R$29/mês (primeiros 3 meses -30%)
 
 Ativa agora? 👇
-https://app.barbeiros.app/#/onboarding?lead_id={lead_id}"""
+{onboarding_url}"""
 
             send_result = MarketingLeadsService._send_text_via_evolution(
                 config=config,

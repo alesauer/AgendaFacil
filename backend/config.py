@@ -46,6 +46,7 @@ class Config:
     SUSPENSION_BILLING_EMAIL = ""
     MASTER_CONFIG_ENCRYPTION_KEY = ""
     MASTER_RUNTIME_CONFIG_CACHE_SECONDS = 30
+    LEAD_ACCESS_TOKEN_EXPIRES_MINUTES = 10080
 
 
 class DevelopmentConfig(Config):
@@ -101,6 +102,7 @@ def _hydrate_from_env(config_cls):
     config_cls.SUSPENSION_BILLING_EMAIL = os.getenv("SUSPENSION_BILLING_EMAIL", "").strip()
     config_cls.MASTER_CONFIG_ENCRYPTION_KEY = os.getenv("MASTER_CONFIG_ENCRYPTION_KEY", "").strip()
     config_cls.MASTER_RUNTIME_CONFIG_CACHE_SECONDS = int(os.getenv("MASTER_RUNTIME_CONFIG_CACHE_SECONDS", "30"))
+    config_cls.LEAD_ACCESS_TOKEN_EXPIRES_MINUTES = int(os.getenv("LEAD_ACCESS_TOKEN_EXPIRES_MINUTES", "10080"))
     return config_cls
 
 

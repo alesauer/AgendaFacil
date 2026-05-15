@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useSearchParams, Navigate } from 'react-router-dom';
+import { useParams, Navigate } from 'react-router-dom';
 import { Onboarding } from './Onboarding';
 import { apiRequest } from '../services/apiClient';
 
@@ -7,11 +7,10 @@ import { apiRequest } from '../services/apiClient';
  * LeadOnboarding - Componente que encadeia lead → autenticação → onboarding
  * Usado quando lead clica no link do WhatsApp
  * 
- * URL: /#/lead-onboarding?lead_id=UUID
+ * URL: /#/lead-onboarding/:accessToken
  */
 export const LeadOnboarding: React.FC = () => {
-  const [searchParams] = useSearchParams();
-  const leadId = searchParams.get('lead_id');
+  const { accessToken } = useParams<{ accessToken: string }>();
   
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -21,19 +20,19 @@ export const LeadOnboarding: React.FC = () => {
   useEffect(() => {
     const fetchLead = async () => {
       try {
-        if (!leadId) {
-          setError('lead_id não fornecido na URL');
+        if (!accessToken) {
+          setError('Token de acesso não fornecido na URL');
           setLoading(false);
           return;
         }
 
-        // Buscar dados do lead via apiClient (com headers corretos)
+        // Buscar dados do lead via token assinado
         const leadResponse = await apiRequest<{
           id: string;
           name: string;
           whatsapp: string;
           created_at: string;
-        }>(`/leads/${leadId}`);
+        }>(`/leads/resolve-access/${encodeURIComponent(accessToken)}`);
 
         if (!leadResponse.success) {
           setError((leadResponse as any).error || 'Lead não encontrado');
@@ -44,14 +43,14 @@ export const LeadOnboarding: React.FC = () => {
         const lead = leadResponse.data;
 
         // Registrar clique no link (async, não importa se falhar)
-        apiRequest(`/leads/${leadId}/track-click`, {
+        apiRequest(`/leads/${lead.id}/track-click`, {
           method: 'POST',
         }).catch(err => console.warn('Erro ao rastrear clique:', err));
 
         // Criar sessão de lead temporária para onboarding
         // Salvar no localStorage para o Onboarding.tsx usar
         localStorage.setItem('lead_mode', 'true');
-        localStorage.setItem('lead_id', leadId);
+        localStorage.setItem('lead_id', lead.id);
         localStorage.setItem('lead_name', lead.name);
         localStorage.setItem('lead_whatsapp', lead.whatsapp);
         localStorage.setItem('lead_created_at', lead.created_at);
@@ -74,7 +73,7 @@ export const LeadOnboarding: React.FC = () => {
     };
 
     fetchLead();
-  }, [leadId]);
+  }, [accessToken]);
 
   if (loading) {
     return (
@@ -94,7 +93,7 @@ export const LeadOnboarding: React.FC = () => {
           <h1 className="text-2xl font-bold text-red-600 mb-4">⚠️ Erro</h1>
           <p className="text-gray-600 mb-6">{error}</p>
           <p className="text-sm text-gray-500 mb-4">
-            Verifique o link enviado no WhatsApp e tente novamente.
+            Verifique o link enviado no WhatsApp (ele pode ter expirado) e tente novamente.
           </p>
           <a
             href="/#/login"

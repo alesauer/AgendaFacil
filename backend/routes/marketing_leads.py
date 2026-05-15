@@ -101,6 +101,34 @@ def create_lead():
         return error(f"Erro ao criar lead: {str(exc)}", 500)
 
 
+@marketing_leads_bp.route("/api/leads/resolve-access/<token>", methods=["GET"])
+@marketing_leads_bp.route("/leads/resolve-access/<token>", methods=["GET"])
+def resolve_access_token(token: str):
+    """
+    Resolver token assinado de acesso ao onboarding do lead
+
+    GET /api/leads/resolve-access/{token}
+    """
+
+    try:
+        resolved = MarketingLeadsService.resolve_lead_access_token(token)
+        lead = resolved.get("lead") or {}
+
+        return success({
+            "id": lead.get("id"),
+            "name": lead.get("name"),
+            "whatsapp": lead.get("whatsapp"),
+            "status": lead.get("status"),
+            "created_at": lead.get("created_at")
+        })
+    except ValueError as exc:
+        message = str(exc)
+        status_code = 404 if "não encontrado" in message.lower() else 401
+        return error(message, status_code)
+    except Exception as exc:
+        return error(f"Erro ao validar acesso do lead: {str(exc)}", 500)
+
+
 @marketing_leads_bp.route("/api/leads/<lead_id>", methods=["GET"])
 @marketing_leads_bp.route("/leads/<lead_id>", methods=["GET"])
 def get_lead(lead_id: str):
